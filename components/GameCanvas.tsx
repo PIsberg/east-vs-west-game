@@ -56,8 +56,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const frequency = 0.005 + Math.random() * 0.005;
       const phase = Math.random() * Math.PI * 2;
 
-      // River Segments (Curved)
-      for (let y = -20; y < CANVAS_HEIGHT + 20; y += 20) {
+      // River Segments (Curved) - Extended far off-screen
+      for (let y = -400; y < CANVAS_HEIGHT + 400; y += 20) {
         const x = centerX + Math.sin(y * frequency + phase) * amplitude;
         const segment = {
           id: generateId(),

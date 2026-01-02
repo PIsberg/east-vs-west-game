@@ -6,6 +6,15 @@ import * as THREE from 'three';
 import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
+// Add type definition for the custom shader material
+declare global {
+    namespace JSX {
+        interface IntrinsicElements {
+            riverMaterial: any;
+        }
+    }
+}
+
 interface GameSceneProps {
     units: Unit[];
     projectiles: Projectile[];
@@ -26,7 +35,170 @@ const MAT_TREE_TRUNK = new THREE.MeshStandardMaterial({ color: '#451a03' });
 const MAT_TREE_LEAVES = new THREE.MeshStandardMaterial({ color: '#14532d' });
 const MAT_HILL = new THREE.MeshStandardMaterial({ color: '#4d7c0f' });
 
-// -- Helper Components --
+// -- River Shader & Component --
+
+import { extend } from '@react-three/fiber';
+import { shaderMaterial } from '@react-three/drei';
+
+const RiverMaterial = shaderMaterial(
+    { uTime: 0, uColor: new THREE.Color('#3b82f6'), uFoamColor: new THREE.Color('#e0f2fe') },
+    // Vertex Shader
+    `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+    // Fragment Shader
+    `
+    uniform float uTime;
+    uniform vec3 uColor;
+    uniform vec3 uFoamColor;
+    varying vec2 vUv;
+
+    // Simple pseudo-random noise
+    float random(vec2 st) {
+        return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
+    }
+
+    float noise(vec2 st) {
+        vec2 i = floor(st);
+        vec2 f = fract(st);
+        float a = random(i);
+        float b = random(i + vec2(1.0, 0.0));
+        float c = random(i + vec2(0.0, 1.0));
+        float d = random(i + vec2(1.0, 1.0));
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+    }
+
+    void main() {
+      // Flow animation
+      float flowSpeed = 1.5;
+      vec2 uvFlow = vUv;
+      uvFlow.y -= uTime * 0.2; // Flow along Y (along the river path)
+
+      // Generate water surface noise
+      float n1 = noise(uvFlow * 15.0);
+      float n2 = noise(uvFlow * 30.0 + 3.0);
+      float waterNoise = mix(n1, n2, 0.5);
+
+      // Foam streaks
+      float foam = step(0.65, waterNoise);
+      
+      // Soft Edges (Alpha Fade)
+      float edgeAlpha = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
+
+      vec3 finalColor = mix(uColor, uFoamColor, foam * 0.5);
+
+      // Transparency
+      gl_FragColor = vec4(finalColor, 0.85 * edgeAlpha);
+    }
+  `
+);
+
+extend({ RiverMaterial });
+
+const RiverRenderer = ({ terrain }: { terrain: TerrainObject[] }) => {
+    const riverRef = useRef<any>(null);
+
+    // Filter and sort river points (assuming they are generated in order in GameCanvas)
+    // GameCanvas generates them y = -20 to HEIGHT + 20 in loop, so they are ordered by Y.
+    const riverPoints = useMemo(() => terrain.filter(t => t.type === 'river'), [terrain]);
+
+    // Construct Geometry
+    const geometry = useMemo(() => {
+        if (riverPoints.length < 2) return null;
+
+        const width = 65; // Slightly wider than before (55) to overlap banks
+        const halfWidth = width / 2;
+
+        // Create vertices for Triangle Strip
+        // For each point, create Left and Right vertex
+        const vertices: number[] = [];
+        const uvs: number[] = [];
+        const indices: number[] = [];
+
+        // Calculate curve tangents could be better, but for now simple +/- X is okay 
+        // IF the river flows vertically. 
+        // The river gen is x = centerX + sin(y)... so it flows mostly along Z (Game Y).
+        // So the "Right" vector is roughly (1, 0, 0).
+
+        for (let i = 0; i < riverPoints.length; i++) {
+            const p = riverPoints[i];
+
+            // Calculate tangent if possible for better width orientation
+            let normalX = 1;
+            let normalZ = 0;
+
+            if (i < riverPoints.length - 1) {
+                const next = riverPoints[i + 1];
+                const dx = next.x - p.x;
+                const dy = next.y - p.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                // Perpendicular to direction
+                normalX = -dy / len;
+                normalZ = dx / len;
+            } else if (i > 0) {
+                // Use prev
+                const prev = riverPoints[i - 1];
+                const dx = p.x - prev.x;
+                const dy = p.y - prev.y;
+                const len = Math.sqrt(dx * dx + dy * dy);
+                normalX = -dy / len;
+                normalZ = dx / len;
+            }
+
+            // Left Vertex
+            vertices.push(p.x - normalX * halfWidth, 0.2, p.y - normalZ * halfWidth);
+            uvs.push(0, i / (riverPoints.length * 0.1)); // Scale V for repeating texture
+
+            // Right Vertex
+            vertices.push(p.x + normalX * halfWidth, 0.2, p.y + normalZ * halfWidth);
+            uvs.push(1, i / (riverPoints.length * 0.1));
+
+            // Indices
+            if (i < riverPoints.length - 1) {
+                const base = i * 2;
+                // Triangle 1
+                indices.push(base, base + 1, base + 2);
+                // Triangle 2
+                indices.push(base + 1, base + 3, base + 2);
+            }
+        }
+
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geo.setIndex(indices);
+        geo.computeVertexNormals();
+        return geo;
+
+    }, [riverPoints]);
+
+    useFrame(({ clock }) => {
+        if (riverRef.current) {
+            riverRef.current.uTime = clock.getElapsedTime();
+        }
+    });
+
+    if (!geometry) return null;
+
+    return (
+        <mesh geometry={geometry} receiveShadow> {/* Wait, vertices are already x,y,z? No, y is height. */}
+            {/* Actually my vertices are x, height, z (game y). So NO rotation needed on mesh if geometry is right. */}
+            {/* But wait, in existing code TerrainItem uses rotation={[-Math.PI / 2, 0, 0]} and planeGeometry (x,y). */}
+            {/* My manual vertices are (x, 0.2, z). So I don't need rotation. */}
+            {/* Let's verify rotation. Standard Three.js Y is UP. */}
+            {/* My vertices: x, 0.2, y (which is Z in 3D). Correct. */}
+            {/* <riverMaterial /> is not a standard element. need 'primitive' or cast. */}
+            {/* react-three-fiber 'extend' makes it available as camelCase 'riverMaterial' */}
+            <riverMaterial ref={riverRef} transparent side={THREE.DoubleSide} />
+        </mesh>
+    );
+};
+
 
 // Placeholder to force view terrain height at a given X, Z (Game Y)
 const getTerrainHeight = (x: number, z: number, terrain: TerrainObject[]) => {
@@ -475,16 +647,9 @@ const Particle3D = ({ p }: { p: Particle }) => {
 };
 
 const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasClick: (x: number, y: number) => void }) => {
-    if (item.type === 'river') {
-        const width = item.width || 55;
-        const height = item.height || 22;
-        return (
-            <mesh position={[item.x, 0.1, item.y]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                <planeGeometry args={[width, height]} />
-                <meshStandardMaterial color="#3b82f6" roughness={0.2} metalness={0.1} transparent opacity={0.8} />
-            </mesh>
-        );
-    }
+    // River handled by RiverRenderer now
+    // if (item.type === 'river') { ... } 
+
     if (item.type === 'bridge') {
         const width = item.width || 85;
         const height = item.height || 40;
@@ -643,10 +808,10 @@ const Missile3D = ({ m }: { m: any }) => {
 const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) => void }) => {
     const dashes = [];
     const centerX = 400;
-    // Z range is roughly -50 to 500 based on usage
-    for (let z = -50; z < 550; z += 40) {
+    // Z range extended for infinite look
+    for (let z = -1000; z < 2000; z += 40) {
         dashes.push(
-            <mesh key={z} position={[centerX, 42, z]} rotation={[-Math.PI / 2, 0, 0]} onClick={(e) => { e.stopPropagation(); if (onCanvasClick) onCanvasClick(e.point.x, e.point.z); }}>
+            <mesh key={z} position={[centerX, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]} onClick={(e) => { e.stopPropagation(); if (onCanvasClick) onCanvasClick(e.point.x, e.point.z); }}>
                 <planeGeometry args={[6, 25]} />
                 <meshStandardMaterial color="white" opacity={0.6} transparent />
             </mesh>
@@ -729,9 +894,13 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             />
 
             <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} />
+            <RiverRenderer terrain={terrain} />
             <BorderLine onCanvasClick={onCanvasClick} />
 
-            {terrain.map(t => <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />)}
+            {terrain.map(t => {
+                if (t.type === 'river') return null; // Skip old river segments
+                return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />;
+            })}
 
             {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} />)}
 
