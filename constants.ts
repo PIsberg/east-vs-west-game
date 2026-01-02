@@ -160,6 +160,19 @@ export const UNIT_CONFIG = {
     height: 20,
     colorWest: '#0f766e',
     colorEast: '#991b1b',
+  },
+  [UnitType.NUKE]: {
+    cost: 1000,
+    health: 40,
+    damage: 1000,
+    radius: 3000,
+    speed: 0,
+    range: 0,
+    attackSpeed: 0,
+    width: 0,
+    height: 0,
+    colorWest: '#65a30d',
+    colorEast: '#65a30d',
   }
 };
 

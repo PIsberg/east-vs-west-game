@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -107,7 +107,7 @@ const App: React.FC = () => {
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
@@ -130,6 +130,15 @@ const App: React.FC = () => {
     if (targetingInfo) {
       // In 3D, any click returned by onCanvasClick is a valid ground position (x, z).
       // We accept it directly to allow spawning anywhere on the map.
+      if (targetingInfo.type === UnitType.NUKE) {
+        // Enforce Enemy Side Only
+        const isWest = targetingInfo.team === Team.WEST;
+        // West(Left) attacking East(Right), East(Right) attacking West(Left)
+        // West Territory < 400, East Territory > 400
+        // West can only target > 400, East can only target < 400
+        if (isWest && x < 400) return;
+        if (!isWest && x > 400) return;
+      }
       processSpawn(targetingInfo.team, targetingInfo.type, { x, y });
       setTargetingInfo(null);
     }
@@ -142,12 +151,12 @@ const App: React.FC = () => {
       const unitOrder = [
         UnitType.SOLDIER, UnitType.RAMBO, UnitType.MINE_PERSONAL, // Infantry
         UnitType.TANK, UnitType.ARTILLERY, UnitType.ANTI_AIR, UnitType.DRONE, UnitType.MINE_TANK, // Vehicles
-        UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE // Airstrikes
+        UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.NUKE // Airstrikes
       ];
 
-      // West: 1-0 (indexes 0-9), and we'll add '-' for 11th if needed, but user said 1-0.
-      // We'll map 1..0 to indexes 0..9.
-      const westKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-'];
+      // West: 1-0 (indexes 0-9), and we'll add '-' and '=' for 11th/12th if needed.
+      // We'll map 1..0, -, = to indexes 0..11.
+      const westKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
 
       // East: F12 down to F1. F12=Top(0), F11=1...
       const eastKeys = ['F12', 'F11', 'F10', 'F9', 'F8', 'F7', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
@@ -218,6 +227,7 @@ const App: React.FC = () => {
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
           { type: UnitType.AIRSTRIKE, label: "NAPALM", icon: <Flame size={16} /> },
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
+          { type: UnitType.NUKE, label: "NUKE", icon: <Skull size={16} />, special: true },
         ])}
       </div>
     );
@@ -232,7 +242,7 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} isTargeting={targetingInfo !== null} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
@@ -268,6 +278,7 @@ const App: React.FC = () => {
           <ul className="text-stone-400 space-y-1 mb-2">
             <li><strong className="text-white">Airstrike:</strong> Napalm run. Burns area.</li>
             <li><strong className="text-white">Missile:</strong> Precision strike. High dmg.</li>
+            <li><strong className="text-white">Nuke:</strong> <span className="text-red-500 font-bold">WARNING:</span> Friendly Fire! Enemy Side Target Only.</li>
             <li><strong className="text-white">Airborne:</strong> Drops paratroopers behind lines.</li>
             <li><strong className="text-white">Mines:</strong> Hidden defense. Explodes on contact.</li>
           </ul>

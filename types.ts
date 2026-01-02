@@ -16,6 +16,7 @@ export enum UnitType {
   MINE_TANK = 'MINE_TANK',
   DRONE = 'DRONE',
   ANTI_AIR = 'ANTI_AIR',
+  NUKE = 'NUKE',
 }
 
 export enum UnitState {
@@ -79,6 +80,8 @@ export interface Particle {
   life: number;
   color: string;
   size: number;
+  velocity?: Vector2D; // For dynamic movement
+  drag?: number;      // For friction/slowdown
 }
 
 export interface GameState {

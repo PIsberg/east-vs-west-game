@@ -14,7 +14,7 @@ interface GameSceneProps {
     flyovers: any[]; // Using any for now to match the internal logic refs
     missiles: any[];
     onCanvasClick: (x: number, y: number) => void;
-    isTargeting: boolean;
+    targetingInfo: { team: Team, type: UnitType } | null;
 }
 
 // -- Assets & Materials --
@@ -655,7 +655,7 @@ const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) =
     return <group>{dashes}</group>;
 };
 
-const GroundPlane = ({ onCanvasClick, isTargeting }: { onCanvasClick: (x: number, y: number) => void, isTargeting: boolean }) => {
+const GroundPlane = ({ onCanvasClick, targetingInfo }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null }) => {
     // Generate grass spots
     const spots = [];
     for (let i = 0; i < 60; i++) {
@@ -675,7 +675,19 @@ const GroundPlane = ({ onCanvasClick, isTargeting }: { onCanvasClick: (x: number
                     e.stopPropagation();
                     onCanvasClick(e.point.x, e.point.z);
                 }}
-                onPointerOver={() => document.body.style.cursor = isTargeting ? 'crosshair' : 'default'}
+                onPointerOver={() => {
+                    if (targetingInfo) document.body.style.cursor = 'crosshair';
+                }}
+                onPointerMove={(e) => {
+                    if (targetingInfo && targetingInfo.type === UnitType.NUKE) {
+                        const isWest = targetingInfo.team === Team.WEST;
+                        const x = e.point.x; // 3D x is logic x
+                        const invalid = (isWest && x < 400) || (!isWest && x > 400);
+                        document.body.style.cursor = invalid ? 'not-allowed' : 'crosshair';
+                    } else if (targetingInfo) {
+                        document.body.style.cursor = 'crosshair';
+                    }
+                }}
                 onPointerOut={() => document.body.style.cursor = 'default'}
             >
                 <planeGeometry args={[2000, 2000]} />
@@ -695,7 +707,7 @@ const GroundPlane = ({ onCanvasClick, isTargeting }: { onCanvasClick: (x: number
 
 // -- Main Scene Component --
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, isTargeting }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo }) => {
 
 
 
@@ -716,7 +728,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 shadow-camera-bottom={-600}
             />
 
-            <GroundPlane onCanvasClick={onCanvasClick} isTargeting={isTargeting} />
+            <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} />
             <BorderLine onCanvasClick={onCanvasClick} />
 
             {terrain.map(t => <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />)}

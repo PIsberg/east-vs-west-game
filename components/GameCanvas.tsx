@@ -22,7 +22,7 @@ interface GameCanvasProps {
   spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[];
   clearSpawnQueue: () => void;
   onCanvasClick: (x: number, y: number) => void;
-  isTargeting: boolean;
+  targetingInfo: { team: Team, type: UnitType } | null;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -30,7 +30,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   spawnQueue,
   clearSpawnQueue,
   onCanvasClick,
-  isTargeting
+  targetingInfo
 }) => {
   const requestRef = useRef<number>(0);
 
@@ -38,7 +38,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const terrainRef = useRef<TerrainObject[]>([]);
   const flyoversRef = useRef<Flyover[]>([]);
+  const terraformRef = useRef<TerrainObject[]>([]); // To store new terrain features like craters if we want? Or just particles.
   const missilesRef = useRef<Missile[]>([]);
+  const flashOpacity = useRef(0); // For nuke flash
 
   useEffect(() => {
     // START FRESH: Avoid Strict Mode duplication by using a local array initially
@@ -91,7 +93,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Place hills strategically (Spread Out & Avoid River)
     const MIN_DIST_BETWEEN_HILLS = 120;
-    const RIVER_BUFFER = 80; // Increased from ~30-40
+    const RIVER_BUFFER = 80;
 
     for (let i = 0; i < 6; i++) { // Try to place up to 6 hills
       let x = 100 + Math.random() * (CANVAS_WIDTH - 200);
@@ -223,8 +225,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }) => {
     const config = UNIT_CONFIG[type] as any;
 
-    if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE) && options?.absolutePos) {
-      const isMissile = type === UnitType.MISSILE_STRIKE;
+    if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE) && options?.absolutePos) {
+      const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
       const flyover: Flyover = {
         id: generateId(),
         team, type,
@@ -233,7 +235,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         altitudeY: isMissile ? 35 : (type === UnitType.AIRBORNE ? 45 : 55),
         speed: team === Team.WEST ? (isMissile ? 5.0 : 6) : (isMissile ? -5.0 : -6),
         dropped: false,
-        missileCount: isMissile ? 3 : 0,
+        missileCount: isMissile ? (type === UnitType.NUKE ? 1 : 3) : 0,
         health: config.health || 40
       };
       flyoversRef.current.push(flyover);
@@ -278,6 +280,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const update = useCallback(() => {
     const time = Date.now();
+    if (flashOpacity.current > 0) flashOpacity.current -= 0.02; // Flash decay
     // Spawn queue processed in useEffect now to avoid frame-loop race conditions
 
     moneyRef.current[Team.WEST] += MONEY_PER_TICK;
@@ -346,19 +349,56 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       m.current.x += m.velocity.x; m.current.y += m.velocity.y;
       if (m.current.y >= m.target.y) {
         soundService.playHitSound();
-        const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any;
+        const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
+        const isNuke = m.velocity.x === 0 && m.target && (m as any).isNuke; // We need to tag nuke missiles
+        const damage = isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage;
+        const radius = isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius;
+
+        if (isNuke) {
+          flashOpacity.current = 1.0; // TRIGGER FLASH (Full White)
+          // MASSIVE Swamp Explosion - Lingering Cloud
+          for (let p = 0; p < 600; p++) {
+            const angle = Math.random() * Math.PI * 2;
+            // Higher initial speed to cover the huge 850 radius quickly
+            const speed = Math.random() * 15 + 5;
+            // Wider start area so it doesn't look like a single point source only
+            const startDist = Math.random() * 100;
+
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: m.target.x + Math.cos(angle) * startDist, y: m.target.y + Math.sin(angle) * startDist },
+              velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+              // Higher drag to make them "hang" in the air like a cloud
+              drag: 0.95 + Math.random() * 0.03,
+              // Longer life for lingering effect (5+ seconds)
+              life: 250 + Math.random() * 150,
+              // Darker, murkier swamp colors
+              color: p % 5 === 0 ? '#1a2e05' : // Very dark sludge
+                (p % 4 === 0 ? '#365314' : // Dark moss
+                  (p % 3 === 0 ? '#4d7c0f' : // Swamp green
+                    (p % 2 === 0 ? '#3f6212' : '#84cc16'))), // Olive / Lime accent
+              size: 30 + Math.random() * 60 // Even bigger particles
+            });
+          }
+        }
+
         unitsRef.current.forEach(u => {
-          if (u.team !== m.team && u.type !== UnitType.NAPALM) {
-            if (Math.sqrt((u.position.x - m.target.x) ** 2 + (u.position.y - m.target.y) ** 2) < config.radius) u.health -= config.damage;
+          if (u.type !== UnitType.NAPALM) {
+            // Friendly Fire for Nukes
+            if (isNuke || u.team !== m.team) {
+              if (Math.sqrt((u.position.x - m.target.x) ** 2 + (u.position.y - m.target.y) ** 2) < (radius || 60)) u.health -= (damage || 200);
+            }
           }
         });
-        // Explosion particles
-        for (let p = 0; p < 20; p++) {
-          particlesRef.current.push({
-            id: generateId(),
-            position: { x: m.target.x + (Math.random() - 0.5) * 40, y: m.target.y + (Math.random() - 0.5) * 40 },
-            life: 40, color: '#f97316', size: 6 + Math.random() * 8
-          });
+        // Explosion particles ( Standard )
+        if (!isNuke) {
+          for (let p = 0; p < 20; p++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: m.target.x + (Math.random() - 0.5) * 40, y: m.target.y + (Math.random() - 0.5) * 40 },
+              life: 40, color: '#f97316', size: 6 + Math.random() * 8
+            });
+          }
         }
         missilesRef.current.splice(i, 1);
       }
@@ -366,6 +406,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Flyover Update (Planes)
     for (let i = flyoversRef.current.length - 1; i >= 0; i--) {
+      // ... (Rest of flyover update check if needed, but we are inside update loop)
       const fly = flyoversRef.current[i];
       if (fly.health <= 0) {
         for (let p = 0; p < 12; p++) particlesRef.current.push({ id: generateId(), position: { x: fly.currentX, y: fly.altitudeY }, life: 25, color: '#333', size: 4 });
@@ -373,12 +414,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       fly.currentX += fly.speed;
       if (!fly.dropped && Math.abs(fly.currentX - fly.targetPos.x) < 30) {
-        if (fly.type === UnitType.MISSILE_STRIKE && fly.missileCount && fly.missileCount > 0) {
+        if ((fly.type === UnitType.MISSILE_STRIKE || fly.type === UnitType.NUKE) && fly.missileCount && fly.missileCount > 0) {
           missilesRef.current.push({
-            id: generateId(), team: fly.team, target: { x: fly.targetPos.x + (2 - fly.missileCount) * 30, y: fly.targetPos.y },
+            id: generateId(), team: fly.team, target: { x: fly.targetPos.x + (fly.type === UnitType.NUKE ? 0 : (2 - fly.missileCount) * 30), y: fly.targetPos.y },
             current: { x: fly.currentX, y: fly.altitudeY },
-            velocity: { x: (fly.targetPos.x + (2 - fly.missileCount) * 30 - fly.currentX) / 40, y: (fly.targetPos.y - fly.altitudeY) / 40 }
-          });
+            velocity: { x: (fly.targetPos.x - fly.currentX) / 40, y: (fly.targetPos.y - fly.altitudeY) / 40 },
+            isNuke: fly.type === UnitType.NUKE // Tag it
+          } as any); // Cast to any to add custom prop
           fly.missileCount--; if (fly.missileCount === 0) fly.dropped = true;
         } else {
           fly.dropped = true;
@@ -628,7 +670,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    particlesRef.current.forEach((p, i) => { if (--p.life <= 0) particlesRef.current.splice(i, 1); });
+    particlesRef.current.forEach((p, i) => {
+      if (p.velocity) {
+        p.position.x += p.velocity.x;
+        p.position.y += p.velocity.y;
+        if (p.drag) {
+          p.velocity.x *= p.drag;
+          p.velocity.y *= p.drag;
+        }
+      }
+      if (--p.life <= 0) particlesRef.current.splice(i, 1);
+    });
 
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
@@ -648,7 +700,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         particlesRef.current.push({
           id: generateId(),
           position: { x: u.position.x, y: u.position.y },
-          life: 600, // Long life (10s)
+          life: 180, // 3 seconds at 60fps
           color: '#7f1d1d', // Dark Red Blood
           size: 12 + Math.random() * 5
         });
@@ -680,8 +732,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         flyovers={flyoversRef.current}
         missiles={missilesRef.current}
         onCanvasClick={onCanvasClick}
-        isTargeting={isTargeting}
+        targetingInfo={targetingInfo}
       />
+      {flashOpacity.current > 0 && (
+        <div style={{
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'white', opacity: Math.min(1, flashOpacity.current),
+          pointerEvents: 'none', zIndex: 100
+        }} />
+      )}
     </div>
   );
 };
