@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -199,19 +199,43 @@ const App: React.FC = () => {
     const colorClass = isWest ? "blue" : "red";
     const money = gameState.money[team];
 
+    const UNIT_COUNTERS: Record<UnitType, React.ReactNode[]> = {
+      [UnitType.SOLDIER]: [<User size={8} key="u" />],
+      [UnitType.RAMBO]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.MINE_PERSONAL]: [<User size={8} key="u" />],
+      [UnitType.TANK]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
+      [UnitType.ARTILLERY]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.ANTI_AIR]: [<Plane size={8} key="p" />],
+      [UnitType.DRONE]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.MINE_TANK]: [<Shield size={8} key="s" />],
+      [UnitType.AIRBORNE]: [<User size={8} key="u" />],
+      [UnitType.AIRSTRIKE]: [<User size={8} key="u" />],
+      [UnitType.MISSILE_STRIKE]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
+      [UnitType.NUKE]: [<Skull size={8} key="k" />],
+      [UnitType.NAPALM]: [<User size={8} key="u" />],
+    };
+
     const renderGroup = (title: string, units: any[]) => (
       <div className="flex flex-col gap-1">
         <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">{title}</div>
         {units.map(({ type, label, icon, special }) => (
           <button
             key={type}
-            className={`${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-80 text-white p-1.5 rounded-lg shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30`}
+            className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white p-1.5 rounded-lg shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible`}
             onClick={() => handleSpawnRequest(team, type)}
             disabled={money < UNIT_CONFIG[type].cost}
           >
             {icon}
-            <span className="font-bold text-[7px] uppercase">{label}</span>
-            <span className="text-[9px] opacity-70">${UNIT_CONFIG[type].cost}</span>
+            <span className="font-bold text-[7px] uppercase leading-none mt-0.5">{label}</span>
+            <span className="text-[9px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
+
+            {/* Tooltip Popup */}
+            <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
+              <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
+              <div className="flex gap-2 text-stone-300">
+                {UNIT_COUNTERS[type as UnitType]}
+              </div>
+            </div>
           </button>
         ))}
       </div>

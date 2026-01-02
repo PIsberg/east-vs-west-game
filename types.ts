@@ -56,6 +56,9 @@ export interface Unit {
   spawnTime?: number;
   isOnHill?: boolean;
   isInCover?: boolean;
+  coverEnterTime?: number;
+  coverDuration?: number;
+  lastCoverId?: string; // To avoid snapping back to the same cover immediately
   squadId?: string;
   planeAltitudeAtDrop?: number;
 }
@@ -72,6 +75,7 @@ export interface Projectile {
   maxRange: number;
   distanceTraveled: number;
   targetType?: 'ground' | 'air';
+  sourceType?: UnitType; // To track who fired it
 }
 
 export interface Particle {

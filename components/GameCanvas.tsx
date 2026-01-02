@@ -334,7 +334,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const victims = spatialHash.current.query(proj.position.x, proj.position.y, proj.explosionRadius!);
                 victims.forEach(victim => { if (victim.team !== proj.team && Math.sqrt((victim.position.x - proj.position.x) ** 2 + (victim.position.y - proj.position.y) ** 2) < proj.explosionRadius! * getScaleAt(proj.position.y)) victim.health -= proj.damage; });
               }
-              else u.health -= u.isInCover ? proj.damage * 0.5 : proj.damage;
+              else {
+                // Cover Logic
+                // Tanks & Artillery ignore cover (Heavy weapons)
+                // Others (Infantry) have damage reduced by cover
+                const ignoresCover = proj.sourceType === UnitType.TANK || proj.sourceType === UnitType.ARTILLERY || proj.sourceType === UnitType.DRONE || proj.sourceType === UnitType.AIRSTRIKE || proj.sourceType === UnitType.MISSILE_STRIKE || proj.sourceType === UnitType.NUKE;
+                const damage = (u.isInCover && !ignoresCover) ? proj.damage * 0.4 : proj.damage;
+                u.health -= damage;
+              }
               break;
             }
           }
@@ -494,86 +501,132 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
         let moveY = Math.sin(time * 0.004 + parseInt(unit.id, 36)) * 0.3;
 
+
         if (config.isFlying) {
           let target: Unit | null = null, minDist = 600;
-          unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (unit.position.y - o.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
+          unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
           if (target) { const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x); moveX = Math.cos(a) * config.speed; moveY = Math.sin(a) * config.speed; }
-        } else if (!unit.isOnHill) {
-          const hill = terrainRef.current.find(t => {
-            if (t.type !== 'hill') return false;
-            // Radius check slightly larger to attract units near hills
-            if (Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) > 220) return false;
-            // Only go to hill if not crowded
-            return !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id && Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < t.size * 0.6);
-          });
-          if (hill) { const a = Math.atan2(hill.y - unit.position.y, hill.x - unit.position.x); moveX = Math.cos(a) * config.speed; moveY = Math.sin(a) * config.speed; }
-        } else if (!config.isFlying && !unit.isOnHill) {
-          // Terrain Interaction (Trees & Rocks)
-          const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY;
+        } else {
+          // Ground Units Logic
+          let movingToHill = false;
 
-          if (!isVehicle) {
-            // Troops Seek Cover (Trees or Rocks)
-            const cover = terrainRef.current.find(t => {
-              if (t.type !== 'tree' && t.type !== 'rock') return false;
-              const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
-              if (dist > 150) return false;
-              return !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id && Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < 20);
+          if (!unit.isOnHill) {
+            const hill = terrainRef.current.find(t => {
+              if (t.type !== 'hill') return false;
+              if (Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) > 220) return false;
+              return !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id && Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < t.size * 0.6);
             });
-            if (cover) {
-              const dist = Math.sqrt((cover.x - unit.position.x) ** 2 + (cover.y - unit.position.y) ** 2);
-              if (dist > 25) {
-                const a = Math.atan2(cover.y - unit.position.y, cover.x - unit.position.x);
-                moveX = (moveX * 0.4) + (Math.cos(a) * config.speed * 0.6);
-                moveY = (moveY * 0.4) + (Math.sin(a) * config.speed * 0.6);
-              } else {
-                moveX *= 0.1; moveY *= 0.1; unit.isInCover = true;
-              }
+
+            if (hill) {
+              const a = Math.atan2(hill.y - unit.position.y, hill.x - unit.position.x);
+              moveX = Math.cos(a) * config.speed;
+              moveY = Math.sin(a) * config.speed;
+              movingToHill = true;
             }
           } else {
-            // Vehicles Avoid Obstacles (Trees or Rocks)
-            terrainRef.current.forEach(t => {
-              if (t.type === 'tree' || t.type === 'rock') {
-                const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
-                const avoidDist = t.type === 'tree' ? 40 : 30;
-                if (dist < avoidDist) {
-                  const dx = unit.position.x - t.x;
-                  const dy = unit.position.y - t.y;
-                  moveX += (dx / dist) * 2; // Strong repulsion
-                  moveY += (dy / dist) * 2;
+            moveX *= 0.1; moveY *= 0.1; // Slow down on hill
+          }
+
+          // If NOT moving to a hill, check for Cover/Obstacles
+          if (!movingToHill && !unit.isOnHill) {
+            const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY;
+
+            if (!isVehicle) {
+              // Check if already in cover
+              if (unit.isInCover && unit.coverEnterTime) {
+                if (Date.now() - unit.coverEnterTime > (unit.coverDuration || 8000)) {
+                  // Time up
+                  unit.isInCover = false;
+                  // Mark this cover as "used" so we don't immediately re-enter
+                  unit.lastCoverId = terrainRef.current.find(t => Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < 60)?.id;
+                  unit.coverEnterTime = undefined;
+                } else {
+                  // Stop in cover
+                  moveX = 0; moveY = 0;
+                }
+              } else {
+                // Seek Cover
+                const cover = terrainRef.current.find(t => {
+                  if (t.type !== 'tree' && t.type !== 'rock') return false;
+                  if (t.id === unit.lastCoverId) return false;
+
+                  // Forward Bias: Don't retreat too far for cover. Main goal is capture.
+                  if (unit.team === Team.WEST ? t.x < unit.position.x - 30 : t.x > unit.position.x + 30) return false;
+
+                  const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
+                  if (dist > 180) return false; // Increased range slightly
+
+                  // Occupancy Check
+                  return !unitsRef.current.some(o =>
+                    o.team === unit.team &&
+                    o.id !== unit.id &&
+                    Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < 30
+                  );
+                });
+
+                if (cover) {
+                  const dist = Math.sqrt((cover.x - unit.position.x) ** 2 + (cover.y - unit.position.y) ** 2);
+                  if (dist > 25) {
+                    const a = Math.atan2(cover.y - unit.position.y, cover.x - unit.position.x);
+                    moveX = (moveX * 0.4) + (Math.cos(a) * config.speed * 0.6);
+                    moveY = (moveY * 0.4) + (Math.sin(a) * config.speed * 0.6);
+                  } else {
+                    moveX = 0; moveY = 0;
+                    unit.isInCover = true;
+                    unit.coverEnterTime = Date.now();
+                    // Shorter duration: 5s - 15s
+                    unit.coverDuration = 5000 + Math.random() * 10000;
+                  }
                 }
               }
-            });
-          }
-        } else if (unit.isOnHill) { moveX *= 0.1; moveY *= 0.1; }
-
-        // Separation Force (Avoid bunching)
-        let sepX = 0, sepY = 0;
-        let neighbors = 0;
-        const neighborsList = spatialHash.current.query(unit.position.x, unit.position.y, 20);
-
-        for (const other of neighborsList) {
-          if (other.id !== unit.id && other.team === unit.team && other.state === UnitState.MOVING) {
-            const dx = unit.position.x - other.position.x;
-            const dy = unit.position.y - other.position.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            // Personal space radius varies by unit size but approx 15-20
-            if (dist < 20 && dist > 0) {
-              sepX += dx / dist; // Normalize and weight by closeness? Simple repulsion is fine.
-              sepY += dy / dist;
-              neighbors++;
+            } else {
+              // Vehicles Avoid Obstacles
+              terrainRef.current.forEach(t => {
+                if (t.type === 'tree' || t.type === 'rock') {
+                  const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
+                  const avoidDist = t.type === 'tree' ? 40 : 30;
+                  if (dist < avoidDist) {
+                    const dx = unit.position.x - t.x;
+                    const dy = unit.position.y - t.y;
+                    moveX += (dx / dist) * 2;
+                    moveY += (dy / dist) * 2;
+                  }
+                }
+              });
             }
           }
         }
 
-        if (neighbors > 0) {
-          // Apply separation vector
-          moveX += (sepX / neighbors) * 0.5; // Strength of separation
-          moveY += (sepY / neighbors) * 0.5;
+        // Separation Force (Avoid bunching) - Only if NOT in cover
+        if (!unit.isInCover) {
+          let sepX = 0, sepY = 0;
+          let neighbors = 0;
+          const neighborsList = spatialHash.current.query(unit.position.x, unit.position.y, 20);
+
+          for (const other of neighborsList) {
+            if (other.id !== unit.id && other.team === unit.team && other.state === UnitState.MOVING) {
+              const dx = unit.position.x - other.position.x;
+              const dy = unit.position.y - other.position.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              // Personal space radius varies by unit size but approx 15-20
+              if (dist < 20 && dist > 0) {
+                sepX += dx / dist; // Normalize and weight by closeness? Simple repulsion is fine.
+                sepY += dy / dist;
+                neighbors++;
+              }
+            }
+          }
+
+          if (neighbors > 0) {
+            // Apply separation vector
+            moveX += (sepX / neighbors) * 0.5; // Strength of separation
+            moveY += (sepY / neighbors) * 0.5;
+          }
         }
 
         // River / Bridge Interactions
         const river = terrainRef.current.find(t => t.type === 'river');
-        if (river && river.width) {
+        if (river && river.width && !unit.isInCover) {
           const riverLeft = river.x - river.width / 2;
           const riverRight = river.x + river.width / 2;
           const unitLeft = unit.position.x - 5; // Approx unit width
@@ -590,42 +643,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (!onBridge) {
               if (config.isFlying) {
                 // Flying units ignore river
-              } else if (unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY) {
-                // Vehicles stopped by river
-                // Improved Pathfinding: Look for bridge
-                if (unit.targetId && unit.targetId.startsWith('bridge_')) {
-                  // Already targeting bridge
-                } else {
-                  // Find nearest bridge
-                  let nearestBridge: TerrainObject | null = null;
-                  let minBridgeDist = 10000;
+              } else if (unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.MINE_TANK) {
+                // Vehicles stopped by river - MUST use bridge
+                // Calculate distance to nearest bridge
+                let nearestBridge: TerrainObject | null = null;
+                let minBridgeDist = 10000;
 
-                  // Only seek bridge if target is on other side
-                  // Simple heuristic: West Team moving Right (>), East Team moving Left (<)
-                  // River is at river.x.
-                  const crossNeeded = (unit.team === Team.WEST && unit.position.x < river.x) || (unit.team === Team.EAST && unit.position.x > river.x);
+                // Check cross need
+                const crossNeeded = (unit.team === Team.WEST && unit.position.x < river.x) || (unit.team === Team.EAST && unit.position.x > river.x);
 
-                  if (crossNeeded) {
-                    terrainRef.current.forEach(t => {
-                      if (t.type === 'bridge') {
-                        const d = Math.abs(unit.position.y - t.y);
-                        if (d < minBridgeDist) { minBridgeDist = d; nearestBridge = t; }
-                      }
-                    });
+                if (crossNeeded) {
+                  terrainRef.current.forEach(t => {
+                    if (t.type === 'bridge') {
+                      const d = Math.abs(unit.position.y - t.y);
+                      if (d < minBridgeDist) { minBridgeDist = d; nearestBridge = t; }
+                    }
+                  });
 
-                    if (nearestBridge) {
-                      // Steer towards bridge
-                      const bridge = nearestBridge as TerrainObject;
-                      const dy = bridge.y - unit.position.y;
-                      moveY += (dy / Math.abs(dy)) * config.speed * 0.8; // Strong Y pull
-                      moveX *= 0.2; // Slow down X progress to align
-                      // If very close to bridge Y, allow X movement to cross
-                      if (Math.abs(dy) < 20) {
-                        moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed; // Resume forward
+                  if (nearestBridge) {
+                    const bridge = nearestBridge as TerrainObject;
+                    const dy = bridge.y - unit.position.y;
+
+                    // Move towards bridge Y
+                    moveY += (dy / Math.abs(dy)) * config.speed * 1.0;
+
+                    // BLOCK X movement unless aligned with bridge
+                    if (Math.abs(dy) > 15) {
+                      moveX = 0; // Stop forward movement, only move Y
+                      // Add slight backward push if too close to river bank to avoid clipping
+                      if (Math.abs(unit.position.x - river.x) < 30) {
+                        moveX = (unit.team === Team.WEST ? -1 : 1) * 0.2;
                       }
                     } else {
-                      moveX = 0; // Stuck (shouldn't happen)
+                      // Aligned! Cross.
+                      moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
                     }
+                  } else {
+                    moveX = 0; // No bridge found (shouldn't happen)
                   }
                 }
               } else {
@@ -642,25 +696,59 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       if (!isDescent && unit.attackCooldown <= 0) {
-        const range = (unit.isOnHill ? config.range * HILL_RANGE_BONUS : config.range) * currentScale;
+        // Water Penalty Check
+        // Re-find river (efficient enough as terrain array is small)
+        const riverObj = terrainRef.current.find(t => t.type === 'river');
+        let inWater = false;
+        if (riverObj && !config.isFlying) {
+          const riverLeft = riverObj.x - riverObj.width! / 2;
+          const riverRight = riverObj.x + riverObj.width! / 2;
+          if (unit.position.x > riverLeft && unit.position.x < riverRight) {
+            // Check if on bridge
+            const onBridge = terrainRef.current.some(b =>
+              b.type === 'bridge' &&
+              Math.abs(unit.position.y - b.y) < (b.height || 30) / 2 &&
+              Math.abs(unit.position.x - b.x) < (b.width || 60) / 2 + 10
+            );
+            if (!onBridge) inWater = true;
+          }
+        }
+
+        const range = (unit.isOnHill ? config.range * HILL_RANGE_BONUS : (inWater ? config.range * 0.4 : config.range)) * currentScale;
+
         if (unit.type === UnitType.ANTI_AIR) {
-          let target = unitsRef.current.find(u => u.team !== unit.team && u.type === UnitType.DRONE && Math.sqrt((u.position.x - unit.position.x) ** 2 + (u.position.y - unit.position.y) ** 2) < range);
+          // AA targets Drones AND Descending Paratroopers
+          let target = unitsRef.current.find(u => {
+            if (u.team === unit.team) return false;
+            const isAirTarget = u.type === UnitType.DRONE || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
+            return isAirTarget && Math.sqrt((u.position.x - unit.position.x) ** 2 + (u.position.y - unit.position.y) ** 2) < range;
+          });
+
           if (!target) {
+            // Check flyovers (Airstrikes/Missiles)
             const fly = flyoversRef.current.find(f => f.team !== unit.team && Math.sqrt((f.currentX - unit.position.x) ** 2 + (f.altitudeY - unit.position.y) ** 2) < range);
             if (fly) {
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air' });
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type });
               unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air' });
+            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type });
             unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
           }
         } else {
+          // Standard Targeting (Ground)
           // Optimized Targeting
           const potentialTargets = spatialHash.current.query(unit.position.x, unit.position.y, range);
-          let target = potentialTargets.find(o => o.team !== unit.team && o.type !== UnitType.NAPALM && o.type !== UnitType.DRONE && o.type !== UnitType.MINE_PERSONAL && o.type !== UnitType.MINE_TANK && Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range);
+          let target = potentialTargets.find(o => {
+            if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.DRONE || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
+            // Standard units cannot target descending paratroopers
+            const oLife = Date.now() - (o.spawnTime || 0);
+            if (o.type === UnitType.AIRBORNE && oLife < 3000) return false;
+
+            return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
+          });
           if (target) {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
             // Artillery Spread
@@ -668,7 +756,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (unit.type === UnitType.ARTILLERY) {
               spread = (Math.random() - 0.5) * 0.25; // Random spread +/- 0.125 rad (~7 degrees)
             }
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0), distanceTraveled: 0, targetType: 'ground', explosionRadius: config.explosionRadius });
+            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0), distanceTraveled: 0, targetType: 'ground', explosionRadius: config.explosionRadius, sourceType: unit.type });
             unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0)); soundService.playShootSound();
           }
         }
