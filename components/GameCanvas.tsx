@@ -442,7 +442,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     unitsRef.current.forEach(unit => {
       const lifeTime = Date.now() - (unit.spawnTime || 0);
       const isDescent = unit.type === UnitType.AIRBORNE && lifeTime < 3000;
-      if (unit.type === UnitType.NAPALM) { unit.health--; return; }
+      if (unit.type === UnitType.NAPALM) {
+        unit.health--;
+        // Napalm Damage Logic
+        const burnRadius = 60;
+        const burnDamage = 1.0; // Per tick
+        unitsRef.current.forEach(other => {
+          if (other.team !== unit.team && other.type !== UnitType.AIRBORNE && other.type !== UnitType.NAPALM) {
+            const dist = Math.sqrt((other.position.x - unit.position.x) ** 2 + (other.position.y - unit.position.y) ** 2);
+            if (dist < burnRadius) {
+              other.health -= burnDamage;
+            }
+          }
+        });
+        return;
+      }
 
       // Mine Logic
       if (unit.type === UnitType.MINE_PERSONAL || unit.type === UnitType.MINE_TANK) {
