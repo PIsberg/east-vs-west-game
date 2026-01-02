@@ -97,6 +97,14 @@ const App: React.FC = () => {
   const [commentary, setCommentary] = useState<string>("");
   const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
+  const [showSplash, setShowSplash] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   const resetGame = () => {
     setGameKey(prev => prev + 1);
@@ -233,8 +241,21 @@ const App: React.FC = () => {
     );
   };
 
+
+
   return (
     <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center justify-center p-4 font-serif overflow-hidden">
+      {/* Splash Screen Overlay */}
+      {showSplash && (
+        <div className="fixed inset-0 bg-stone-900/90 z-[9999] flex items-center justify-center animate-[fadeOut_0.5s_ease-out_1.5s_forwards] pointer-events-none">
+          <img
+            src="splash.jpg"
+            alt="East vs West"
+            className="w-full h-full object-contain md:object-cover"
+          />
+        </div>
+      )}
+
       <div className="w-full max-w-4xl flex justify-between items-center mb-3 bg-stone-800 p-3 rounded-lg shadow-lg border border-stone-600">
         <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">Score: {gameState.score[Team.WEST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center"><h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1><button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button></div>
