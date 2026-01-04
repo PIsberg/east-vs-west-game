@@ -851,33 +851,54 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
         const type = seed % 3; // 0: Pine, 1: Oak, 2: Poplar
         const scaleMod = 1 + (seed % 50) / 100; // 1.0 - 1.5
 
+        let trunkColor = "#451a03";
+        let leavesColor = type === 0 ? "#14532d" : (type === 1 ? "#166534" : "#15803d");
+        let rot: [number, number, number] = [0, 0, 0];
+        let yOffset = 0;
+
+        // Tree State Visuals
+        if (item.state === 'burnt') {
+            trunkColor = "#1c1917"; // Burnt wood
+            leavesColor = "#262626"; // Ash
+        } else if (item.state === 'burning') {
+            const flicker = Math.floor(Date.now() / 100) % 2 === 0;
+            leavesColor = flicker ? "#f97316" : "#fbbf24"; // Fire
+        } else if (item.state === 'broken') {
+            rot = [Math.PI / 2, 0, seed % 3]; // Fallen
+            yOffset = -5;
+        }
+
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
-                {/* Trunk */}
-                <mesh position={[0, 15 * scaleMod, 0]} castShadow>
-                    <cylinderGeometry args={[5 * scaleMod, 8 * scaleMod, 30 * scaleMod]} />
-                    <meshStandardMaterial color="#451a03" />
-                </mesh>
+                <group rotation={rot} position={[0, yOffset, 0]}>
+                    {/* Trunk */}
+                    <mesh position={[0, 15 * scaleMod, 0]} castShadow>
+                        <cylinderGeometry args={[5 * scaleMod, 8 * scaleMod, 30 * scaleMod]} />
+                        <meshStandardMaterial color={trunkColor} />
+                    </mesh>
 
-                {/* Leaves */}
-                {type === 0 && ( // Pine
-                    <mesh position={[0, 45 * scaleMod, 0]} castShadow>
-                        <coneGeometry args={[20 * scaleMod, 50 * scaleMod, 16]} />
-                        <meshStandardMaterial color="#14532d" />
-                    </mesh>
-                )}
-                {type === 1 && ( // Oak
-                    <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                        <dodecahedronGeometry args={[25 * scaleMod, 0]} />
-                        <meshStandardMaterial color="#166534" />
-                    </mesh>
-                )}
-                {type === 2 && ( // Poplar
-                    <mesh position={[0, 45 * scaleMod, 0]} castShadow>
-                        <cylinderGeometry args={[8 * scaleMod, 12 * scaleMod, 60 * scaleMod]} />
-                        <meshStandardMaterial color="#15803d" />
-                    </mesh>
-                )}
+                    {/* Leaves */}
+                    {type === 0 && ( // Pine
+                        <mesh position={[0, 45 * scaleMod, 0]} castShadow>
+                            <coneGeometry args={[20 * scaleMod, 50 * scaleMod, 16]} />
+                            <meshStandardMaterial color={leavesColor} />
+                        </mesh>
+                    )}
+                    {type === 1 && ( // Oak
+                        <mesh position={[0, 50 * scaleMod, 0]} castShadow>
+                            <dodecahedronGeometry args={[25 * scaleMod, 0]} />
+                            <meshStandardMaterial color={leavesColor} />
+                        </mesh>
+                    )}
+                    {type === 2 && ( // Poplar
+                        <mesh position={[0, 45 * scaleMod, 0]} castShadow>
+                            <cylinderGeometry args={[8 * scaleMod, 12 * scaleMod, 60 * scaleMod]} />
+                            <meshStandardMaterial color={leavesColor} />
+                        </mesh>
+                    )}
+
+                    {item.state === 'burning' && <pointLight color="#f97316" intensity={2} distance={30} decay={2} position={[0, 30, 0]} />}
+                </group>
             </ClickableGroup>
         );
     }

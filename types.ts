@@ -41,6 +41,8 @@ export interface TerrainObject {
   size: number;
   width?: number;
   height?: number;
+  state?: 'normal' | 'burning' | 'burnt' | 'broken';
+  health?: number; // Burn time or durability
 }
 
 export interface Unit {

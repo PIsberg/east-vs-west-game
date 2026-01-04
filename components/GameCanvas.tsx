@@ -481,6 +481,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
+    // Terrain Logic (Burning & Destruction)
+    terrainRef.current.forEach(t => {
+      if (t.type === 'tree') {
+        // Burning Logic
+        if (t.state === 'burning') {
+          t.health = (t.health || 0) * 0.99 - 0.1; // Burn down
+          if ((t.health || 0) <= 0) {
+            t.state = 'burnt';
+          }
+        }
+
+        // Tank Crushing Logic
+        if (t.state !== 'broken' && t.state !== 'burnt') { // Can crush normal or burning trees
+          // Find heavy vehicles colliding with tree
+          const crusher = unitsRef.current.find(u =>
+            (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY) && // Check Types
+            Math.abs(u.position.x - t.x) < 20 && Math.abs(u.position.y - t.y) < 20 // Collision box
+          );
+          if (crusher) {
+            t.state = 'broken';
+            soundService.playHitSound(); // Crunch sound?
+          }
+        }
+      }
+    });
+
     // Units Logic
     unitsRef.current.forEach(unit => {
       const lifeTime = Date.now() - (unit.spawnTime || 0);
@@ -855,6 +881,81 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.health = 0;
       }
     });
+
+    // Projectiles Logic
+    projectilesRef.current.forEach((p, i) => {
+      p.position.x += p.velocity.x;
+      p.position.y += p.velocity.y;
+      p.distanceTraveled += PROJECTILE_SPEED;
+
+      let hit = false;
+      let explode = false;
+
+      // Check Max Range
+      if (p.distanceTraveled >= p.maxRange) {
+        explode = true;
+      }
+
+      // Check Collision (Simple Circle)
+      if (!explode) {
+        const target = unitsRef.current.find(u => {
+          if (u.team === p.team) return false;
+          // Air vs Ground check
+          if (p.targetType === 'air' && !(UNIT_CONFIG[u.type] as any).isFlying && u.type !== UnitType.AIRBORNE) return false;
+          if (p.targetType === 'ground' && (UNIT_CONFIG[u.type] as any).isFlying) return false; // Ground missiles don't hit planes randomly usually
+
+          const hitDist = (u.width + u.height) / 4; // Approx radius
+          return Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) < hitDist;
+        });
+
+        if (target) {
+          hit = true;
+          explode = true;
+          target.health -= p.damage;
+          // Blood or Sparks
+          if (target.type === UnitType.SOLDIER || target.type === UnitType.RAMBO) {
+            particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
+          }
+        }
+      }
+
+      if (explode) {
+        projectilesRef.current.splice(i, 1);
+        soundService.playExplosionSound(); // Or hit sound
+
+        // Explosion Effect
+        for (let k = 0; k < 5; k++) {
+          particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 15, color: '#fbbf24', size: 4 });
+        }
+
+        // Area Damage (Explosion Radius)
+        if (p.explosionRadius) {
+          unitsRef.current.forEach(u => {
+            if (u.team !== p.team) {
+              const d = Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2);
+              if (d < p.explosionRadius!) {
+                u.health -= p.damage * (1 - d / p.explosionRadius!);
+              }
+            }
+          });
+        }
+
+        // Tree Ignition Logic
+        if (p.explosionRadius || p.isHeavy || p.damage > 30) {
+          terrainRef.current.forEach(t => {
+            if (t.type === 'tree' && t.state !== 'burnt' && t.state !== 'broken') {
+              if (Math.abs(t.x - p.position.x) < 30 && Math.abs(t.y - p.position.y) < 30) {
+                if (Math.random() < 0.6) {
+                  t.state = 'burning';
+                  t.health = 500 + Math.random() * 500;
+                }
+              }
+            }
+          });
+        }
+      }
+    });
+
 
     particlesRef.current.forEach((p, i) => {
       if (p.velocity) {
