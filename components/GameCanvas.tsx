@@ -567,6 +567,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
 
         if (config.isFlying) {
+          unit.isInCover = false; // Force out of cover (Flyers never take cover)
           let target: Unit | null = null, minDist = 600;
           unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
 
@@ -808,7 +809,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // AA targets Drones AND Descending Paratroopers
           let target = unitsRef.current.find(u => {
             if (u.team === unit.team) return false;
-            const isAirTarget = u.type === UnitType.DRONE || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
+            const isAirTarget = u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
             return isAirTarget && Math.sqrt((u.position.x - unit.position.x) ** 2 + (u.position.y - unit.position.y) ** 2) < range;
           });
 
@@ -911,7 +912,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (target) {
           hit = true;
           explode = true;
-          target.health -= p.damage;
+
+          let damage = p.damage;
+          // Vulnerability: Helicopters take QUADRUPLE damage from Anti-Air
+          if (target.type === UnitType.HELICOPTER && p.sourceType === UnitType.ANTI_AIR) {
+            damage *= 4; // Hard Counter
+          }
+
+          target.health -= damage;
           // Blood or Sparks
           if (target.type === UnitType.SOLDIER || target.type === UnitType.RAMBO) {
             particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });

@@ -66,11 +66,11 @@ export const UNIT_CONFIG = {
   },
   [UnitType.HELICOPTER]: {
     cost: 150,
-    health: 120,
+    health: 100, // Nerfed HP
     damage: 25, // Rapid fire
     speed: 1.2,
     range: 250,
-    attackSpeed: 10, // Very fast fire rate
+    attackSpeed: 25, // Slower fire rate (was 10)
     width: 45,
     height: 20,
     colorWest: '#0e7490', // Cyan-ish
@@ -179,10 +179,10 @@ export const UNIT_CONFIG = {
   [UnitType.ANTI_AIR]: {
     cost: 50,
     health: 40,
-    damage: 20, // 1-shot drone (15hp), 2-shot plane (40hp)
+    damage: 60, // 1-shot Heli (w/ 2x multiplier), 1-shot Drone
     speed: 0.5,
-    range: 400,
-    attackSpeed: 200, // Slow reload
+    range: 400, // Significant range advantage over Heli (250)
+    attackSpeed: 50, // Fast Check
     width: 30,
     height: 20,
     colorWest: '#0f766e',
