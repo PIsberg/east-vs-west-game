@@ -608,6 +608,109 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                 }
 
                 {
+                    unit.type === UnitType.HELICOPTER && (
+                        <group position={[0, 15, 0]}>
+                            {/* Body (Bubble) */}
+                            <mesh castShadow>
+                                <sphereGeometry args={[8, 16, 16]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {/* Tail Boom */}
+                            <mesh position={[0, 0, -12]}>
+                                <cylinderGeometry args={[2, 4, 16]} rotation={[Math.PI / 2, 0, 0]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {/* Tail Rotor */}
+                            <mesh position={[1, 0, -20]} rotation={[0, 0, (Date.now() / 50)]}>
+                                <boxGeometry args={[1, 8, 1]} />
+                                <meshStandardMaterial color="#333" />
+                            </mesh>
+                            {/* Main Rotor Shaft */}
+                            <mesh position={[0, 8, 0]}>
+                                <cylinderGeometry args={[1, 1, 4]} />
+                                <meshStandardMaterial color="#333" />
+                            </mesh>
+                            {/* Main Rotor Blades (Spinning) */}
+                            <group position={[0, 10, 0]} rotation={[0, (Date.now() / 50), 0]}>
+                                <mesh>
+                                    <boxGeometry args={[40, 0.5, 3]} />
+                                    <meshStandardMaterial color="#111" />
+                                </mesh>
+                                <mesh rotation={[0, Math.PI / 2, 0]}>
+                                    <boxGeometry args={[40, 0.5, 3]} />
+                                    <meshStandardMaterial color="#111" />
+                                </mesh>
+                            </group>
+                            {/* Skids */}
+                            <mesh position={[-4, -8, 0]}>
+                                <boxGeometry args={[1, 1, 16]} />
+                                <meshStandardMaterial color="#444" />
+                            </mesh>
+                            <mesh position={[4, -8, 0]}>
+                                <boxGeometry args={[1, 1, 16]} />
+                                <meshStandardMaterial color="#444" />
+                            </mesh>
+                            <mesh position={[-4, -5, 4]} rotation={[0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
+                            <mesh position={[4, -5, 4]} rotation={[0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
+                            <mesh position={[-4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
+                            <mesh position={[4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
+                        </group>
+                    )
+                }
+                {
+                    unit.type === UnitType.SNIPER && (
+                        <group position={[0, 0, 0]}>
+                            {/* Ghillie Suit / Camo Body */}
+                            <mesh position={[0, 16, 0]} castShadow>
+                                <sphereGeometry args={[3.5, 16, 16]} />
+                                <meshStandardMaterial color="#fca5a5" /> {/* Skin */}
+                                <mesh position={[0, 1, 0]}> {/* Boonie Hat */}
+                                    <cylinderGeometry args={[5, 4, 1.5]} />
+                                    <meshStandardMaterial color="#3f6212" /> {/* Dark Green */}
+                                </mesh>
+                            </mesh>
+                            <mesh position={[0, 9, 0]} castShadow>
+                                <boxGeometry args={[6, 10, 4]} />
+                                <meshStandardMaterial color="#3f6212" /> {/* Camo Body */}
+                            </mesh>
+                            {/* Arms Aiming */}
+                            <mesh position={[-4, 10, 2]} rotation={[-0.2, 0, 0.2]}>
+                                <boxGeometry args={[2.5, 9, 2.5]} />
+                                <meshStandardMaterial color="#3f6212" />
+                            </mesh>
+                            <mesh position={[4, 10, 2]} rotation={[-1.2, 0.4, -0.2]}>
+                                <boxGeometry args={[2.5, 9, 2.5]} />
+                                <meshStandardMaterial color="#3f6212" />
+                                {/* Long Rifle */}
+                                <group position={[0, -6, 2]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <mesh position={[0, 6, 0]}> {/* Stock & Body */}
+                                        <boxGeometry args={[1.5, 12, 2]} />
+                                        <meshStandardMaterial color="#3e3228" /> // Wood/Dark
+                                    </mesh>
+                                    <mesh position={[0, 14, 0]}> {/* Long Barrel */}
+                                        <cylinderGeometry args={[0.5, 0.6, 16]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                    <mesh position={[0, 8, 1.5]}> {/* Scope */}
+                                        <cylinderGeometry args={[0.8, 0.8, 6]} rotation={[Math.PI / 2, 0, 0]} />
+                                        <meshStandardMaterial color="#000" />
+                                    </mesh>
+                                </group>
+                            </mesh>
+                            {/* Legs (Prone or Standing?) Standing for now */}
+                            <mesh position={[-2, 2, 0]}>
+                                <boxGeometry args={[2.5, 9, 2.5]} />
+                                <meshStandardMaterial color="#3f6212" />
+                            </mesh>
+                            <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}>
+                                <boxGeometry args={[2.5, 9, 2.5]} />
+                                <meshStandardMaterial color="#3f6212" />
+                            </mesh>
+                        </group>
+                    )
+                }
+
+                {
                     unit.type === UnitType.NAPALM && (
                         <group>
                             <mesh rotation={[-Math.PI / 2, 0, 0]}>

@@ -13,8 +13,8 @@ export const MILLISECONDS_PER_FRAME = 1000 / FPS;
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
     cost: 40,
-    health: 60,
-    damage: 100,
+    health: 210, // Buffed to withstand 2 shots (90*2 = 180)
+    damage: 90,
     speed: 0.6,
     range: 220,
     attackSpeed: 100,
@@ -39,12 +39,12 @@ export const UNIT_CONFIG = {
   [UnitType.ARTILLERY]: {
     cost: 55,
     health: 30,
-    damage: 25, // Limited impact
-    explosionRadius: 40, // Small splash
+    damage: 25,
+    explosionRadius: 40,
     speed: 0,
     deployDistance: 80,
-    range: 700, // Long distance
-    attackSpeed: 500, // Very smooth/occasional (approx 8s)
+    range: 700,
+    attackSpeed: 500,
     width: 35,
     height: 30,
     colorWest: '#1e3a8a',
@@ -62,6 +62,31 @@ export const UNIT_CONFIG = {
     colorWest: '#2563eb',
     colorEast: '#dc2626',
   },
+  [UnitType.HELICOPTER]: {
+    cost: 150,
+    health: 120,
+    damage: 25, // Rapid fire
+    speed: 1.2,
+    range: 250,
+    attackSpeed: 10, // Very fast fire rate
+    width: 45,
+    height: 20,
+    colorWest: '#0e7490', // Cyan-ish
+    colorEast: '#be123c', // Rose
+    isFlying: true,
+  },
+  [UnitType.SNIPER]: {
+    cost: 80,
+    health: 10,
+    damage: 80, // High single shot damage
+    speed: 0.4, // Slow movement
+    range: 350, // Very long range (outranges tanks)
+    attackSpeed: 200, // Very slow reload
+    width: 16,
+    height: 16,
+    colorWest: '#15803d', // Green (Camo)
+    colorEast: '#991b1b',
+  },
   [UnitType.AIRBORNE]: {
     cost: 60,
     health: 15,
@@ -76,7 +101,7 @@ export const UNIT_CONFIG = {
   },
   [UnitType.AIRSTRIKE]: {
     cost: 90,
-    health: 40, // Airplanes now have health (takes 2 hits of 20 dmg)
+    health: 40,
     damage: 0,
     speed: 0,
     range: 0,

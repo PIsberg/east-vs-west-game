@@ -17,6 +17,8 @@ export enum UnitType {
   DRONE = 'DRONE',
   ANTI_AIR = 'ANTI_AIR',
   NUKE = 'NUKE',
+  HELICOPTER = 'HELICOPTER',
+  SNIPER = 'SNIPER',
 }
 
 export enum UnitState {

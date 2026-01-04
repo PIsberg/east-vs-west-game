@@ -86,6 +86,29 @@ const TankMineIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 
+const HelicopterIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M2 8h20" strokeWidth="2" /> {/* Main Rotor */}
+    <path d="M12 8v4" strokeWidth="2" /> {/* Rotor Shaft */}
+    <path d="M6 12h12c2 0 3 2 3 5v1H3v-1c0-3 1-5 3-5z" fill="currentColor" fillOpacity="0.2" /> {/* Body */}
+    <path d="M12 12v-1" />
+    <path d="M14 12h2" />
+    <circle cx="20" cy="10" r="3" strokeWidth="1.5" strokeDasharray="2 2" /> {/* Tail Rotor Effect */}
+    <path d="M5 18h14" strokeWidth="2" /> {/* Skids */}
+  </svg>
+);
+
+const SniperIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="8" strokeWidth="1.5" />
+    <line x1="12" y1="4" x2="12" y2="8" strokeWidth="1.5" />
+    <line x1="12" y1="16" x2="12" y2="20" strokeWidth="1.5" />
+    <line x1="4" y1="12" x2="8" y2="12" strokeWidth="1.5" />
+    <line x1="16" y1="12" x2="20" y2="12" strokeWidth="1.5" />
+    <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+  </svg>
+);
+
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[]>([]);
@@ -202,10 +225,12 @@ const App: React.FC = () => {
     const UNIT_COUNTERS: Record<UnitType, React.ReactNode[]> = {
       [UnitType.SOLDIER]: [<User size={8} key="u" />],
       [UnitType.RAMBO]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.SNIPER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MINE_PERSONAL]: [<User size={8} key="u" />],
       [UnitType.TANK]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
       [UnitType.ARTILLERY]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
-      [UnitType.ANTI_AIR]: [<Plane size={8} key="p" />],
+      [UnitType.HELICOPTER]: [<Shield size={8} key="s" />, <Plane size={8} key="p" />],
+      [UnitType.ANTI_AIR]: [<Plane size={8} key="p" />, <CircleDashed size={8} key="c" />],
       [UnitType.DRONE]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MINE_TANK]: [<Shield size={8} key="s" />],
       [UnitType.AIRBORNE]: [<User size={8} key="u" />],
@@ -245,13 +270,15 @@ const App: React.FC = () => {
       <div className={`flex flex-col gap-3 ${isWest ? "mr-4" : "ml-4"}`}>
         {renderGroup("Infantry", [
           { type: UnitType.SOLDIER, label: "SQUAD", icon: <SquadIcon size={16} /> },
+          { type: UnitType.SNIPER, label: "SNIPER", icon: <SniperIcon size={16} /> },
           { type: UnitType.RAMBO, label: "RAMBO", icon: <BandanaIcon size={16} />, special: true },
           { type: UnitType.MINE_PERSONAL, label: "P.MINE", icon: <PersonalMineIcon size={14} /> },
         ])}
         {renderGroup("Vehicles", [
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
           { type: UnitType.ARTILLERY, label: "ARTILLERY", icon: <ArtilleryIcon size={16} /> },
-          { type: UnitType.ANTI_AIR, label: "ANTI-AIRCRAFT", icon: <AntiAirIcon size={16} /> },
+          { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
+          { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
           { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> }
         ])}

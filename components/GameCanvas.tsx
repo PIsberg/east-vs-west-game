@@ -505,8 +505,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (config.isFlying) {
           let target: Unit | null = null, minDist = 600;
           unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
-          if (target) { const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x); moveX = Math.cos(a) * config.speed; moveY = Math.sin(a) * config.speed; }
+
+          if (target) {
+            const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
+            if (unit.type === UnitType.HELICOPTER) {
+              // Helicopter Behaviour: maintain range
+              const dist = Math.sqrt((target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
+              if (dist > config.range * 0.8) {
+                moveX = Math.cos(a) * config.speed;
+                moveY = Math.sin(a) * config.speed;
+              } else {
+                // Hover / slight jitter
+                moveX = (Math.random() - 0.5) * 0.5;
+                moveY = (Math.random() - 0.5) * 0.5;
+              }
+            } else {
+              // Drone / Other: Kamikaze
+              moveX = Math.cos(a) * config.speed;
+              moveY = Math.sin(a) * config.speed;
+            }
+          } else {
+            // No target, fly forward
+            moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
+          }
         } else {
+
+
           // Ground Units Logic
           let movingToHill = false;
 
@@ -742,14 +766,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // Optimized Targeting
           const potentialTargets = spatialHash.current.query(unit.position.x, unit.position.y, range);
           let target = potentialTargets.find(o => {
-            if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.DRONE || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
-            // Standard units cannot target descending paratroopers
+            if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
+
+            // Drones are hard to hit for standard units, EXCEPT Helicopters
+            if (o.type === UnitType.DRONE && unit.type !== UnitType.HELICOPTER) return false;
+
+            // Standard units cannot target descending paratroopers (except Heli/AA)
             const oLife = Date.now() - (o.spawnTime || 0);
-            if (o.type === UnitType.AIRBORNE && oLife < 3000) return false;
+            if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
 
             return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
           });
           if (target) {
+            // Sniper Accuracy Check
+            if (unit.type === UnitType.SNIPER) {
+              if (Math.random() > 0.7) { // 30% Miss Chance
+                // Miss logic
+                const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
+                projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type });
+                unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
+                return;
+              }
+            }
+
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
             // Artillery Spread
             let spread = 0;
