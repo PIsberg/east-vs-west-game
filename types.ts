@@ -102,6 +102,7 @@ export interface GameState {
     [Team.WEST]: number;
     [Team.EAST]: number;
   };
+  weather: 'clear' | 'rain';
 }
 
 export interface Flyover {

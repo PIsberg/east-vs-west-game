@@ -44,6 +44,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const terraformRef = useRef<TerrainObject[]>([]); // To store new terrain features like craters if we want? Or just particles.
   const missilesRef = useRef<Missile[]>([]);
   const flashOpacity = useRef(0); // For nuke flash
+  const weatherRef = useRef<'clear' | 'rain'>('clear');
+  const weatherTimerRef = useRef(Date.now() + 10000); // First rain check in 10s
+
+  // Debug Keys
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'r') {
+        weatherRef.current = weatherRef.current === 'clear' ? 'rain' : 'clear';
+        weatherTimerRef.current = Date.now() + 20000; // Lock state for 20s
+        console.log("Debug: Weather toggled to", weatherRef.current);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     // START FRESH: Avoid Strict Mode duplication by using a local array initially
@@ -448,6 +463,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (Math.abs(fly.currentX) > CANVAS_WIDTH + 300) flyoversRef.current.splice(i, 1);
     }
 
+    // Weather Logic
+    if (Date.now() > weatherTimerRef.current) {
+      if (weatherRef.current === 'clear') {
+        // Start Rain (15-30s duration)
+        if (Math.random() < 0.3) { // 30% chance to rain after a clear period
+          weatherRef.current = 'rain';
+          weatherTimerRef.current = Date.now() + 15000 + Math.random() * 15000;
+        } else {
+          // Stay clear for another 20s
+          weatherTimerRef.current = Date.now() + 20000;
+        }
+      } else {
+        // Stop Rain (Clear for 30-60s)
+        weatherRef.current = 'clear';
+        weatherTimerRef.current = Date.now() + 30000 + Math.random() * 30000;
+      }
+    }
+
     // Units Logic
     unitsRef.current.forEach(unit => {
       const lifeTime = Date.now() - (unit.spawnTime || 0);
@@ -501,7 +534,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       unit.isOnHill = terrainRef.current.some(t => t.type === 'hill' && Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < t.size * 0.7);
 
       if (unit.state === UnitState.MOVING && !isDescent) {
-        let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
+        // Rain Penalty: Ground units move slower
+        const rainPenalty = (weatherRef.current === 'rain' && !config.isFlying) ? 0.6 : 1.0;
+        let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * rainPenalty;
         let moveY = Math.sin(time * 0.004 + parseInt(unit.id, 36)) * 0.3;
 
 
@@ -859,7 +894,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     });
 
     unitsRef.current = unitsRef.current.filter(u => u.health > 0);
-    onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current });
+    onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current });
   }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
 
   // Game Loop
@@ -888,6 +923,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         missiles={missilesRef.current}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
+        weather={weatherRef.current}
       />
 
       {flashOpacity.current > 0 && (

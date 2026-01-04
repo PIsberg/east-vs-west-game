@@ -24,7 +24,53 @@ interface GameSceneProps {
     missiles: any[];
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
+    weather: 'clear' | 'rain';
 }
+
+const RainEffect = () => {
+    // Create 1000 rain drops
+    const count = 1500;
+    const positions = useMemo(() => {
+        const pos = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            pos[i * 3] = (Math.random() - 0.5) * 1600 + 400; // X: Centered at 400, spread +/- 800
+            pos[i * 3 + 1] = Math.random() * 400 + 200;      // Y: Start high
+            pos[i * 3 + 2] = (Math.random() - 0.5) * 1200 + 400; // Z: Centered at 400, spread +/- 600
+        }
+        return pos;
+    }, []);
+
+    const rainRef = useRef<THREE.Points>(null!);
+
+    useFrame((state, delta) => {
+        if (!rainRef.current) return;
+        // Simple physics: move down
+        const positions = rainRef.current.geometry.attributes.position.array as Float32Array;
+        const speed = 450 * delta;
+
+        for (let i = 0; i < count; i++) {
+            positions[i * 3 + 1] -= speed;
+            if (positions[i * 3 + 1] < 0) {
+                positions[i * 3 + 1] = 400 + Math.random() * 200; // Reset to top with variation
+            }
+        }
+        rainRef.current.geometry.attributes.position.needsUpdate = true;
+    });
+
+    return (
+        <points ref={rainRef}>
+            <bufferGeometry>
+                <bufferAttribute
+                    attach="attributes-position"
+                    count={count}
+                    array={positions}
+                    itemSize={3}
+                />
+            </bufferGeometry>
+            <pointsMaterial color="#a5f3fc" size={2} transparent opacity={0.6} sizeAttenuation={false} />
+        </points>
+    );
+};
 
 // -- Assets & Materials --
 const MAT_WEST = new THREE.MeshStandardMaterial({ color: '#1d4ed8' });
@@ -616,8 +662,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                             </mesh>
                             {/* Tail Boom */}
-                            <mesh position={[0, 0, -12]}>
-                                <cylinderGeometry args={[2, 4, 16]} rotation={[Math.PI / 2, 0, 0]} />
+                            <mesh position={[0, 0, -12]} rotation={[Math.PI / 2, 0, 0]}>
+                                <cylinderGeometry args={[2, 4, 16]} />
                                 <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                             </mesh>
                             {/* Tail Rotor */}
@@ -691,8 +737,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                         <cylinderGeometry args={[0.5, 0.6, 16]} />
                                         <meshStandardMaterial color="#111" />
                                     </mesh>
-                                    <mesh position={[0, 8, 1.5]}> {/* Scope */}
-                                        <cylinderGeometry args={[0.8, 0.8, 6]} rotation={[Math.PI / 2, 0, 0]} />
+                                    <mesh position={[0, 8, 1.5]} rotation={[Math.PI / 2, 0, 0]}> {/* Scope */}
+                                        <cylinderGeometry args={[0.8, 0.8, 6]} />
                                         <meshStandardMaterial color="#000" />
                                     </mesh>
                                 </group>
@@ -898,7 +944,7 @@ const Missile3D = ({ m }: { m: any }) => {
         <group position={[m.current.x, height, m.current.y]} rotation={[0, -angle, 0]}>
             <group rotation={[Math.PI / 4 * progress, 0, 0]}> {/* Pitch down as it gets closer */}
                 <mesh rotation={[0, 0, Math.PI / 2]}>
-                    <capsuleGeometry args={[4, 15, 4, 8]} />
+                    <cylinderGeometry args={[4, 4, 15, 8]} />
                     <meshStandardMaterial color="#f97316" emissive="#f97316" />
                 </mesh>
                 <pointLight intensity={2} distance={50} color="#f97316" />
@@ -975,16 +1021,19 @@ const GroundPlane = ({ onCanvasClick, targetingInfo }: { onCanvasClick: (x: numb
 
 // -- Main Scene Component --
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather }) => {
 
 
 
     return (
         <Canvas shadows camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
-            <color attach="background" args={['#87CEEB']} />
-            <fog attach="fog" args={['#87CEEB', 500, 1500]} />
+            <color attach="background" args={[weather === 'rain' ? '#334155' : '#87CEEB']} />
+            <fog attach="fog" args={[weather === 'rain' ? '#334155' : '#87CEEB', 500, 1500]} />
 
-            <ambientLight intensity={0.6} />
+            {/* Rain Effect */}
+            {weather === 'rain' && <RainEffect />}
+
+            <ambientLight intensity={weather === 'rain' ? 0.3 : 0.6} />
             <directionalLight
                 position={[200, 500, 200]}
                 intensity={1.5}

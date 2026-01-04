@@ -115,8 +115,10 @@ const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>({
     units: [], projectiles: [], particles: [],
     score: { [Team.WEST]: 0, [Team.EAST]: 0 },
-    money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }
+    money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY },
+    weather: 'clear'
   });
+  const [weather, setWeather] = useState<'clear' | 'rain'>('clear');
   const [commentary, setCommentary] = useState<string>("");
   const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
@@ -131,8 +133,8 @@ const App: React.FC = () => {
 
   const resetGame = () => {
     setGameKey(prev => prev + 1);
-    setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY } });
-    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null);
+    setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' });
+    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear');
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
@@ -309,7 +311,13 @@ const App: React.FC = () => {
 
       <div className="w-full max-w-4xl flex justify-between items-center mb-3 bg-stone-800 p-3 rounded-lg shadow-lg border border-stone-600">
         <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">Score: {gameState.score[Team.WEST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
-        <div className="text-center flex flex-col items-center"><h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1><button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button></div>
+        <div className="text-center flex flex-col items-center">
+          <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
+          <div className="flex items-center gap-4">
+            <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
+            {gameState.weather === 'rain' ? <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div> : <div className="flex items-center gap-1 text-amber-300"><Target size={14} className="opacity-0" /><span className="text-[10px] font-bold opacity-0">CLEAR</span></div>}
+          </div>
+        </div>
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">Score: {gameState.score[Team.EAST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
