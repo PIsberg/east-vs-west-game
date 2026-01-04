@@ -109,6 +109,12 @@ const SniperIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 
+const TeslaIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+);
+
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[]>([]);
@@ -240,6 +246,7 @@ const App: React.FC = () => {
       [UnitType.MISSILE_STRIKE]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
       [UnitType.NUKE]: [<Skull size={8} key="k" />],
       [UnitType.NAPALM]: [<User size={8} key="u" />],
+      [UnitType.TESLA]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
     };
 
     const renderGroup = (title: string, units: any[]) => (
@@ -278,6 +285,7 @@ const App: React.FC = () => {
         ])}
         {renderGroup("Vehicles", [
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
+          { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.ARTILLERY, label: "ARTILLERY", icon: <ArtilleryIcon size={16} /> },
           { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },

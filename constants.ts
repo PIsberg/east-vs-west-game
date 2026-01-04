@@ -188,6 +188,18 @@ export const UNIT_CONFIG = {
     colorWest: '#0f766e',
     colorEast: '#991b1b',
   },
+  [UnitType.TESLA]: {
+    cost: 175, // Expensive
+    health: 150, // Tanky
+    damage: 110, // 1-shot Rambo (100hp) & Snipers
+    speed: 0.55,
+    range: 280, // Mid range
+    attackSpeed: 200, // Cooldown between bursts
+    width: 32,
+    height: 24,
+    colorWest: '#0ea5e9', // Sky Blue
+    colorEast: '#6366f1', // Indigo
+  },
   [UnitType.NUKE]: {
     cost: 1000,
     health: 40,

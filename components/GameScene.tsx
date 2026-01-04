@@ -423,6 +423,31 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                     )
                 }
                 {
+                    unit.type === UnitType.TESLA && (
+                        <group>
+                            <mesh position={[0, 8, 0]} castShadow>
+                                <boxGeometry args={[32, 16, 24]} />
+                                <meshStandardMaterial color={color} />
+                            </mesh>
+                            {/* Tesla Coil Base */}
+                            <mesh position={[0, 20, 0]} castShadow>
+                                <cylinderGeometry args={[8, 10, 4]} />
+                                <meshStandardMaterial color="#444" />
+                            </mesh>
+                            {/* Coil Rings */}
+                            <mesh position={[0, 26, 0]} castShadow>
+                                <cylinderGeometry args={[4, 4, 12]} />
+                                <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={2} />
+                            </mesh>
+                            {/* Top Sphere */}
+                            <mesh position={[0, 34, 0]} castShadow>
+                                <sphereGeometry args={[5, 16, 16]} />
+                                <meshStandardMaterial color="#e0f2fe" emissive="#e0f2fe" emissiveIntensity={10} />
+                            </mesh>
+                        </group>
+                    )
+                }
+                {
                     unit.type === UnitType.ARTILLERY && (
                         <group>
                             {/* Modern SPG Hull */}
@@ -787,6 +812,24 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
 };
 
 const Particle3D = ({ p }: { p: Particle }) => {
+    // Lightning / Beam Logic
+    if (p.targetPos) {
+        const dx = p.targetPos.x - p.position.x;
+        const dy = p.targetPos.y - p.position.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const angle = -Math.atan2(dy, dx);
+        const midX = (p.position.x + p.targetPos.x) / 2;
+        const midY = (p.position.y + p.targetPos.y) / 2;
+
+        return (
+            <mesh position={[midX, 20, midY]} rotation={[0, angle, 0]}>
+                <boxGeometry args={[dist, p.size, p.size]} />
+                <meshBasicMaterial color={p.color} toneMapped={false} />
+                <pointLight distance={50} intensity={2} color={p.color} />
+            </mesh>
+        );
+    }
+
     return (
         <mesh position={[p.position.x, 10 + (30 - p.life), p.position.y]}>
             <boxGeometry args={[p.size, p.size, p.size]} />

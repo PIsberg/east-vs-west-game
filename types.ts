@@ -19,6 +19,7 @@ export enum UnitType {
   NUKE = 'NUKE',
   HELICOPTER = 'HELICOPTER',
   SNIPER = 'SNIPER',
+  TESLA = 'TESLA',
 }
 
 export enum UnitState {
@@ -58,11 +59,15 @@ export interface Unit {
   width: number;
   height: number;
   spawnTime?: number;
-  isOnHill?: boolean;
+  // Cover Logic
+  coverId?: string | null; // ID of tree/rock
+  coverType?: 'tree' | 'rock';
   isInCover?: boolean;
   coverEnterTime?: number;
-  coverDuration?: number;
-  lastCoverId?: string; // To avoid snapping back to the same cover immediately
+  coverDuration?: number; // How long to stay
+  lastCoverId?: string | null; // Don't reuse same cover immediately
+  burstCount?: number; // For burst fire units (Tesla)
+  isOnHill?: boolean;
   squadId?: string;
   planeAltitudeAtDrop?: number;
 }
@@ -90,6 +95,7 @@ export interface Particle {
   size: number;
   velocity?: Vector2D; // For dynamic movement
   drag?: number;      // For friction/slowdown
+  targetPos?: Vector2D; // For Lightning beams
 }
 
 export interface GameState {

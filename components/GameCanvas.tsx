@@ -568,8 +568,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         if (config.isFlying) {
           unit.isInCover = false; // Force out of cover (Flyers never take cover)
-          let target: Unit | null = null, minDist = 600;
-          unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
+          let target: Unit | null = null;
+
+          // Helicopter Priority: Seek Tesla
+          if (unit.type === UnitType.HELICOPTER) {
+            target = unitsRef.current.find(o => o.team !== unit.team && o.type === UnitType.TESLA) || null;
+          }
+
+          if (!target) {
+            let minDist = 600;
+            unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
+          }
 
           if (target) {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
@@ -830,38 +839,91 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // Standard Targeting (Ground)
           // Optimized Targeting
           const potentialTargets = spatialHash.current.query(unit.position.x, unit.position.y, range);
-          let target = potentialTargets.find(o => {
-            if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
 
-            // Drones are hard to hit for standard units, EXCEPT Helicopters
-            if (o.type === UnitType.DRONE && unit.type !== UnitType.HELICOPTER) return false;
+          let target = null;
 
-            // Standard units cannot target descending paratroopers (except Heli/AA)
-            const oLife = Date.now() - (o.spawnTime || 0);
-            if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
+          if (unit.type === UnitType.TESLA) {
+            // Tesla Targeting: STRICTLY Infantry Only
+            target = potentialTargets.find(o =>
+              o.team !== unit.team &&
+              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.RAMBO || o.type === UnitType.AIRBORNE) &&
+              Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
+            );
+            // No fallback - completely ignores vehicles
 
-            return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
-          });
-          if (target) {
-            // Sniper Accuracy Check
-            if (unit.type === UnitType.SNIPER) {
-              if (Math.random() > 0.7) { // 30% Miss Chance
-                // Miss logic
-                const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
-                projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type });
-                unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
-                return;
+            // Burst Logic
+            if (target) {
+              if (unit.attackCooldown <= 0 || (unit.burstCount || 0) > 0) {
+                if (unit.attackCooldown <= 0) unit.burstCount = 5; // Start Burst
+
+                if ((unit.burstCount || 0) > 0) {
+                  // Fire Lightning
+                  // Instant Hit
+                  target.health -= config.damage;
+                  soundService.playShootSound(); // Zap sound?
+
+                  // Visual Lightning (Blue Beam)
+                  particlesRef.current.push({
+                    id: generateId(),
+                    position: { x: unit.position.x, y: unit.position.y - 10 }, // Origin
+                    velocity: { x: 0, y: 0 },
+                    life: 5, // Short life
+                    color: '#0ea5e9',
+                    size: 2, // Thickness
+                    targetPos: { x: target.position.x, y: target.position.y } // Custom prop for line drawing? need to add to type or hack it
+                  });
+                  // Add Sparks at target
+                  particlesRef.current.push({ id: generateId(), position: { ...target.position }, life: 10, color: '#bae6fd', size: 6 });
+
+                  unit.burstCount = (unit.burstCount || 0) - 1;
+                  unit.attackCooldown = unit.burstCount > 0 ? 5 : config.attackSpeed; // 5 frames between burst shots, then long reload
+                }
               }
+              // If waiting for cooldown, do nothing
+            }
+          } else {
+            // Standard Unit Targeting
+
+            // Helicopter Priority Target: Tesla
+            if (unit.type === UnitType.HELICOPTER) {
+              target = potentialTargets.find(o => o.team !== unit.team && o.type === UnitType.TESLA && Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range);
             }
 
-            const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            // Artillery Spread
-            let spread = 0;
-            if (unit.type === UnitType.ARTILLERY) {
-              spread = (Math.random() - 0.5) * 0.25; // Random spread +/- 0.125 rad (~7 degrees)
+            if (!target) {
+              target = potentialTargets.find(o => {
+                if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
+
+                // Drones are hard to hit for standard units, EXCEPT Helicopters
+                if (o.type === UnitType.DRONE && unit.type !== UnitType.HELICOPTER) return false;
+
+                // Standard units cannot target descending paratroopers (except Heli/AA)
+                const oLife = Date.now() - (o.spawnTime || 0);
+                if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
+
+                return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
+              });
             }
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0), distanceTraveled: 0, targetType: 'ground', explosionRadius: config.explosionRadius, sourceType: unit.type });
-            unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0)); soundService.playShootSound();
+            if (target) {
+              // Sniper Accuracy Check
+              if (unit.type === UnitType.SNIPER) {
+                if (Math.random() > 0.7) { // 30% Miss Chance
+                  // Miss logic
+                  const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
+                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type });
+                  unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
+                  return;
+                }
+              }
+
+              const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
+              // Artillery Spread
+              let spread = 0;
+              if (unit.type === UnitType.ARTILLERY) {
+                spread = (Math.random() - 0.5) * 0.25; // Random spread +/- 0.125 rad (~7 degrees)
+              }
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0), distanceTraveled: 0, targetType: 'ground', explosionRadius: config.explosionRadius, sourceType: unit.type });
+              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0)); soundService.playShootSound();
+            }
           }
         }
       }
