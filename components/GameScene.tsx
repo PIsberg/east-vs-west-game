@@ -290,6 +290,33 @@ const ClickableGroup = ({ onCanvasClick, children, ...props }: any) => {
     );
 };
 
+// -- Reusable Geometries & Materials --
+const GEO_FLASH_CORE = new THREE.ConeGeometry(0.6, 3, 8);
+const GEO_FLASH_OUTER = new THREE.ConeGeometry(1, 4.5, 8, 1, true);
+const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: 'yellow', transparent: true, opacity: 0.9 });
+// Note: Outer material depends on color prop, so we might need to keep it dynamic or cache by color.
+// But mostly it's yellow/orange.
+
+const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: string }) => {
+    // Memoize outer material if color changes infrequent
+    const outerMat = useMemo(() => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide }), [color]);
+
+    return (
+        <group scale={[size, size, size]}>
+            {/* Core */}
+            <mesh position={[1.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_CORE} material={MAT_FLASH_CORE} />
+            {/* Outer */}
+            <mesh position={[2, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_OUTER} material={outerMat} />
+            <pointLight distance={15} intensity={3} color={color} />
+        </group>
+    );
+};
+
+// Shared Assets
+const MAT_HEALTH_BG = new THREE.MeshBasicMaterial({ color: 'gray' });
+const MAT_HEALTH_FG = new THREE.MeshBasicMaterial({ color: '#22c55e' });
+const GEO_HEALTH_BAR = new THREE.BoxGeometry(1, 3, 1);
+
 const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void }) => {
     const config = UNIT_CONFIG[unit.type] as any;
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
@@ -322,15 +349,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
     return (
         <ClickableGroup position={[position[0], position[1] + yOffset, position[2]]} rotation={rotation as any} onCanvasClick={onCanvasClick}>
             <group receiveShadow castShadow>
-                {/* Health Bar (Floating) */}
-                <mesh position={[0, 20, 0]}>
-                    <boxGeometry args={[20, 3, 1]} />
-                    <meshBasicMaterial color="gray" />
-                </mesh>
-                <mesh position={[-10 + 10 * (unit.health / unit.maxHealth), 20, 0.5]}>
-                    <boxGeometry args={[20 * (unit.health / unit.maxHealth), 3, 1]} />
-                    <meshBasicMaterial color="#22c55e" />
-                </mesh>
+                {/* Health Bar (Floating) - Optimized via Scale */}
+                <mesh position={[0, 20, 0]} scale={[20, 1, 1]} geometry={GEO_HEALTH_BAR} material={MAT_HEALTH_BG} />
+                <mesh
+                    position={[-10 + 10 * (unit.health / unit.maxHealth), 20, 0.5]}
+                    scale={[Math.max(0.01, 20 * (unit.health / unit.maxHealth)), 1, 1]}
+                    geometry={GEO_HEALTH_BAR}
+                    material={MAT_HEALTH_FG}
+                />
 
                 {/* Geometry based on Type */}
                 {
@@ -410,14 +436,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
 
                             {/* Muzzle Flash */}
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                <mesh position={[40, 18, 0]}>
-                                    <sphereGeometry args={[8, 8, 8]} />
-                                    <meshBasicMaterial color="orange" transparent opacity={0.8} />
-                                    <mesh position={[2, 0, 0]}>
-                                        <sphereGeometry args={[4, 8, 8]} />
-                                        <meshBasicMaterial color="yellow" />
-                                    </mesh>
-                                </mesh>
+                                <MuzzleFlash size={4} />
                             )}
                         </group>
                     )
@@ -469,10 +488,9 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                             <group position={[0, 18, 0]} rotation={[0, Math.PI / 2, 0]}>
                                 {/* Muzzle Flash (Local coords to Turret) */}
                                 {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                    <mesh position={[0, 20, 40]}>
-                                        <sphereGeometry args={[10, 8, 8]} />
-                                        <meshBasicMaterial color="orange" transparent opacity={0.8} />
-                                    </mesh>
+                                    <group position={[0, 20, 48]}>
+                                        <MuzzleFlash size={7} />
+                                    </group>
                                 )}
                                 {/* Turret Block */}
                                 <mesh position={[0, 0, -4]} castShadow>
@@ -537,9 +555,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                         <meshStandardMaterial color="#1c1917" transparent={transparent} opacity={opacity} />
                                     </mesh>
                                     <mesh position={[0, 6, 0]}>
-                                        <torusGeometry args={[1.5, 0.5, 8, 16]} />
                                         <meshStandardMaterial color="#1c1917" transparent={transparent} opacity={opacity} />
                                     </mesh>
+                                    {unit.attackCooldown > 5 && (
+                                        <group position={[0, 8, 0]} rotation={[0, 0, Math.PI / 2]}>
+                                            <MuzzleFlash size={1.5} />
+                                        </group>
+                                    )}
                                 </group>
                             </mesh>
                             {/* Legs */}
@@ -631,6 +653,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                             <mesh position={[0, 28, 5]} rotation={[-Math.PI / 4, 0, 0]}>
                                 <boxGeometry args={[10, 20, 6]} />
                                 <meshStandardMaterial color="#222" />
+                                {unit.attackCooldown > 35 && (
+                                    <group position={[0, 12, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                                        <MuzzleFlash size={3} />
+                                    </group>
+                                )}
                             </mesh>
                         </group>
                     )
@@ -680,7 +707,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
 
                 {
                     unit.type === UnitType.HELICOPTER && (
-                        <group position={[0, 15, 0]}>
+                        <group position={[0, 15, 0]} rotation={[0, (unit.rotation || 0) - Math.PI / 2, 0]}>
                             {/* Body (Bubble) */}
                             <mesh castShadow>
                                 <sphereGeometry args={[8, 16, 16]} />
@@ -725,6 +752,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                             <mesh position={[4, -5, 4]} rotation={[0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
                             <mesh position={[-4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
                             <mesh position={[4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
+
+                            {/* Muzzle Flashes (Missiles/Guns) */}
+                            {unit.attackCooldown > (config.attackSpeed - 10) && (
+                                <group>
+                                    <group position={[6, -2, 4]} rotation={[0, -Math.PI / 2, 0]}><MuzzleFlash size={2} /></group>
+                                    <group position={[-6, -2, 4]} rotation={[0, -Math.PI / 2, 0]}><MuzzleFlash size={2} /></group>
+                                </group>
+                            )}
                         </group>
                     )
                 }
@@ -803,6 +838,23 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
 };
 
 const Projectile3D = ({ proj }: { proj: Projectile }) => {
+    if (proj.isMissile) {
+        const angle = -Math.atan2(proj.velocity.y, proj.velocity.x);
+        return (
+            <group position={[proj.position.x, 15, proj.position.y]} rotation={[0, angle, 0]}>
+                <mesh rotation={[0, 0, Math.PI / 2]}>
+                    <cylinderGeometry args={[2, 2, 12]} />
+                    <meshStandardMaterial color="#cbd5e1" />
+                </mesh>
+                <mesh position={[-5, 0, 0]} rotation={[0, 0, Math.PI / 2]}> {/* Trail/Fins */}
+                    <boxGeometry args={[4, 8, 1]} />
+                    <meshStandardMaterial color="#94a3b8" />
+                </mesh>
+                {/* Engine Glow */}
+                <pointLight position={[-5, 0, 0]} color="orange" distance={40} intensity={3} />
+            </group>
+        );
+    }
     return (
         <mesh position={[proj.position.x, 15, proj.position.y]}>
             <sphereGeometry args={[3, 8, 8]} />
@@ -826,6 +878,16 @@ const Particle3D = ({ p }: { p: Particle }) => {
                 <boxGeometry args={[dist, p.size, p.size]} />
                 <meshBasicMaterial color={p.color} toneMapped={false} />
                 <pointLight distance={50} intensity={2} color={p.color} />
+            </mesh>
+        );
+    }
+
+    // Scorch Mark / Ground Decal
+    if (p.isGroundDecal) {
+        return (
+            <mesh position={[p.position.x, 0.2, p.position.y]} rotation={[-Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[p.size, 16]} />
+                <meshStandardMaterial color={p.color} transparent opacity={p.life / 600} depthWrite={false} />
             </mesh>
         );
     }

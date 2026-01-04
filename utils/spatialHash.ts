@@ -22,22 +22,26 @@ export class SpatialHash {
     }
 
     query(x: number, y: number, radius: number): Unit[] {
+        const results: Unit[] = [];
+        this.queryCallback(x, y, radius, (u) => results.push(u));
+        return results;
+    }
+
+    queryCallback(x: number, y: number, radius: number, callback: (unit: Unit) => void) {
         const startX = Math.floor((x - radius) / this.cellSize);
         const endX = Math.floor((x + radius) / this.cellSize);
         const startY = Math.floor((y - radius) / this.cellSize);
         const endY = Math.floor((y + radius) / this.cellSize);
 
-        const results: Unit[] = [];
         for (let i = startX; i <= endX; i++) {
             for (let j = startY; j <= endY; j++) {
                 const bucket = this.buckets.get(`${i},${j}`);
                 if (bucket) {
-                    // Push individually to avoid spreadsheet operator overhead in hot loop?
-                    // results.push(...bucket) is fine for JS engine usually.
-                    for (let k = 0; k < bucket.length; k++) results.push(bucket[k]);
+                    for (let k = 0; k < bucket.length; k++) {
+                        callback(bucket[k]);
+                    }
                 }
             }
         }
-        return results;
     }
 }

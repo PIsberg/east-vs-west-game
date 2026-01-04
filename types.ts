@@ -59,6 +59,7 @@ export interface Unit {
   width: number;
   height: number;
   spawnTime?: number;
+  rotation?: number; // Visual rotation (radians)
   // Cover Logic
   coverId?: string | null; // ID of tree/rock
   coverType?: 'tree' | 'rock';
@@ -85,6 +86,7 @@ export interface Projectile {
   distanceTraveled: number;
   targetType?: 'ground' | 'air';
   sourceType?: UnitType; // To track who fired it
+  isMissile?: boolean;
 }
 
 export interface Particle {
@@ -96,6 +98,7 @@ export interface Particle {
   velocity?: Vector2D; // For dynamic movement
   drag?: number;      // For friction/slowdown
   targetPos?: Vector2D; // For Lightning beams
+  isGroundDecal?: boolean;
 }
 
 export interface GameState {

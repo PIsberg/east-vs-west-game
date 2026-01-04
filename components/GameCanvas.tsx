@@ -228,6 +228,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     terrainRef.current = newTerrain;
   }, []);
 
+  // Optimize: Local frame state to drive R3F, decoupled from App state
+  const [frame, setFrame] = useState(0);
+  const lastUiUpdateRef = useRef(0);
+
   const unitsRef = useRef<Unit[]>([]);
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
@@ -559,11 +563,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const currentScale = getScaleAt(unit.position.y);
       unit.isOnHill = terrainRef.current.some(t => t.type === 'hill' && Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < t.size * 0.7);
 
-      if (unit.state === UnitState.MOVING && !isDescent) {
+      if ((unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         // Rain Penalty: Ground units move slower
         const rainPenalty = (weatherRef.current === 'rain' && !config.isFlying) ? 0.6 : 1.0;
         let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * rainPenalty;
+
+        // Artillery Slow Crawl
+        if (unit.type === UnitType.ARTILLERY) {
+          moveX *= 0.3; // Very slow forward movement while active
+        }
+
         let moveY = Math.sin(time * 0.004 + parseInt(unit.id, 36)) * 0.3;
+
+        // Vehicle Dispersion (Avoid Clumping) - OPTIMIZED O(N*k) Zero-Alloc
+        if (!config.isFlying) {
+          spatialHash.current.queryCallback(unit.position.x, unit.position.y, 100, (other) => {
+            if (other.id !== unit.id && other.team === unit.team && !(UNIT_CONFIG[other.type] as any).isFlying) {
+              const dx = unit.position.x - other.position.x;
+              const dy = unit.position.y - other.position.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              const minSep = 90; // Separation radius (increased from 50)
+
+              if (dist < minSep && dist > 0.1) {
+                const push = (minSep - dist) * 0.05; // Stronger push
+                moveX += (dx / dist) * push;
+                moveY += (dy / dist) * push;
+              }
+            }
+          });
+        }
 
 
         if (config.isFlying) {
@@ -582,6 +610,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           if (target) {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
+
+            // Set Rotation for Helicopters
+            if (unit.type === UnitType.HELICOPTER) {
+              unit.rotation = -a; // Invert for 3D logic usually (or check visuals)
+            }
+
             if (unit.type === UnitType.HELICOPTER) {
               // Helicopter Behaviour: maintain range
               const dist = Math.sqrt((target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
@@ -589,9 +623,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 moveX = Math.cos(a) * config.speed;
                 moveY = Math.sin(a) * config.speed;
               } else {
-                // Hover / slight jitter
-                moveX = (Math.random() - 0.5) * 0.5;
-                moveY = (Math.random() - 0.5) * 0.5;
+                // Dynamic Strafing (Orbit/Side-slip)
+                // Move perpendicular to target (a + PI/2)
+                const strafeAngle = a + Math.PI / 2;
+                // Oscillate direction over time (swing back and forth)
+                const strafeFactor = Math.sin(time * 0.001 + (parseInt(unit.id, 36) % 100)) * 0.8;
+
+                moveX = Math.cos(strafeAngle) * config.speed * strafeFactor;
+                moveY = Math.sin(strafeAngle) * config.speed * strafeFactor;
               }
             } else {
               // Drone / Other: Kamikaze
@@ -601,28 +640,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           } else {
             // No target, fly forward
             moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
+            if (unit.type === UnitType.HELICOPTER) unit.rotation = unit.team === Team.WEST ? 0 : Math.PI;
           }
         } else {
 
 
           // Ground Units Logic
           let movingToHill = false;
+          // Check for nearby enemies to decide if we should seek/hold tactical positions (Hills)
+          const hasEnemies = spatialHash.current.query(unit.position.x, unit.position.y, 600).some(u => u.team !== unit.team);
 
           if (!unit.isOnHill) {
-            const hill = terrainRef.current.find(t => {
-              if (t.type !== 'hill') return false;
-              if (Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) > 220) return false;
-              return !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id && Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < t.size * 0.6);
-            });
+            if (hasEnemies) {
+              const hill = terrainRef.current.find(t => {
+                if (t.type !== 'hill') return false;
+                if (Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) > 220) return false;
+                return !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id && Math.sqrt((o.position.x - t.x) ** 2 + (o.position.y - t.y) ** 2) < t.size * 0.6);
+              });
 
-            if (hill) {
-              const a = Math.atan2(hill.y - unit.position.y, hill.x - unit.position.x);
-              moveX = Math.cos(a) * config.speed;
-              moveY = Math.sin(a) * config.speed;
-              movingToHill = true;
+              if (hill) {
+                const a = Math.atan2(hill.y - unit.position.y, hill.x - unit.position.x);
+                moveX = Math.cos(a) * config.speed;
+                moveY = Math.sin(a) * config.speed;
+                movingToHill = true;
+              }
             }
           } else {
-            moveX *= 0.1; moveY *= 0.1; // Slow down on hill
+            // Only slow down (dig in) if enemies are near
+            if (hasEnemies) {
+              moveX *= 0.6; moveY *= 0.6; // Slow down on hill
+            }
           }
 
           // If NOT moving to a hill, check for Cover/Obstacles
@@ -766,11 +813,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     moveY += (dy / Math.abs(dy)) * config.speed * 1.0;
 
                     // BLOCK X movement unless aligned with bridge
-                    if (Math.abs(dy) > 15) {
-                      moveX = 0; // Stop forward movement, only move Y
-                      // Add slight backward push if too close to river bank to avoid clipping
-                      if (Math.abs(unit.position.x - river.x) < 30) {
-                        moveX = (unit.team === Team.WEST ? -1 : 1) * 0.2;
+                    if (Math.abs(dy) > 10) { // Strict alignment (was 15)
+                      moveX = 0; // HARD STOP forward movement
+                      // Strong backward push if touching river bank to prevent "slipping" in
+                      if (Math.abs(unit.position.x - river.x) < (river.width / 2 + 10)) {
+                        // Push back harder
+                        moveX = (unit.team === Team.WEST ? -1 : 1) * 1.5;
                       }
                     } else {
                       // Aligned! Cross.
@@ -827,12 +875,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const fly = flyoversRef.current.find(f => f.team !== unit.team && Math.sqrt((f.currentX - unit.position.x) ** 2 + (f.altitudeY - unit.position.y) ** 2) < range);
             if (fly) {
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type });
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, isMissile: true });
               unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type });
+            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, isMissile: true });
             unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
           }
         } else {
@@ -921,7 +969,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (unit.type === UnitType.ARTILLERY) {
                 spread = (Math.random() - 0.5) * 0.25; // Random spread +/- 0.125 rad (~7 degrees)
               }
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED }, damage: config.damage, maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0), distanceTraveled: 0, targetType: 'ground', explosionRadius: config.explosionRadius, sourceType: unit.type });
+              const isMissile = unit.type === UnitType.HELICOPTER;
+
+              projectilesRef.current.push({
+                id: generateId(),
+                team: unit.team,
+                position: { ...unit.position },
+                velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED },
+                damage: config.damage,
+                maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0),
+                distanceTraveled: 0,
+                targetType: 'ground',
+                explosionRadius: config.explosionRadius,
+                sourceType: unit.type,
+                isMissile
+              });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0)); soundService.playShootSound();
             }
           }
@@ -1000,6 +1062,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Area Damage (Explosion Radius)
         if (p.explosionRadius) {
+          // Artillery / Heavy Weapon Scorch Mark
+          if (p.sourceType === UnitType.ARTILLERY || p.sourceType === UnitType.MISSILE_STRIKE) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: p.position.x, y: p.position.y },
+              life: 600, // 10 seconds
+              color: '#292524', // Stone 800 - dark scorch
+              size: p.explosionRadius * 1.5,
+              isGroundDecal: true
+            });
+          }
+
           unitsRef.current.forEach(u => {
             if (u.team !== p.team) {
               const d = Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2);
@@ -1042,6 +1116,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
     deadUnits.forEach(u => {
+      // Kill Reward: Award 40% of unit cost to enemy
+      const reward = Math.floor(((UNIT_CONFIG[u.type] as any).cost || 0) * 0.4);
+      if (reward > 0) {
+        const killerTeam = u.team === Team.WEST ? Team.EAST : Team.WEST;
+        moneyRef.current[killerTeam] += reward;
+      }
+
       if (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY) {
         soundService.playExplosionSound();
         for (let k = 0; k < 15; k++) {
@@ -1065,18 +1146,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     });
 
     unitsRef.current = unitsRef.current.filter(u => u.health > 0);
-    onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current });
+
+    // UI Update Strategy:
+    // 1. Force R3F re-render locally 60fps (for smooth movement)
+    setFrame(f => f + 1);
+
+    // 2. Throttle App/UI updates to 10fps (for score/money/performance)
+    if (Date.now() - lastUiUpdateRef.current > 100) {
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current });
+      lastUiUpdateRef.current = Date.now();
+    }
   }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
 
-  // Game Loop
+  // Stable Loop references
+  const updateRef = useRef(update);
+  updateRef.current = update;
+  const gameOverRef = useRef(gameOver);
+  gameOverRef.current = gameOver;
+
+  // Game Loop - Stable Identity
   const tick = useCallback(() => {
-    // If Game Over, stop updating but keep rendering (frozen state)
-    // Or just stop ticking.
-    if (!gameOver) {
-      update();
+    if (!gameOverRef.current) {
+      try {
+        updateRef.current();
+      } catch (e) {
+        console.error("Game Loop Error:", e);
+      }
       requestRef.current = requestAnimationFrame(tick);
     }
-  }, [update, gameOver]);
+  }, []);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(tick);

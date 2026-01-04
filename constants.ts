@@ -14,7 +14,7 @@ export const WIN_SCORE = 100;
 
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
-    cost: 40,
+    cost: 100,
     health: 210, // Buffed to withstand 2 shots (90*2 = 180)
     damage: 90,
     speed: 0.6,
@@ -42,8 +42,8 @@ export const UNIT_CONFIG = {
     cost: 55,
     health: 30,
     damage: 25,
-    explosionRadius: 40,
-    speed: 0,
+    explosionRadius: 60, // Increased from 40
+    speed: 0.35, // Was 0. Now moves slowly.
     deployDistance: 80,
     range: 700,
     attackSpeed: 500,
@@ -193,7 +193,7 @@ export const UNIT_CONFIG = {
     health: 150, // Tanky
     damage: 110, // 1-shot Rambo (100hp) & Snipers
     speed: 0.55,
-    range: 280, // Mid range
+    range: 140, // Reduced range (nerfed)
     attackSpeed: 200, // Cooldown between bursts
     width: 32,
     height: 24,
@@ -217,7 +217,7 @@ export const UNIT_CONFIG = {
 
 export const PROJECTILE_SPEED = 6;
 export const MONEY_PER_TICK = 0.15;
-export const INITIAL_MONEY = 120;
+export const INITIAL_MONEY = 2000;
 
 export const HILL_RANGE_BONUS = 1.3;
 export const HILL_RELOAD_BONUS = 0.8;

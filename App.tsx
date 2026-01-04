@@ -155,10 +155,10 @@ const App: React.FC = () => {
     const cost = UNIT_CONFIG[type].cost;
     const squadId = Math.random().toString(36).substr(2, 5);
     if (type === UnitType.SOLDIER) {
-      const squad = Array.from({ length: 6 }, (_, i) => ({
+      const squad = Array.from({ length: 3 }, (_, i) => ({
         team, type, squadId,
         cost: i === 0 ? cost : 0, // Assign full cost to the first unit
-        offset: { x: (i % 2 === 0 ? -15 : 15) + (Math.random() * 10 - 5), y: (Math.floor(i / 2) * 25 - 25) + (Math.random() * 10 - 5) }
+        offset: { x: (i % 2 === 0 ? -8 : 8) + (Math.random() * 4 - 2), y: (Math.floor(i / 2) * 15 - 10) + (Math.random() * 4 - 2) }
       }));
       setSpawnQueue(prev => [...prev, ...squad]);
     } else setSpawnQueue(prev => [...prev, { team, type, cost, absolutePos, squadId: type === UnitType.AIRBORNE ? squadId : undefined }]);
