@@ -323,7 +323,8 @@ const App: React.FC = () => {
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-amber-500 font-bold border-b border-stone-700 pb-1"><Target size={14} /><h3>MISSION OBJECTIVES</h3></div>
           <ul className="text-stone-400 space-y-1 list-disc pl-3">
-            <li><strong className="text-white">Victory:</strong> Units that reach the enemy edge score points (Tanks: 3pts, Others: 1pt).</li>
+            <li><strong className="text-white">Victory:</strong> First team to <span className="text-amber-400">100 Points</span> wins.</li>
+            <li><strong className="text-white">Scoring:</strong> Units reaching enemy edge score points (Tank: 3, Others: 1).</li>
             <li><strong className="text-white">Resources:</strong> Money generates automatically over time.</li>
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>

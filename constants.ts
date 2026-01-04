@@ -10,6 +10,8 @@ export const MAX_SCALE = 1.0;
 export const FPS = 60;
 export const MILLISECONDS_PER_FRAME = 1000 / FPS;
 
+export const WIN_SCORE = 100;
+
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
     cost: 40,

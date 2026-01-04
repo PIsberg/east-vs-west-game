@@ -10,12 +10,14 @@ import {
   MIN_SCALE,
   MAX_SCALE,
   HILL_RANGE_BONUS,
-  HILL_RELOAD_BONUS
+  HILL_RELOAD_BONUS,
+  WIN_SCORE
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
+import { useState } from 'react';
 
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
@@ -33,6 +35,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   targetingInfo
 }) => {
   const requestRef = useRef<number>(0);
+  const [gameOver, setGameOver] = useState<Team | null>(null);
 
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -800,10 +803,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
       }
+
       unit.attackCooldown = Math.max(0, unit.attackCooldown - 1);
 
       if ((unit.team === Team.WEST && unit.position.x > CANVAS_WIDTH) || (unit.team === Team.EAST && unit.position.x < 0)) {
         scoreRef.current[unit.team] += unit.type === UnitType.TANK ? 3 : 1;
+
+        // Win Condition Check
+        if (scoreRef.current[unit.team] >= WIN_SCORE) {
+          setGameOver(unit.team);
+        }
+
         // Refund logic
         const cost = UNIT_CONFIG[unit.type].cost;
         moneyRef.current[unit.team] += cost;
@@ -854,9 +864,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Game Loop
   const tick = useCallback(() => {
-    update();
-    requestRef.current = requestAnimationFrame(tick);
-  }, [update]);
+    // If Game Over, stop updating but keep rendering (frozen state)
+    // Or just stop ticking.
+    if (!gameOver) {
+      update();
+      requestRef.current = requestAnimationFrame(tick);
+    }
+  }, [update, gameOver]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(tick);
@@ -875,12 +889,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
       />
+
       {flashOpacity.current > 0 && (
         <div style={{
           position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'white', opacity: Math.min(1, flashOpacity.current),
           pointerEvents: 'none', zIndex: 100
         }} />
+      )}
+
+      {gameOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
+            <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
+              {gameOver === Team.WEST ? 'VICTORY' : 'DEFEAT'}
+            </h2>
+            <div className="text-2xl font-bold text-stone-300">
+              {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95 flex items-center gap-2"
+            >
+              Play Again
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
