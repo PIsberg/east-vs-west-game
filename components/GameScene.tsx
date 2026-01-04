@@ -1,7 +1,7 @@
 
 import React, { useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows } from '@react-three/drei';
+import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
@@ -879,6 +879,25 @@ const Particle3D = ({ p }: { p: Particle }) => {
                 <meshBasicMaterial color={p.color} toneMapped={false} />
                 <pointLight distance={50} intensity={2} color={p.color} />
             </mesh>
+        );
+    }
+
+    // Floating Text (Dollar Sign)
+    if (p.text) {
+        return (
+            <group position={[p.position.x, 20 + (90 - p.life) * 0.5, p.position.y]}>
+                <Text
+                    fontSize={24}
+                    color="#22c55e"
+                    anchorX="center"
+                    anchorY="middle"
+                    outlineWidth={1}
+                    outlineColor="black"
+                    rotation={[-Math.PI / 2, 0, 0]} // Face camera (top down-ish) or Billboard? Use Billboard logic if needed, but simple rotation works for top-down game
+                >
+                    {p.text}
+                </Text>
+            </group>
         );
     }
 

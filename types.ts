@@ -99,6 +99,7 @@ export interface Particle {
   drag?: number;      // For friction/slowdown
   targetPos?: Vector2D; // For Lightning beams
   isGroundDecal?: boolean;
+  text?: string; // For floating text (e.g. Dollar Sign)
 }
 
 export interface GameState {

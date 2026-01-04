@@ -995,6 +995,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if ((unit.team === Team.WEST && unit.position.x > CANVAS_WIDTH) || (unit.team === Team.EAST && unit.position.x < 0)) {
         scoreRef.current[unit.team] += unit.type === UnitType.TANK ? 3 : 1;
 
+        // Dollar Sign Animation
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: unit.position.x, y: unit.position.y },
+          velocity: { x: 0, y: 0.5 }, // Float up
+          life: 90,
+          color: '#22c55e', // Green for money
+          size: 8, // Scale for 3D text
+          text: '$'
+        });
+
         // Win Condition Check
         if (scoreRef.current[unit.team] >= WIN_SCORE) {
           setGameOver(unit.team);
