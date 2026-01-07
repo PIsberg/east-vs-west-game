@@ -1,6 +1,6 @@
 # East vs West 3D
 
-A tug-of-war strategy game inspired by classic lane defense games. Command the West or East team, deploy units, and push to the enemy edge to claim victory!
+A tug-of-war strategy game inspired by classic lane defense games. Command the West or East team, deploy units, and push to the enemy edge to claim victory! Available online here: https://pisberg.github.io/east-vs-west-game/
 
 ![east-vs-west1-PXL_20260102_152535277](https://github.com/user-attachments/assets/7f40c567-b98a-412a-bc20-ab26f77321eb)
 
