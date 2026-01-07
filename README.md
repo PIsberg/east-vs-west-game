@@ -79,3 +79,5 @@ The first team to reach **100 Points** wins.
    ```bash
    npm run dev
    ```
+
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/PIsberg/east-vs-west-game/badge)](https://scorecard.dev/viewer/?uri=github.com/PIsberg/east-vs-west-game)
