@@ -379,36 +379,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (m.current.y >= m.target.y) {
         soundService.playHitSound();
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
-        const isNuke = m.velocity.x === 0 && m.target && (m as any).isNuke; // We need to tag nuke missiles
+        const isNuke = !!(m as any).isNuke;
         const damage = isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage;
         const radius = isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius;
 
         if (isNuke) {
-          flashOpacity.current = 1.0; // TRIGGER FLASH (Full White)
-          // MASSIVE Swamp Explosion - Lingering Cloud
-          for (let p = 0; p < 600; p++) {
+          flashOpacity.current = 1.0;
+          // Initial white-hot flash ring
+          for (let p = 0; p < 80; p++) {
             const angle = Math.random() * Math.PI * 2;
-            // Higher initial speed to cover the huge 850 radius quickly
-            const speed = Math.random() * 15 + 5;
-            // Wider start area so it doesn't look like a single point source only
-            const startDist = Math.random() * 100;
-
+            const speed = Math.random() * 40 + 20;
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: m.target.x, y: m.target.y },
+              velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+              drag: 0.88,
+              life: 30 + Math.random() * 20,
+              color: p % 2 === 0 ? '#ffffff' : '#fffde7',
+              size: 20 + Math.random() * 30
+            });
+          }
+          // Massive lingering mushroom cloud
+          for (let p = 0; p < 900; p++) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = Math.random() * 25 + 8;
+            const startDist = Math.random() * 200;
             particlesRef.current.push({
               id: generateId(),
               position: { x: m.target.x + Math.cos(angle) * startDist, y: m.target.y + Math.sin(angle) * startDist },
               velocity: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
-              // Higher drag to make them "hang" in the air like a cloud
               drag: 0.95 + Math.random() * 0.03,
-              // Longer life for lingering effect (5+ seconds)
-              life: 250 + Math.random() * 150,
-              // Darker, murkier swamp colors
-              color: p % 5 === 0 ? '#1a2e05' : // Very dark sludge
-                (p % 4 === 0 ? '#365314' : // Dark moss
-                  (p % 3 === 0 ? '#4d7c0f' : // Swamp green
-                    (p % 2 === 0 ? '#3f6212' : '#84cc16'))), // Olive / Lime accent
-              size: 30 + Math.random() * 60 // Even bigger particles
+              life: 300 + Math.random() * 200,
+              color: p % 6 === 0 ? '#ffffff' :
+                (p % 5 === 0 ? '#fef08a' :
+                  (p % 4 === 0 ? '#1a2e05' :
+                    (p % 3 === 0 ? '#365314' :
+                      (p % 2 === 0 ? '#4d7c0f' : '#713f12')))),
+              size: 40 + Math.random() * 80
             });
           }
+          // Burn all trees and bushes caught in the blast
+          terrainRef.current.forEach(t => {
+            if ((t.type === 'tree' || t.type === 'bush') &&
+              Math.sqrt((t.x - m.target.x) ** 2 + (t.y - m.target.y) ** 2) < (radius || 800)) {
+              t.state = 'burning';
+              t.health = 200;
+            }
+          });
         }
 
         unitsRef.current.forEach(u => {

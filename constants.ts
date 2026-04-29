@@ -201,7 +201,7 @@ export const UNIT_CONFIG = {
     colorEast: '#6366f1', // Indigo
   },
   [UnitType.NUKE]: {
-    cost: 1000,
+    cost: 2500,
     health: 40,
     damage: 1000,
     radius: 3000,
