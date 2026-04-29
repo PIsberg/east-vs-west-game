@@ -954,37 +954,48 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               target = potentialTargets.find(o => o.team !== unit.team && o.type === UnitType.TESLA && Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range);
             }
 
+            // Primary pass: ground targets (all unit types)
             if (!target) {
               target = potentialTargets.find(o => {
                 if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
-
-                // Drones are hard to hit for standard units, EXCEPT Helicopters
-                if (o.type === UnitType.DRONE && unit.type !== UnitType.HELICOPTER) return false;
-
-                // Standard units cannot target descending paratroopers (except Heli/AA)
+                if ((UNIT_CONFIG[o.type] as any).isFlying) return false; // ground pass only
                 const oLife = Date.now() - (o.spawnTime || 0);
                 if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
-
                 return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
-              });
+              }) || null;
             }
+
+            // Secondary pass: air targets — only infantry, snipers, and helicopters can engage air
+            // Tanks and Artillery are strictly ground-only weapons
+            if (!target) {
+              const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+                unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER;
+              if (canEngageAir) {
+                target = potentialTargets.find(o => {
+                  if (o.team === unit.team) return false;
+                  if (!(UNIT_CONFIG[o.type] as any).isFlying) return false;
+                  return Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range;
+                }) || null;
+              }
+            }
+
             if (target) {
+              const targetIsAir = !!(UNIT_CONFIG[target.type] as any).isFlying;
+
               // Sniper Accuracy Check
               if (unit.type === UnitType.SNIPER) {
                 if (Math.random() > 0.7) { // 30% Miss Chance
-                  // Miss logic
                   const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
-                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type });
+                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type });
                   unit.attackCooldown = config.attackSpeed; soundService.playShootSound();
                   return;
                 }
               }
 
               const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-              // Artillery Spread
               let spread = 0;
               if (unit.type === UnitType.ARTILLERY) {
-                spread = (Math.random() - 0.5) * 0.25; // Random spread +/- 0.125 rad (~7 degrees)
+                spread = (Math.random() - 0.5) * 0.25;
               }
               const isMissile = unit.type === UnitType.HELICOPTER;
 
@@ -996,7 +1007,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 damage: config.damage,
                 maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0),
                 distanceTraveled: 0,
-                targetType: 'ground',
+                targetType: targetIsAir ? 'air' : 'ground',
                 explosionRadius: config.explosionRadius,
                 sourceType: unit.type,
                 isMissile
@@ -1066,9 +1077,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           explode = true;
 
           let damage = p.damage;
-          // Vulnerability: Helicopters take QUADRUPLE damage from Anti-Air
-          if (target.type === UnitType.HELICOPTER && p.sourceType === UnitType.ANTI_AIR) {
-            damage *= 4; // Hard Counter
+          // AA is the hard counter to air — 4× vs helicopter, 2× vs drone
+          if (p.sourceType === UnitType.ANTI_AIR) {
+            if (target.type === UnitType.HELICOPTER) damage *= 4;
+            else if (target.type === UnitType.DRONE) damage *= 2;
+          }
+          // Small arms (soldiers, rambo) are 30% effective against aircraft
+          if ((UNIT_CONFIG[target.type] as any).isFlying &&
+            (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.RAMBO)) {
+            damage *= 0.3;
           }
 
           target.health -= damage;

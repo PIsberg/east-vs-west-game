@@ -14,12 +14,12 @@ export const WIN_SCORE = 100;
 
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
-    cost: 100,
-    health: 210, // Buffed to withstand 2 shots (90*2 = 180)
-    damage: 90,
-    speed: 0.6,
+    cost: 110,
+    health: 240,
+    damage: 95,
+    speed: 0.45,
     range: 220,
-    attackSpeed: 100,
+    attackSpeed: 90,
     width: 40,
     height: 25,
     colorWest: '#1d4ed8',
@@ -27,50 +27,50 @@ export const UNIT_CONFIG = {
   },
   [UnitType.SOLDIER]: {
     cost: 25,
-    health: 12,
-    damage: 8,
-    bazookaDamage: 20,
-    speed: 0.45,
+    health: 20,
+    damage: 10,
+    bazookaDamage: 25,
+    speed: 0.55,
     range: 140,
-    attackSpeed: 60,
+    attackSpeed: 55,
     width: 16,
     height: 16,
     colorWest: '#3b82f6',
     colorEast: '#ef4444',
   },
   [UnitType.ARTILLERY]: {
-    cost: 55,
-    health: 30,
-    damage: 25,
-    explosionRadius: 60, // Increased from 40
-    speed: 0.35, // Was 0. Now moves slowly.
+    cost: 80,
+    health: 45,
+    damage: 30,
+    explosionRadius: 65,
+    speed: 0.2,
     deployDistance: 80,
     range: 700,
-    attackSpeed: 500,
+    attackSpeed: 460,
     width: 35,
     height: 30,
     colorWest: '#1e3a8a',
     colorEast: '#7f1d1d',
   },
   [UnitType.RAMBO]: {
-    cost: 70,
-    health: 100,
-    damage: 25,
-    speed: 0.55,
+    cost: 150,
+    health: 80,
+    damage: 20,
+    speed: 0.65,
     range: 180,
-    attackSpeed: 15,
+    attackSpeed: 20,
     width: 24,
     height: 24,
     colorWest: '#2563eb',
     colorEast: '#dc2626',
   },
   [UnitType.HELICOPTER]: {
-    cost: 150,
-    health: 100, // Nerfed HP
-    damage: 25, // Rapid fire
-    speed: 1.2,
+    cost: 155,
+    health: 100,
+    damage: 35,
+    speed: 1.6,
     range: 250,
-    attackSpeed: 25, // Slower fire rate (was 10)
+    attackSpeed: 22,
     width: 45,
     height: 20,
     colorWest: '#0e7490', // Cyan-ish
@@ -78,31 +78,31 @@ export const UNIT_CONFIG = {
     isFlying: true,
   },
   [UnitType.SNIPER]: {
-    cost: 80,
-    health: 10,
-    damage: 80, // High single shot damage
-    speed: 0.4, // Slow movement
-    range: 350, // Very long range (outranges tanks)
-    attackSpeed: 200, // Very slow reload
+    cost: 90,
+    health: 20,
+    damage: 80,
+    speed: 0.35,
+    range: 350,
+    attackSpeed: 180,
     width: 16,
     height: 16,
     colorWest: '#15803d', // Green (Camo)
     colorEast: '#991b1b',
   },
   [UnitType.AIRBORNE]: {
-    cost: 60,
-    health: 15,
-    damage: 12,
-    speed: 0.5,
+    cost: 70,
+    health: 20,
+    damage: 14,
+    speed: 0.6,
     range: 160,
-    attackSpeed: 50,
+    attackSpeed: 48,
     width: 18,
     height: 18,
     colorWest: '#60a5fa',
     colorEast: '#f87171',
   },
   [UnitType.AIRSTRIKE]: {
-    cost: 90,
+    cost: 100,
     health: 40,
     damage: 0,
     speed: 0,
@@ -114,10 +114,10 @@ export const UNIT_CONFIG = {
     colorEast: '#f97316',
   },
   [UnitType.MISSILE_STRIKE]: {
-    cost: 110,
+    cost: 125,
     health: 40,
-    damage: 200,
-    radius: 60,
+    damage: 240,
+    radius: 65,
     speed: 0,
     range: 0,
     attackSpeed: 0,
@@ -140,24 +140,24 @@ export const UNIT_CONFIG = {
     colorEast: '#f97316',
   },
   [UnitType.MINE_PERSONAL]: {
-    cost: 15,
+    cost: 20,
     health: 1,
-    damage: 60,
+    damage: 70,
     speed: 0,
     triggerRadius: 20,
-    explosionRadius: 40,
+    explosionRadius: 42,
     width: 10,
     height: 10,
     colorWest: '#1d4ed8',
     colorEast: '#b91c1c',
   },
   [UnitType.MINE_TANK]: {
-    cost: 25,
+    cost: 45,
     health: 1,
     speed: 0,
-    damage: 150,
+    damage: 180,
     triggerRadius: 25,
-    explosionRadius: 50,
+    explosionRadius: 55,
     width: 14,
     height: 14,
     colorWest: '#1e3a8a',
@@ -165,10 +165,10 @@ export const UNIT_CONFIG = {
   },
   [UnitType.DRONE]: {
     cost: 45,
-    health: 15,
-    damage: 5,
-    speed: 1.8,
-    range: 30, // Must reach enemy
+    health: 25,
+    damage: 25,
+    speed: 2.2,
+    range: 30,
     attackSpeed: 45,
     width: 16,
     height: 16,
@@ -177,24 +177,24 @@ export const UNIT_CONFIG = {
     isFlying: true
   },
   [UnitType.ANTI_AIR]: {
-    cost: 50,
-    health: 40,
-    damage: 60, // 1-shot Heli (w/ 2x multiplier), 1-shot Drone
+    cost: 65,
+    health: 55,
+    damage: 60,
     speed: 0.5,
-    range: 400, // Significant range advantage over Heli (250)
-    attackSpeed: 50, // Fast Check
+    range: 400,
+    attackSpeed: 50,
     width: 30,
     height: 20,
     colorWest: '#0f766e',
     colorEast: '#991b1b',
   },
   [UnitType.TESLA]: {
-    cost: 175, // Expensive
-    health: 150, // Tanky
-    damage: 110, // 1-shot Rambo (100hp) & Snipers
-    speed: 0.55,
-    range: 140, // Reduced range (nerfed)
-    attackSpeed: 200, // Cooldown between bursts
+    cost: 165,
+    health: 165,
+    damage: 110,
+    speed: 0.5,
+    range: 150,
+    attackSpeed: 200,
     width: 32,
     height: 24,
     colorWest: '#0ea5e9', // Sky Blue
