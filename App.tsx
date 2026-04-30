@@ -1,9 +1,10 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
-import { Team, GameState, UnitType } from './types';
+import { Team, GameState, UnitType, MapType } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2 } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
+import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -124,29 +125,31 @@ const App: React.FC = () => {
     money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY },
     weather: 'clear'
   });
-  const [weather, setWeather] = useState<'clear' | 'rain'>('clear');
+  const [weather, setWeather] = useState<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const [commentary, setCommentary] = useState<string>("");
   const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
   const [showSplash, setShowSplash] = useState(true);
+  const [splashFading, setSplashFading] = useState(false);
+  const [cpuEnabled, setCpuEnabled] = useState(false);
+  const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowSplash(false);
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, []);
+  const handleStartClick = () => {
+    soundService.playIntroJingle();
+    setSplashFading(true);
+    setTimeout(() => setShowSplash(false), 700);
+  };
 
   const resetGame = () => {
     setGameKey(prev => prev + 1);
-    setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' });
+    setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
     setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear');
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
@@ -170,13 +173,15 @@ const App: React.FC = () => {
       // In 3D, any click returned by onCanvasClick is a valid ground position (x, z).
       // We accept it directly to allow spawning anywhere on the map.
       if (targetingInfo.type === UnitType.NUKE) {
-        // Enforce Enemy Side Only
         const isWest = targetingInfo.team === Team.WEST;
-        // West(Left) attacking East(Right), East(Right) attacking West(Left)
-        // West Territory < 400, East Territory > 400
-        // West can only target > 400, East can only target < 400
         if (isWest && x < 400) return;
         if (!isWest && x > 400) return;
+      }
+      if (targetingInfo.type === UnitType.BUNKER) {
+        // Bunker must be placed on own side
+        const isWest = targetingInfo.team === Team.WEST;
+        if (isWest && x > 400) return;
+        if (!isWest && x < 400) return;
       }
       processSpawn(targetingInfo.team, targetingInfo.type, { x, y });
       setTargetingInfo(null);
@@ -247,6 +252,11 @@ const App: React.FC = () => {
       [UnitType.NUKE]: [<Skull size={8} key="k" />],
       [UnitType.NAPALM]: [<User size={8} key="u" />],
       [UnitType.TESLA]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.FLAMETHROWER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.MEDIC]: [<Heart size={8} key="h" />],
+      [UnitType.APC]: [<User size={8} key="u" />],
+      [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
     };
 
     const renderGroup = (title: string, units: any[]) => (
@@ -281,12 +291,15 @@ const App: React.FC = () => {
           { type: UnitType.SOLDIER, label: "SQUAD", icon: <SquadIcon size={16} /> },
           { type: UnitType.SNIPER, label: "SNIPER", icon: <SniperIcon size={16} /> },
           { type: UnitType.RAMBO, label: "RAMBO", icon: <BandanaIcon size={16} />, special: true },
+          { type: UnitType.FLAMETHROWER, label: "FLAMER", icon: <Flame size={16} /> },
+          { type: UnitType.MEDIC, label: "MEDIC", icon: <Heart size={16} /> },
           { type: UnitType.MINE_PERSONAL, label: "P.MINE", icon: <PersonalMineIcon size={14} /> },
         ])}
         {renderGroup("Vehicles", [
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
-          { type: UnitType.ARTILLERY, label: "ARTILLERY", icon: <ArtilleryIcon size={16} /> },
+          { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },
+          { type: UnitType.ARTILLERY, label: "ARTY", icon: <ArtilleryIcon size={16} /> },
           { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
@@ -296,7 +309,11 @@ const App: React.FC = () => {
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
           { type: UnitType.AIRSTRIKE, label: "NAPALM", icon: <Flame size={16} /> },
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
+          { type: UnitType.GUNSHIP, label: "GUNSHIP", icon: <Plane size={16} />, special: true },
           { type: UnitType.NUKE, label: "NUKE", icon: <Skull size={16} />, special: true },
+        ])}
+        {renderGroup("Defense", [
+          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
         ])}
       </div>
     );
@@ -308,12 +325,45 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center justify-center p-4 font-serif overflow-hidden">
       {/* Splash Screen Overlay */}
       {showSplash && (
-        <div className="fixed inset-0 bg-stone-900/90 z-[9999] flex items-center justify-center animate-[fadeOut_0.5s_ease-out_1.5s_forwards] pointer-events-none">
+        <div
+          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-end pb-16 cursor-pointer transition-opacity duration-700 ${splashFading ? 'opacity-0' : 'opacity-100'}`}
+          onClick={handleStartClick}
+        >
           <img
             src="splash.jpg"
             alt="East vs West"
-            className="w-full h-full object-contain md:object-cover"
+            className="absolute inset-0 w-full h-full object-contain md:object-cover"
           />
+          <div className="relative z-10 flex flex-col items-center gap-4 select-none" onClick={e => e.stopPropagation()}>
+            {/* Map Selection */}
+            <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 border border-stone-600 mb-1">
+              <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Select Battlefield</p>
+              <div className="grid grid-cols-4 gap-2">
+                {([
+                  { type: MapType.COUNTRYSIDE, label: 'Countryside', desc: 'Rivers & forests', color: 'text-green-400' },
+                  { type: MapType.URBAN,       label: 'Urban',       desc: 'City walls & rubble', color: 'text-slate-300' },
+                  { type: MapType.DESERT,      label: 'Desert',      desc: 'Dunes & wadis', color: 'text-amber-400' },
+                  { type: MapType.ARCHIPELAGO, label: 'Islands',     desc: 'Channels & bridges', color: 'text-cyan-400' },
+                ] as const).map(m => (
+                  <button
+                    key={m.type}
+                    onClick={() => setMapType(m.type)}
+                    className={`px-3 py-2 rounded border text-center transition-all ${mapType === m.type ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}
+                  >
+                    <div className={`text-xs font-bold uppercase ${m.color}`}>{m.label}</div>
+                    <div className="text-stone-500 text-[9px] mt-0.5">{m.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              className="px-10 py-3 bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black text-lg uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all"
+              onClick={handleStartClick}
+            >
+              ▶ DEPLOY FORCES
+            </button>
+            <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>
+          </div>
         </div>
       )}
 
@@ -323,14 +373,19 @@ const App: React.FC = () => {
           <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
           <div className="flex items-center gap-4">
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
-            {gameState.weather === 'rain' ? <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div> : <div className="flex items-center gap-1 text-amber-300"><Target size={14} className="opacity-0" /><span className="text-[10px] font-bold opacity-0">CLEAR</span></div>}
+            <button onClick={() => setCpuEnabled(v => !v)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuEnabled ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuEnabled ? 'ON' : 'OFF'}</button>
+            {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
+            {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
+            {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
+            {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
+            {gameState.weather === 'clear' && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
           </div>
         </div>
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">Score: {gameState.score[Team.EAST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuEnabled={cpuEnabled} mapType={mapType} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">

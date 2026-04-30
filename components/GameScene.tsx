@@ -3,7 +3,7 @@ import React, { useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D } from '../types';
+import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D, MapType } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 // Add type definition for the custom shader material
@@ -24,7 +24,8 @@ interface GameSceneProps {
     missiles: any[];
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
-    weather: 'clear' | 'rain';
+    weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+    mapType: MapType;
 }
 
 const RainEffect = () => {
@@ -68,6 +69,39 @@ const RainEffect = () => {
                 />
             </bufferGeometry>
             <pointsMaterial color="#a5f3fc" size={2} transparent opacity={0.6} sizeAttenuation={false} />
+        </points>
+    );
+};
+
+const SnowEffect = () => {
+    const count = 900;
+    const positions = useMemo(() => {
+        const pos = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            pos[i * 3]     = (Math.random() - 0.5) * 1600 + 400;
+            pos[i * 3 + 1] = Math.random() * 500;
+            pos[i * 3 + 2] = (Math.random() - 0.5) * 1200 + 400;
+        }
+        return pos;
+    }, []);
+    const snowRef = useRef<THREE.Points>(null!);
+    useFrame((_, delta) => {
+        if (!snowRef.current) return;
+        const p = snowRef.current.geometry.attributes.position.array as Float32Array;
+        const speed = 55 * delta;
+        for (let i = 0; i < count; i++) {
+            p[i * 3]     += Math.sin(Date.now() * 0.001 + i) * 0.15;
+            p[i * 3 + 1] -= speed;
+            if (p[i * 3 + 1] < 0) p[i * 3 + 1] = 480 + Math.random() * 80;
+        }
+        snowRef.current.geometry.attributes.position.needsUpdate = true;
+    });
+    return (
+        <points ref={snowRef}>
+            <bufferGeometry>
+                <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
+            </bufferGeometry>
+            <pointsMaterial color="#e2e8f0" size={3.5} transparent opacity={0.75} sizeAttenuation={false} />
         </points>
     );
 };
@@ -146,102 +180,115 @@ const RiverMaterial = shaderMaterial(
 
 extend({ RiverMaterial });
 
-const RiverRenderer = ({ terrain }: { terrain: TerrainObject[] }) => {
+// Build a triangle-strip geometry for one ordered list of river segments
+const buildChannelGeo = (points: TerrainObject[]): THREE.BufferGeometry | null => {
+    if (points.length < 2) return null;
+    const halfWidth = (points[0].width || 65) / 2;
+    const vertices: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        let nX = 1, nZ = 0;
+        if (i < points.length - 1) {
+            const nx = points[i + 1].x - p.x, ny = points[i + 1].y - p.y;
+            const len = Math.sqrt(nx * nx + ny * ny) || 1;
+            nX = -ny / len; nZ = nx / len;
+        } else if (i > 0) {
+            const px = p.x - points[i - 1].x, py = p.y - points[i - 1].y;
+            const len = Math.sqrt(px * px + py * py) || 1;
+            nX = -py / len; nZ = px / len;
+        }
+        const v = i / (points.length * 0.1);
+        vertices.push(p.x - nX * halfWidth, 0.2, p.y - nZ * halfWidth); uvs.push(0, v);
+        vertices.push(p.x + nX * halfWidth, 0.2, p.y + nZ * halfWidth); uvs.push(1, v);
+        if (i < points.length - 1) {
+            const b = i * 2;
+            indices.push(b, b + 1, b + 2, b + 1, b + 3, b + 2);
+        }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+};
+
+const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType: MapType }) => {
     const riverRef = useRef<any>(null);
 
-    // Filter and sort river points (assuming they are generated in order in GameCanvas)
-    // GameCanvas generates them y = -20 to HEIGHT + 20 in loop, so they are ordered by Y.
     const riverPoints = useMemo(() => terrain.filter(t => t.type === 'river'), [terrain]);
 
-    // Construct Geometry
-    const geometry = useMemo(() => {
-        if (riverPoints.length < 2) return null;
-
-        const width = 65; // Slightly wider than before (55) to overlap banks
-        const halfWidth = width / 2;
-
-        // Create vertices for Triangle Strip
-        // For each point, create Left and Right vertex
-        const vertices: number[] = [];
-        const uvs: number[] = [];
-        const indices: number[] = [];
-
-        // Calculate curve tangents could be better, but for now simple +/- X is okay 
-        // IF the river flows vertically. 
-        // The river gen is x = centerX + sin(y)... so it flows mostly along Z (Game Y).
-        // So the "Right" vector is roughly (1, 0, 0).
-
-        for (let i = 0; i < riverPoints.length; i++) {
-            const p = riverPoints[i];
-
-            // Calculate tangent if possible for better width orientation
-            let normalX = 1;
-            let normalZ = 0;
-
-            if (i < riverPoints.length - 1) {
-                const next = riverPoints[i + 1];
-                const dx = next.x - p.x;
-                const dy = next.y - p.y;
-                const len = Math.sqrt(dx * dx + dy * dy);
-                // Perpendicular to direction
-                normalX = -dy / len;
-                normalZ = dx / len;
-            } else if (i > 0) {
-                // Use prev
-                const prev = riverPoints[i - 1];
-                const dx = p.x - prev.x;
-                const dy = p.y - prev.y;
-                const len = Math.sqrt(dx * dx + dy * dy);
-                normalX = -dy / len;
-                normalZ = dx / len;
-            }
-
-            // Left Vertex
-            vertices.push(p.x - normalX * halfWidth, 0.2, p.y - normalZ * halfWidth);
-            uvs.push(0, i / (riverPoints.length * 0.1)); // Scale V for repeating texture
-
-            // Right Vertex
-            vertices.push(p.x + normalX * halfWidth, 0.2, p.y + normalZ * halfWidth);
-            uvs.push(1, i / (riverPoints.length * 0.1));
-
-            // Indices
-            if (i < riverPoints.length - 1) {
-                const base = i * 2;
-                // Triangle 1
-                indices.push(base, base + 1, base + 2);
-                // Triangle 2
-                indices.push(base + 1, base + 3, base + 2);
-            }
+    // Group segments by channel — segments whose X is within 150px of a group's first segment
+    const channelGroups = useMemo((): TerrainObject[][] => {
+        const groups: TerrainObject[][] = [];
+        for (const seg of riverPoints) {
+            const grp = groups.find(g => Math.abs(g[0].x - seg.x) < 150);
+            if (grp) grp.push(seg);
+            else groups.push([seg]);
         }
-
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-        geo.setIndex(indices);
-        geo.computeVertexNormals();
-        return geo;
-
+        return groups;
     }, [riverPoints]);
 
+    const geometries = useMemo(
+        () => channelGroups.map(g => buildChannelGeo(g)),
+        [channelGroups]
+    );
+
     useFrame(({ clock }) => {
-        if (riverRef.current) {
-            riverRef.current.uTime = clock.getElapsedTime();
-        }
+        if (riverRef.current) riverRef.current.uTime = clock.getElapsedTime();
     });
 
-    if (!geometry) return null;
+    // Urban: render as concrete wall segments
+    if (mapType === MapType.URBAN) {
+        return (
+            <group>
+                {riverPoints.map((p, i) => (
+                    <mesh key={i} position={[p.x, 6, p.y]} receiveShadow castShadow>
+                        <boxGeometry args={[(p.width || 18), 12, 12]} />
+                        <meshStandardMaterial color="#4b5563" roughness={0.9} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
 
+    // Desert: sandy wadi per channel
+    if (mapType === MapType.DESERT) {
+        return (
+            <group>
+                {geometries.map((geo, i) => geo && (
+                    <mesh key={i} geometry={geo} receiveShadow>
+                        <meshStandardMaterial color="#b45309" roughness={1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+
+    // Archipelago: wide sea straits — static ocean colour, no shader needed
+    if (mapType === MapType.ARCHIPELAGO) {
+        return (
+            <group>
+                {geometries.map((geo, i) => geo && (
+                    <mesh key={i} geometry={geo} receiveShadow>
+                        <meshStandardMaterial color="#0c4a6e" roughness={0.25} metalness={0.1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+
+    // Countryside: animated water shader, one mesh per channel
     return (
-        <mesh geometry={geometry} receiveShadow> {/* Wait, vertices are already x,y,z? No, y is height. */}
-            {/* Actually my vertices are x, height, z (game y). So NO rotation needed on mesh if geometry is right. */}
-            {/* But wait, in existing code TerrainItem uses rotation={[-Math.PI / 2, 0, 0]} and planeGeometry (x,y). */}
-            {/* My manual vertices are (x, 0.2, z). So I don't need rotation. */}
-            {/* Let's verify rotation. Standard Three.js Y is UP. */}
-            {/* My vertices: x, 0.2, y (which is Z in 3D). Correct. */}
-            {/* <riverMaterial /> is not a standard element. need 'primitive' or cast. */}
-            {/* react-three-fiber 'extend' makes it available as camelCase 'riverMaterial' */}
-            <riverMaterial ref={riverRef} transparent side={THREE.DoubleSide} />
-        </mesh>
+        <group>
+            {geometries.map((geo, i) => geo && (
+                <mesh key={i} geometry={geo} receiveShadow>
+                    <riverMaterial ref={i === 0 ? riverRef : undefined} transparent side={THREE.DoubleSide} />
+                </mesh>
+            ))}
+        </group>
     );
 };
 
@@ -322,6 +369,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
 
     const position = [unit.position.x, terrainH, unit.position.y];
+
+    const isHit = !!(unit.lastHitTime && (Date.now() - unit.lastHitTime) < 140);
 
     // Height offset for different units
     let yOffset = 0;
@@ -831,6 +880,168 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                     )
                 }
 
+                {/* FLAMETHROWER — soldier body with fuel tank and flame nozzle */}
+                {unit.type === UnitType.FLAMETHROWER && (
+                    <group>
+                        {/* Head */}
+                        <mesh position={[0, 16, 0]} castShadow>
+                            <sphereGeometry args={[3.5, 16, 16]} />
+                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
+                            <mesh position={[0, 1, 0]}>
+                                <cylinderGeometry args={[4, 3.8, 2]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                        </mesh>
+                        {/* Body */}
+                        <mesh position={[0, 9, 0]} castShadow>
+                            <boxGeometry args={[6, 10, 4]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Fuel tank on back */}
+                        <mesh position={[0, 9, -4]} castShadow>
+                            <cylinderGeometry args={[2.5, 2.5, 10]} />
+                            <meshStandardMaterial color="#b45309" />
+                        </mesh>
+                        {/* Flame arm / nozzle */}
+                        <mesh position={[4, 10, 2]} rotation={[-0.3, 0, -0.15]}>
+                            <boxGeometry args={[2, 9, 2]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            <mesh position={[0, -5, 1.5]} rotation={[Math.PI / 2, 0, 0]}>
+                                <cylinderGeometry args={[1.2, 0.8, 10]} />
+                                <meshStandardMaterial color="#78350f" />
+                            </mesh>
+                        </mesh>
+                        {/* Legs */}
+                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        {/* Flame glow when attacking */}
+                        {unit.attackCooldown > 4 && <pointLight position={[5, 8, 4]} color="#f97316" distance={30} intensity={4} />}
+                    </group>
+                )}
+
+                {/* MEDIC — soldier with green cross on helmet */}
+                {unit.type === UnitType.MEDIC && (
+                    <group>
+                        {/* Head with cross */}
+                        <mesh position={[0, 16, 0]} castShadow>
+                            <sphereGeometry args={[3.5, 16, 16]} />
+                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
+                            <mesh position={[0, 1.2, 0]}>
+                                <cylinderGeometry args={[4, 3.8, 2]} />
+                                <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {/* Cross symbol */}
+                            <mesh position={[0, 2.5, 4]}><boxGeometry args={[3, 1, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
+                            <mesh position={[0, 2.5, 4]}><boxGeometry args={[1, 3, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
+                        </mesh>
+                        {/* Body (white coat) */}
+                        <mesh position={[0, 9, 0]} castShadow>
+                            <boxGeometry args={[6, 10, 4]} />
+                            <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Arms */}
+                        <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="white" transparent={transparent} opacity={opacity} /></mesh>
+                        <mesh position={[4, 10, 1]} rotation={[-0.3, 0, -0.2]}>
+                            <boxGeometry args={[2.5, 9, 2.5]} />
+                            <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
+                            {/* Medkit */}
+                            <mesh position={[0, -5, 1.5]}><boxGeometry args={[4, 3, 3]} /><meshStandardMaterial color="#dc2626" /></mesh>
+                        </mesh>
+                        {/* Legs */}
+                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#1f2937" /></mesh>
+                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#1f2937" /></mesh>
+                        {/* Healing glow */}
+                        {unit.attackCooldown > 30 && <pointLight position={[0, 12, 0]} color="#4ade80" distance={25} intensity={2} />}
+                    </group>
+                )}
+
+                {/* APC — boxy armored carrier */}
+                {unit.type === UnitType.APC && (
+                    <group>
+                        {/* Hull */}
+                        <mesh position={[0, 8, 0]} castShadow receiveShadow>
+                            <boxGeometry args={[44, 13, 28]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Angled front */}
+                        <mesh position={[22, 10, 0]} rotation={[0, 0, -0.4]} castShadow>
+                            <boxGeometry args={[8, 10, 26]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Wheels/tracks */}
+                        <mesh position={[0, 4, -15]}><boxGeometry args={[40, 8, 6]} /><meshStandardMaterial color="#222" /></mesh>
+                        <mesh position={[0, 4, 15]}><boxGeometry args={[40, 8, 6]} /><meshStandardMaterial color="#222" /></mesh>
+                        {/* Small turret / MG mount */}
+                        <mesh position={[0, 18, 0]} castShadow>
+                            <boxGeometry args={[14, 6, 14]} />
+                            <meshStandardMaterial color="#374151" transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* MG barrel */}
+                        <mesh position={[12, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                            <cylinderGeometry args={[1, 1, 14]} />
+                            <meshStandardMaterial color="#111" />
+                        </mesh>
+                        {unit.attackCooldown > (config.attackSpeed - 10) && <MuzzleFlash size={1.5} />}
+                    </group>
+                )}
+
+                {/* BUNKER — concrete fortification */}
+                {unit.type === UnitType.BUNKER && (
+                    <group>
+                        {/* Base slab */}
+                        <mesh position={[0, 4, 0]} castShadow receiveShadow>
+                            <boxGeometry args={[38, 8, 34]} />
+                            <meshStandardMaterial color="#4b5563" roughness={0.95} />
+                        </mesh>
+                        {/* Upper parapet */}
+                        <mesh position={[0, 11, 0]} castShadow>
+                            <boxGeometry args={[34, 6, 30]} />
+                            <meshStandardMaterial color="#374151" roughness={0.9} />
+                        </mesh>
+                        {/* Gun slit opening */}
+                        <mesh position={[17, 11, 0]}>
+                            <boxGeometry args={[2, 3, 16]} />
+                            <meshStandardMaterial color="#111" />
+                        </mesh>
+                        {/* Gun barrel */}
+                        <mesh position={[20, 11, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                            <cylinderGeometry args={[1.5, 1.5, 12]} />
+                            <meshStandardMaterial color="#1f2937" />
+                        </mesh>
+                        {/* Sandbags */}
+                        {[-12, 0, 12].map((z, i) => (
+                            <mesh key={i} position={[-20, 6, z]} castShadow>
+                                <sphereGeometry args={[5, 8, 6]} />
+                                <meshStandardMaterial color="#78350f" roughness={1} />
+                            </mesh>
+                        ))}
+                        {unit.attackCooldown > (config.attackSpeed - 8) && (
+                            <group position={[18, 11, 0]} rotation={[0, -Math.PI / 2, 0]}>
+                                <MuzzleFlash size={2} />
+                            </group>
+                        )}
+                    </group>
+                )}
+
+                {/* Hit flash overlay */}
+                {isHit && (
+                    <mesh position={[0, 10, 0]}>
+                        <boxGeometry args={[unit.width * 0.9 + 4, 22, unit.height * 0.9 + 4]} />
+                        <meshBasicMaterial color="#ef4444" transparent opacity={0.45} depthWrite={false} />
+                    </mesh>
+                )}
+
+                {/* Veteran stars */}
+                {(unit.veterancy || 0) > 0 && (
+                    <group position={[0, unit.height + 10, 0]}>
+                        {Array.from({ length: unit.veterancy || 0 }).map((_, i) => (
+                            <mesh key={i} position={[(i - ((unit.veterancy || 0) - 1) / 2) * 5, 0, 0]}>
+                                <sphereGeometry args={[1.6, 5, 4]} />
+                                <meshBasicMaterial color="#fbbf24" />
+                            </mesh>
+                        ))}
+                    </group>
+                )}
 
             </group>
         </ClickableGroup >
@@ -969,6 +1180,33 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
                 </mesh>
             </ClickableGroup>
         );
+    } else if (item.type === 'building') {
+        const seed = Math.abs((item.x * 73856093) ^ (item.y * 19349663));
+        const h = 30 + (seed % 40); // Varied height 30-70
+        const w = item.width || 30;
+        const d = item.height || 30;
+        const wallColor = item.state === 'burnt' ? '#1c1917' : (seed % 3 === 0 ? '#374151' : seed % 3 === 1 ? '#4b5563' : '#6b7280');
+        return (
+            <ClickableGroup position={[item.x, h / 2, item.y]} onCanvasClick={onCanvasClick}>
+                <mesh castShadow receiveShadow>
+                    <boxGeometry args={[w, h, d]} />
+                    <meshStandardMaterial color={wallColor} roughness={0.85} />
+                </mesh>
+                {/* Roof */}
+                <mesh position={[0, h / 2 + 1, 0]}>
+                    <boxGeometry args={[w + 2, 2, d + 2]} />
+                    <meshStandardMaterial color="#1f2937" roughness={0.9} />
+                </mesh>
+                {/* Windows (simple dark strips) */}
+                {[0.3, 0.6].map((frac, i) => (
+                    <mesh key={i} position={[w / 2 + 0.1, frac * h - h / 2, 0]}>
+                        <boxGeometry args={[0.5, 4, d * 0.6]} />
+                        <meshStandardMaterial color="#111827" />
+                    </mesh>
+                ))}
+                {item.state === 'burning' && <pointLight color="#f97316" intensity={3} distance={40} position={[0, h / 2, 0]} />}
+            </ClickableGroup>
+        );
     } else {
         // Tree Variety based on position hash
         const seed = Math.abs((item.x * 73856093) ^ (item.y * 19349663));
@@ -1047,19 +1285,61 @@ const Flyover3D = ({ fly }: { fly: any }) => {
         );
     }
 
+    const isGunship = fly.type === UnitType.GUNSHIP;
+
     return (
         <group>
-            {/* Plane */}
-            <group position={[fly.currentX, altitude, fly.altitudeY]} rotation={[0, fly.speed > 0 ? 0 : Math.PI, 0]}>
-                <mesh castShadow rotation={[0, 0, -Math.PI / 2]}>
-                    <coneGeometry args={[10, 40, 8]} />
-                    <meshStandardMaterial color="#334155" />
-                </mesh>
-                <mesh position={[0, 0, 0]}>
-                    <boxGeometry args={[15, 2, 40]} />
-                    <meshStandardMaterial color="#475569" />
-                </mesh>
-                {/* Health */}
+            {/* Plane / Gunship */}
+            <group position={[fly.currentX, altitude, fly.altitudeY]} rotation={[0, fly.speed >= 0 ? 0 : Math.PI, 0]}>
+                {isGunship ? (
+                    // AC-130 Gunship — wider, darker, with gun pods
+                    <group>
+                        {/* Wide fuselage */}
+                        <mesh castShadow rotation={[0, 0, -Math.PI / 2]}>
+                            <coneGeometry args={[14, 50, 8]} />
+                            <meshStandardMaterial color="#1e293b" />
+                        </mesh>
+                        <mesh position={[0, 0, 0]}>
+                            <boxGeometry args={[20, 5, 55]} />
+                            <meshStandardMaterial color="#0f172a" />
+                        </mesh>
+                        {/* Wing guns */}
+                        <mesh position={[0, -4, -30]} rotation={[0, 0, -Math.PI / 2]}>
+                            <cylinderGeometry args={[1.5, 1.5, 18]} />
+                            <meshStandardMaterial color="#334155" />
+                        </mesh>
+                        <mesh position={[0, -4, 30]} rotation={[0, 0, -Math.PI / 2]}>
+                            <cylinderGeometry args={[1.5, 1.5, 18]} />
+                            <meshStandardMaterial color="#334155" />
+                        </mesh>
+                        {/* Engine pods */}
+                        {[-20, 20].map((z, i) => (
+                            <mesh key={i} position={[0, 0, z]}>
+                                <cylinderGeometry args={[5, 5, 12]} />
+                                <meshStandardMaterial color="#1e293b" />
+                            </mesh>
+                        ))}
+                        {/* Firing flash */}
+                        {fly.shotTimer === 1 && (
+                            <group position={[-20, -4, 0]} rotation={[0, 0, Math.PI / 2]}>
+                                <MuzzleFlash size={4} color="#f97316" />
+                            </group>
+                        )}
+                    </group>
+                ) : (
+                    // Standard attack plane
+                    <group>
+                        <mesh castShadow rotation={[0, 0, -Math.PI / 2]}>
+                            <coneGeometry args={[10, 40, 8]} />
+                            <meshStandardMaterial color="#334155" />
+                        </mesh>
+                        <mesh position={[0, 0, 0]}>
+                            <boxGeometry args={[15, 2, 40]} />
+                            <meshStandardMaterial color="#475569" />
+                        </mesh>
+                    </group>
+                )}
+                {/* Health bar */}
                 {fly.health < 40 && (
                     <mesh position={[0, 15, 0]}>
                         <boxGeometry args={[20 * (fly.health / 40), 2, 2]} />
@@ -1114,8 +1394,16 @@ const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) =
     return <group>{dashes}</group>;
 };
 
-const GroundPlane = ({ onCanvasClick, targetingInfo }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null }) => {
-    // Generate grass spots
+const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
+    const groundColor =
+        mapType === MapType.URBAN       ? '#374151' :
+        mapType === MapType.DESERT      ? '#92400e' :
+        mapType === MapType.ARCHIPELAGO ? '#1a6b3a' : '#365314';
+    const spotColor =
+        mapType === MapType.URBAN       ? '#4b5563' :
+        mapType === MapType.DESERT      ? '#b45309' :
+        mapType === MapType.ARCHIPELAGO ? '#d97706' : '#14532d'; // sandy beach spots on islands
+
     const spots = [];
     for (let i = 0; i < 60; i++) {
         const x = (Math.sin(i * 123.45) * 800);
@@ -1150,14 +1438,14 @@ const GroundPlane = ({ onCanvasClick, targetingInfo }: { onCanvasClick: (x: numb
                 onPointerOut={() => document.body.style.cursor = 'default'}
             >
                 <planeGeometry args={[2000, 2000]} />
-                <meshStandardMaterial color="#365314" roughness={1} />
+                <meshStandardMaterial color={groundColor} roughness={1} />
             </mesh>
 
-            {/* Grass Decoration Spots */}
+            {/* Ground Decoration Spots */}
             {spots.map((s, i) => (
                 <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[CANVAS_WIDTH / 2 + s.x, -0.5, CANVAS_HEIGHT / 2 + s.y]}>
                     <circleGeometry args={[s.s, 16]} />
-                    <meshStandardMaterial color="#14532d" transparent opacity={0.4} depthWrite={false} />
+                    <meshStandardMaterial color={spotColor} transparent opacity={0.4} depthWrite={false} />
                 </mesh>
             ))}
         </group>
@@ -1166,19 +1454,36 @@ const GroundPlane = ({ onCanvasClick, targetingInfo }: { onCanvasClick: (x: numb
 
 // -- Main Scene Component --
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType }) => {
 
 
 
     return (
         <Canvas shadows camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
-            <color attach="background" args={[weather === 'rain' ? '#334155' : '#87CEEB']} />
-            <fog attach="fog" args={[weather === 'rain' ? '#334155' : '#87CEEB', 500, 1500]} />
+            <color attach="background" args={[
+                weather === 'rain'  ? '#334155' :
+                weather === 'snow'  ? '#cbd5e1' :
+                weather === 'fog'   ? '#94a3b8' :
+                weather === 'storm' ? '#1e293b' : '#87CEEB'
+            ]} />
+            <fog attach="fog" args={[
+                weather === 'rain'  ? '#334155' :
+                weather === 'snow'  ? '#cbd5e1' :
+                weather === 'fog'   ? '#94a3b8' :
+                weather === 'storm' ? '#1e293b' : '#87CEEB',
+                weather === 'fog' ? 180 : 500,
+                weather === 'fog' ? 550 : 1500
+            ]} />
 
-            {/* Rain Effect */}
-            {weather === 'rain' && <RainEffect />}
+            {weather === 'rain'  && <RainEffect />}
+            {weather === 'snow'  && <SnowEffect />}
+            {weather === 'storm' && <RainEffect />}
 
-            <ambientLight intensity={weather === 'rain' ? 0.3 : 0.6} />
+            <ambientLight intensity={
+                weather === 'rain' || weather === 'fog' ? 0.3 :
+                weather === 'storm' ? 0.15 :
+                weather === 'snow'  ? 0.5 : 0.6
+            } />
             <directionalLight
                 position={[200, 500, 200]}
                 intensity={1.5}
@@ -1190,8 +1495,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 shadow-camera-bottom={-600}
             />
 
-            <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} />
-            <RiverRenderer terrain={terrain} />
+            <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
+            <RiverRenderer terrain={terrain} mapType={mapType} />
             <BorderLine onCanvasClick={onCanvasClick} />
 
             {terrain.map(t => {

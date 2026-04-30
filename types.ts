@@ -20,6 +20,18 @@ export enum UnitType {
   HELICOPTER = 'HELICOPTER',
   SNIPER = 'SNIPER',
   TESLA = 'TESLA',
+  FLAMETHROWER = 'FLAMETHROWER',
+  MEDIC = 'MEDIC',
+  APC = 'APC',
+  BUNKER = 'BUNKER',
+  GUNSHIP = 'GUNSHIP',
+}
+
+export enum MapType {
+  COUNTRYSIDE = 'COUNTRYSIDE',
+  URBAN = 'URBAN',
+  DESERT = 'DESERT',
+  ARCHIPELAGO = 'ARCHIPELAGO',
 }
 
 export enum UnitState {
@@ -38,7 +50,7 @@ export interface TerrainObject {
   id: string;
   x: number;
   y: number;
-  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge';
+  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building';
   size: number;
   width?: number;
   height?: number;
@@ -71,6 +83,10 @@ export interface Unit {
   isOnHill?: boolean;
   squadId?: string;
   planeAltitudeAtDrop?: number;
+  lastHitTime?: number; // For hit flash visual
+  kills?: number;
+  veterancy?: number; // 0=none 1=★ 2=★★ 3=★★★
+  lastAttackerId?: string;
 }
 
 export interface Projectile {
@@ -85,7 +101,8 @@ export interface Projectile {
   maxRange: number;
   distanceTraveled: number;
   targetType?: 'ground' | 'air';
-  sourceType?: UnitType; // To track who fired it
+  sourceType?: UnitType;
+  sourceUnitId?: string;
   isMissile?: boolean;
 }
 
@@ -114,7 +131,7 @@ export interface GameState {
     [Team.WEST]: number;
     [Team.EAST]: number;
   };
-  weather: 'clear' | 'rain';
+  weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
 }
 
 export interface Flyover {
@@ -130,6 +147,7 @@ export interface Flyover {
   canisterVelocityY?: number;
   missileCount?: number;
   health: number;
+  shotTimer?: number; // For gunship burst-fire timing
 }
 
 export interface Missile {
