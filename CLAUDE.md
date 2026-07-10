@@ -40,9 +40,9 @@ This split is intentional. Never move hot-path game data into React state.
 
 | File | Role |
 |------|------|
-| `App.tsx` | HUD layout, keyboard shortcuts, spawn request validation, map selection, CPU on/off toggle, AI commentary trigger |
-| `components/GameCanvas.tsx` | **Game engine** — `requestAnimationFrame` loop, all unit AI, combat, spawning, collision, per-map terrain generation, CPU opponent AI |
-| `components/GameScene.tsx` | **Pure renderer** — maps game-state arrays to R3F/Three.js meshes, map-specific visuals (ground colors, rivers/channels) |
+| `App.tsx` | HUD layout, keyboard shortcuts, spawn request validation, map/side/mode selection, CPU level, lane selector, pause/speed, AI commentary trigger |
+| `components/GameCanvas.tsx` | **Game engine** — `requestAnimationFrame` loop, all unit AI, combat, spawning, collision, per-map terrain generation, CPU opponent AI, capture point, stats |
+| `components/GameScene.tsx` | **Pure renderer** — maps game-state arrays to R3F/Three.js meshes; instanced particles/projectiles, bloom, day/night, camera shake, map-specific visuals |
 | `components/ClickableGroup.tsx` | R3F click-target helper |
 | `services/ai.ts` | Gemini API call for battlefield commentary |
 | `services/audio.ts` | Web Audio API procedural sound effects (singleton `soundService`) |
@@ -59,7 +59,15 @@ This split is intentional. Never move hot-path game data into React state.
 
 ### CPU opponent
 
-`GameCanvas.tsx` contains a built-in AI commander for East (search `// CPU AI`), toggled from the HUD via `cpuEnabled`. It runs inside `tick()` on a spawn-interval timer that speeds up when losing. Each cycle it does threat analysis of West's units (air/armor/infantry counts), builds a weighted priority map of affordable counter-units, and occasionally fires special tactics (missile strike at enemy clusters, airborne drops behind lines). When adding a unit type, consider adding it to the CPU's counter-pick/composition weights so the computer player uses it.
+`GameCanvas.tsx` contains a side-agnostic AI commander (search `// CPU AI`), configured via `cpuTeam` + `cpuDifficulty` props (side and easy/normal/hard chosen on the splash screen; difficulty scales spawn cadence, special-tactic frequency, and an income bonus — see `CPU_DIFFICULTY`). It runs inside `tick()` on a spawn-interval timer that speeds up when losing. Each cycle it does threat analysis of the foe's units (air/armor/infantry/mine counts), builds a weighted priority map of affordable counter-units, and occasionally fires special tactics (missile strike at enemy clusters, airborne drops behind lines, defensive minefields). When adding a unit type, consider adding it to the CPU's counter-pick/composition weights so the computer player uses it.
+
+### Other gameplay systems (all in `GameCanvas.tsx`)
+
+Weather cycle (rain/snow/fog/storm with combat penalties + lightning strikes), mid-map capture point (+50% income to holder), veterancy (kills → up to 3 ranks: +damage/+HP/+reload), lane-biased spawning (`SpawnLane`), two win modes (`GameMode`: 100 points or base HP), pause/2× speed (ticks per frame), engineer mine-defusal, and per-team built/lost stats shown on the victory screen.
+
+### Rendering performance
+
+Regular particles and projectiles render through two `InstancedMesh`es updated imperatively in `useFrame` (`InstancedParticles`/`InstancedProjectiles` in `GameScene.tsx`); only rare special particles (beams, bolts, text, decals, corpses, missiles) are individual React components. Keep new high-count effects in the instanced path or flag them via `isSpecialParticle`.
 
 ### Map system
 
