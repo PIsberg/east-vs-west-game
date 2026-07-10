@@ -119,6 +119,9 @@ export interface Particle {
   isGroundDecal?: boolean;
   isBolt?: boolean; // Vertical sky-to-ground lightning bolt
   isCorpse?: boolean; // Fallen infantry body / burnt vehicle wreck
+  isShockwave?: boolean; // Expanding ground ring; size = max radius, life counts 18..0
+  alt?: number;    // Explicit render altitude (world Y); overrides the legacy life-based height
+  altVel?: number; // Altitude change per tick (rising smoke, falling snow)
   text?: string; // For floating text (e.g. Dollar Sign)
 }
 

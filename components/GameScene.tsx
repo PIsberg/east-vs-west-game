@@ -1192,7 +1192,7 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
 // updated imperatively in useFrame. Special cases (beams, text, decals, missiles)
 // stay as individual components — they are rare.
 
-const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt || p.isCorpse);
+const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt || p.isCorpse || p.isShockwave);
 
 // Jagged vertical lightning bolt from the sky to a strike point
 const LightningBolt = ({ p }: { p: Particle }) => {
@@ -1244,7 +1244,8 @@ const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
             // Fade by shrinking (per-instance opacity is not supported)
             const fade = Math.max(0.05, Math.min(1, p.life / 30));
             const s = Math.max(0.01, p.size * (0.4 + 0.6 * fade));
-            dummy.position.set(p.position.x, 10 + (30 - p.life), p.position.y);
+            const y = p.alt !== undefined ? p.alt : 10 + (30 - p.life);
+            dummy.position.set(p.position.x, y, p.position.y);
             dummy.scale.set(s, s, s);
             dummy.rotation.set(0, 0, 0);
             dummy.updateMatrix();
@@ -1285,7 +1286,9 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
             if (proj.isMissile) continue; // rendered as Projectile3D (has pointLight)
             if (count >= MAX_PROJECTILE_INSTANCES) break;
             dummy.position.set(proj.position.x, 15, proj.position.y);
-            dummy.scale.set(1, 1, 1);
+            // Stretch into a tracer along the flight direction
+            dummy.rotation.set(0, -Math.atan2(proj.velocity.y, proj.velocity.x), 0);
+            dummy.scale.set(3.4, 0.65, 0.65);
             dummy.updateMatrix();
             mesh.setMatrixAt(count, dummy.matrix);
             mesh.setColorAt(count, proj.targetType === 'air' ? COLOR_PROJ_AIR : COLOR_PROJ_GROUND);
@@ -1308,6 +1311,20 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
 const Particle3D = ({ p }: { p: Particle }) => {
     // Sky-to-ground lightning bolt
     if (p.isBolt) return <LightningBolt p={p} />;
+
+    // Expanding shockwave ring hugging the ground
+    if (p.isShockwave) {
+        const SHOCK_LIFE = 18;
+        const t = 1 - Math.max(0, p.life) / SHOCK_LIFE; // 0 -> 1
+        const radius = Math.max(1, p.size * (0.15 + 0.85 * t));
+        const opacity = (1 - t) * 0.75;
+        return (
+            <mesh position={[p.position.x, 0.8, p.position.y]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[radius * 0.82, radius, 32]} />
+                <meshBasicMaterial color={p.color} transparent opacity={opacity} toneMapped={false} depthWrite={false} />
+            </mesh>
+        );
+    }
 
     // Fallen body / burnt wreck lying on the ground
     if (p.isCorpse) {

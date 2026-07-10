@@ -445,6 +445,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         if (isNuke) {
           flashOpacity.current = 1.0;
+          // Expanding ground shockwave
+          particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fef9c3', size: 320, isShockwave: true });
           // Initial white-hot flash ring
           for (let p = 0; p < 80; p++) {
             const angle = Math.random() * Math.PI * 2;
@@ -456,14 +458,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               drag: 0.88,
               life: 30 + Math.random() * 20,
               color: p % 2 === 0 ? '#ffffff' : '#fffde7',
-              size: 20 + Math.random() * 30
+              size: 20 + Math.random() * 30,
+              alt: 8 + Math.random() * 20,
+              altVel: 0.5
             });
           }
-          // Massive lingering mushroom cloud
+          // Mushroom cloud: hot rising column + spreading dark cap
           for (let p = 0; p < 900; p++) {
             const angle = Math.random() * Math.PI * 2;
-            const speed = Math.random() * 25 + 8;
-            const startDist = Math.random() * 200;
+            const isColumn = p % 3 === 0;
+            const speed = isColumn ? Math.random() * 4 + 1 : Math.random() * 22 + 8;
+            const startDist = isColumn ? Math.random() * 45 : Math.random() * 200;
             particlesRef.current.push({
               id: generateId(),
               position: { x: m.target.x + Math.cos(angle) * startDist, y: m.target.y + Math.sin(angle) * startDist },
@@ -472,10 +477,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               life: 300 + Math.random() * 200,
               color: p % 6 === 0 ? '#ffffff' :
                 (p % 5 === 0 ? '#fef08a' :
-                  (p % 4 === 0 ? '#1a2e05' :
-                    (p % 3 === 0 ? '#365314' :
-                      (p % 2 === 0 ? '#4d7c0f' : '#713f12')))),
-              size: 40 + Math.random() * 80
+                  (p % 4 === 0 ? '#292524' :
+                    (p % 3 === 0 ? '#57534e' :
+                      (p % 2 === 0 ? '#78716c' : '#713f12')))),
+              size: 40 + Math.random() * 80,
+              alt: 2 + Math.random() * 10,
+              altVel: isColumn ? 1.2 + Math.random() * 1.6 : 0.35 + Math.random() * 0.8
             });
           }
           // Burn all trees and bushes caught in the blast
@@ -507,11 +514,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         });
         // Explosion particles ( Standard )
         if (!isNuke) {
+          particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fde68a', size: (radius || 60) * 1.4, isShockwave: true });
           for (let p = 0; p < 20; p++) {
             particlesRef.current.push({
               id: generateId(),
               position: { x: m.target.x + (Math.random() - 0.5) * 40, y: m.target.y + (Math.random() - 0.5) * 40 },
-              life: 40, color: '#f97316', size: 6 + Math.random() * 8
+              life: 40, color: '#f97316', size: 6 + Math.random() * 8,
+              alt: 4 + Math.random() * 14, altVel: 0.7 + Math.random() * 0.7
+            });
+          }
+          // Lingering smoke column
+          for (let p = 0; p < 8; p++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: m.target.x + (Math.random() - 0.5) * 24, y: m.target.y + (Math.random() - 0.5) * 24 },
+              velocity: { x: (Math.random() - 0.5) * 0.4, y: (Math.random() - 0.5) * 0.4 },
+              drag: 0.98,
+              life: 70 + Math.random() * 60, color: p % 2 === 0 ? '#57534e' : '#44403c', size: 8 + Math.random() * 10,
+              alt: 6 + Math.random() * 10, altVel: 0.5 + Math.random() * 0.6
             });
           }
         }
@@ -594,7 +614,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
-    // Snow particle generation
+    // Snow particle generation (drifts down to ground level)
     if (weatherRef.current === 'snow' && Math.random() < 0.35) {
       particlesRef.current.push({
         id: generateId(),
@@ -604,6 +624,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         life: 200 + Math.random() * 120,
         color: '#e2e8f0',
         size: 2 + Math.random() * 2,
+        alt: 60 + Math.random() * 80,
+        altVel: -(0.35 + Math.random() * 0.3),
       });
     }
 
@@ -683,11 +705,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           soundService.playMineExplosion();
           shakeRef.current = Math.max(shakeRef.current, unit.type === UnitType.MINE_TANK ? 6 : 4);
           // Explosion Effect
+          particlesRef.current.push({ id: generateId(), position: { ...unit.position }, life: 18, color: '#fdba74', size: radius * 1.8, isShockwave: true });
           for (let k = 0; k < 12; k++) {
             particlesRef.current.push({
               id: generateId(),
               position: { x: unit.position.x + (Math.random() - 0.5) * 20, y: unit.position.y + (Math.random() - 0.5) * 20 },
-              life: 30, color: '#f97316', size: 5 + Math.random() * 8
+              life: 30, color: '#f97316', size: 5 + Math.random() * 8,
+              alt: 3 + Math.random() * 10, altVel: 0.6 + Math.random() * 0.6
             });
           }
           // Deal Damage
@@ -1041,7 +1065,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             drag: 0.9,
             life: 20 + Math.random() * 10,
             color: '#a8a29e',
-            size: 3 + Math.random() * 3
+            size: 3 + Math.random() * 3,
+            alt: 2 + Math.random() * 4,
+            altVel: 0.25
           });
         }
 
@@ -1394,12 +1420,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
-          particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 15, color: '#fbbf24', size: 4 });
+          particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 15, color: '#fbbf24', size: 4, alt: 8 + Math.random() * 8, altVel: 0.4 });
+        }
+        if (hit && p.damage > 30) {
+          particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 40, color: '#57534e', size: 6, alt: 10, altVel: 0.6 });
         }
 
         // Area Damage (Explosion Radius)
         if (p.explosionRadius) {
           shakeRef.current = Math.max(shakeRef.current, Math.min(5, p.explosionRadius * 0.06));
+          particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 14, color: '#fdba74', size: p.explosionRadius * 1.2, isShockwave: true });
           // Artillery / Heavy Weapon Scorch Mark
           if (p.sourceType === UnitType.ARTILLERY || p.sourceType === UnitType.MISSILE_STRIKE) {
             particlesRef.current.push({
@@ -1460,6 +1490,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           p.velocity.y *= p.drag;
         }
       }
+      if (p.altVel !== undefined) {
+        p.alt = (p.alt ?? 0) + p.altVel;
+        p.altVel *= 0.99;
+        if (p.alt < 0) p.alt = 0;
+      }
       if (--p.life <= 0) particlesRef.current.splice(i, 1);
     });
 
@@ -1502,19 +1537,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           particlesRef.current.push({
             id: generateId(),
             position: { x: u.position.x + (Math.random() - 0.5) * 30, y: u.position.y + (Math.random() - 0.5) * 30 },
-            life: 45, color: k % 2 === 0 ? '#ef4444' : '#f97316', size: 8 + Math.random() * 10
+            life: 45, color: k % 2 === 0 ? '#ef4444' : '#f97316', size: 8 + Math.random() * 10,
+            alt: 4 + Math.random() * 16, altVel: 0.5 + Math.random() * 0.7
           });
         }
       } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
                  u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER) {
-        // Troops Scream & Blood
+        // Troops Scream & Blood (flat pool at ground level)
         soundService.playScreamSound();
         particlesRef.current.push({
           id: generateId(),
           position: { x: u.position.x, y: u.position.y },
           life: 180, // 3 seconds at 60fps
           color: '#7f1d1d', // Dark Red Blood
-          size: 12 + Math.random() * 5
+          size: 12 + Math.random() * 5,
+          alt: 0.5
         });
       }
 
@@ -1532,6 +1569,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           size: isVehicleDeath ? 30 : 14,
           isCorpse: true
         });
+        // Smoke column rising off the burning wreck
+        if (isVehicleDeath) {
+          for (let k = 0; k < 10; k++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: u.position.x + (Math.random() - 0.5) * 16, y: u.position.y + (Math.random() - 0.5) * 12 },
+              velocity: { x: (Math.random() - 0.5) * 0.3, y: (Math.random() - 0.5) * 0.3 },
+              drag: 0.99,
+              life: 90 + Math.random() * 160,
+              color: k % 3 === 0 ? '#292524' : k % 2 === 0 ? '#44403c' : '#57534e',
+              size: 6 + Math.random() * 9,
+              alt: 8 + Math.random() * 8,
+              altVel: 0.35 + Math.random() * 0.45
+            });
+          }
+        }
       }
     });
 
