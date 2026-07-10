@@ -21,6 +21,8 @@ interface GameSceneProps {
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     capture?: CapturePoint;
+    onUnitClick?: (unit: Unit) => void;
+    focusIds?: string[];
 }
 
 // Day/night cycle: full cycle every 4 minutes, starting at noon.
@@ -452,7 +454,7 @@ const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparen
 const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
 const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
-const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void }) => {
+const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void, onUnitClick?: (unit: Unit) => void, focused?: boolean }) => {
     const config = UNIT_CONFIG[unit.type] as any;
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
 
@@ -497,7 +499,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
     const matProps = { color, transparent, opacity };
 
     return (
-        <ClickableGroup position={[position[0], position[1] + yOffset + bobY, position[2]]} rotation={rotation as any} onCanvasClick={onCanvasClick}>
+        <ClickableGroup
+            position={[position[0], position[1] + yOffset + bobY, position[2]]}
+            rotation={rotation as any}
+            onCanvasClick={onUnitClick ? () => onUnitClick(unit) : onCanvasClick}
+        >
             <group receiveShadow castShadow rotation={[0, 0, bobTilt]}>
                 {/* Health Bar — hidden at full health, color shifts as damage mounts */}
                 {unit.health < unit.maxHealth && (
@@ -1261,6 +1267,26 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                     </mesh>
                 )}
 
+                {/* Focus-fire marker: spinning red diamond + pulsing ground ring */}
+                {focused && (
+                    <group>
+                        <group position={[0, (unit.height || 16) + 30, 0]} rotation={[0, Date.now() * 0.006, 0]}>
+                            <mesh>
+                                <octahedronGeometry args={[4.5]} />
+                                <meshBasicMaterial color="#ef4444" toneMapped={false} />
+                            </mesh>
+                        </group>
+                        <mesh
+                            position={[0, -yOffset - bobY + 0.7, 0]}
+                            rotation={[-Math.PI / 2, 0, 0]}
+                            scale={(1 + 0.15 * Math.sin(Date.now() * 0.012)) * (unit.width * 0.9 + 10)}
+                        >
+                            <ringGeometry args={[0.8, 1, 24]} />
+                            <meshBasicMaterial color="#ef4444" transparent opacity={0.8} toneMapped={false} depthWrite={false} />
+                        </mesh>
+                    </group>
+                )}
+
                 {/* Veteran stars */}
                 {(unit.veterancy || 0) > 0 && (
                     <group position={[0, unit.height + 10, 0]}>
@@ -1949,7 +1975,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake, capture }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
 
 
 
@@ -2009,7 +2035,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                     return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />;
                 })}
 
-                {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} />)}
+                {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} />)}
 
                 {projectiles.map(p => p.isMissile ? <Projectile3D key={p.id} proj={p} /> : null)}
                 <InstancedProjectiles projectiles={projectiles} />

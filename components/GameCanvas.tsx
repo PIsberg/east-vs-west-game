@@ -114,6 +114,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const stancesRef = useRef<Record<Team, Stance>>(stances);
   useEffect(() => { stancesRef.current = stances; }, [stances]);
 
+  // Focus fire: clicking an enemy unit makes your side prioritize it for a few seconds
+  const focusRef = useRef<Record<Team, { targetId: string | null, until: number }>>({
+    [Team.WEST]: { targetId: null, until: 0 },
+    [Team.EAST]: { targetId: null, until: 0 },
+  });
+
+  const handleUnitClick = (clicked: Unit) => {
+    // Strike targeting takes priority — drop the strike on the clicked unit
+    if (targetingInfo) { onCanvasClick(clicked.position.x, clicked.position.y); return; }
+    if (clicked.type === UnitType.MINE_PERSONAL || clicked.type === UnitType.MINE_TANK || clicked.type === UnitType.NAPALM) {
+      onCanvasClick(clicked.position.x, clicked.position.y); return;
+    }
+    const focuser = clicked.team === Team.WEST ? Team.EAST : Team.WEST;
+    if (cpuTeams.includes(focuser)) return; // can't give orders to the CPU's army
+    focusRef.current[focuser] = { targetId: clicked.id, until: Date.now() + 6000 };
+    soundService.playHitSound();
+  };
+
   useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
 
@@ -1314,8 +1332,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           } else {
             // Standard Unit Targeting
 
+            // Player focus-fire target takes priority when in range and engageable
+            const focus = focusRef.current[unit.team];
+            if (focus.targetId && Date.now() < focus.until) {
+              const ft = unitsRef.current.find(o => o.id === focus.targetId && o.team !== unit.team && o.health > 0);
+              if (ft) {
+                const ftIsAir = !!(UNIT_CONFIG[ft.type] as any).isFlying;
+                const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+                  unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER;
+                const fd = Math.sqrt((ft.position.x - unit.position.x) ** 2 + (ft.position.y - unit.position.y) ** 2);
+                if ((!ftIsAir || canEngageAirFocus) && fd < range) target = ft;
+              } else {
+                focus.targetId = null;
+              }
+            }
+
             // Helicopter Priority Target: Tesla
-            if (unit.type === UnitType.HELICOPTER) {
+            if (!target && unit.type === UnitType.HELICOPTER) {
               target = potentialTargets.find(o => o.team !== unit.team && o.type === UnitType.TESLA && Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range);
             }
 
@@ -1921,6 +1954,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         mapType={mapType}
         shake={shakeRef}
         capture={captureRef.current}
+        onUnitClick={handleUnitClick}
+        focusIds={[focusRef.current[Team.WEST], focusRef.current[Team.EAST]]
+          .filter(f => f.targetId && Date.now() < f.until)
+          .map(f => f.targetId as string)}
       />
 
       {flashOpacity.current > 0 && (
