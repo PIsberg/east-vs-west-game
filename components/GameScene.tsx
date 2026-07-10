@@ -1652,23 +1652,40 @@ const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick:
 
 // -- Main Scene Component --
 
+// Reusable color temps for the day/night blend (avoid per-frame allocation)
+const TMP_SKY_COLOR = new THREE.Color();
+const TMP_SUN_COLOR = new THREE.Color();
+const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
+const MOON_COLOR = new THREE.Color('#93c5fd');
+
 export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake }) => {
 
 
 
+    // Day/night cycle: full cycle every 4 minutes, starting at noon.
+    // dayFactor 1 = noon, 0 = deep night; blended on top of the weather palette.
+    const DAY_CYCLE_MS = 240000;
+    const cycleT = (Date.now() % DAY_CYCLE_MS) / DAY_CYCLE_MS;
+    const dayFactor = Math.max(0, Math.min(1, 0.5 + 0.65 * Math.sin(cycleT * Math.PI * 2 + Math.PI / 2)));
+
+    const weatherSky =
+        weather === 'rain'  ? '#334155' :
+        weather === 'snow'  ? '#cbd5e1' :
+        weather === 'fog'   ? '#94a3b8' :
+        weather === 'storm' ? '#1e293b' : '#87CEEB';
+    const skyColor = TMP_SKY_COLOR.set(weatherSky).lerp(NIGHT_SKY_COLOR, 1 - dayFactor).getHex();
+    const sunColor = TMP_SUN_COLOR.set('#ffffff').lerp(MOON_COLOR, 1 - dayFactor).getHex();
+
+    const baseAmbient =
+        weather === 'rain' || weather === 'fog' ? 0.3 :
+        weather === 'storm' ? 0.15 :
+        weather === 'snow'  ? 0.5 : 0.6;
+
     return (
         <Canvas shadows camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
-            <color attach="background" args={[
-                weather === 'rain'  ? '#334155' :
-                weather === 'snow'  ? '#cbd5e1' :
-                weather === 'fog'   ? '#94a3b8' :
-                weather === 'storm' ? '#1e293b' : '#87CEEB'
-            ]} />
+            <color attach="background" args={[skyColor]} />
             <fog attach="fog" args={[
-                weather === 'rain'  ? '#334155' :
-                weather === 'snow'  ? '#cbd5e1' :
-                weather === 'fog'   ? '#94a3b8' :
-                weather === 'storm' ? '#1e293b' : '#87CEEB',
+                skyColor,
                 weather === 'fog' ? 180 : 500,
                 weather === 'fog' ? 550 : 1500
             ]} />
@@ -1677,14 +1694,11 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             {weather === 'snow'  && <SnowEffect />}
             {weather === 'storm' && <RainEffect />}
 
-            <ambientLight intensity={
-                weather === 'rain' || weather === 'fog' ? 0.3 :
-                weather === 'storm' ? 0.15 :
-                weather === 'snow'  ? 0.5 : 0.6
-            } />
+            <ambientLight intensity={baseAmbient * (0.3 + 0.7 * dayFactor)} />
             <directionalLight
                 position={[200, 500, 200]}
-                intensity={1.5}
+                intensity={1.5 * (0.18 + 0.82 * dayFactor)}
+                color={sunColor}
                 castShadow
                 shadow-mapSize={[2048, 2048]}
                 shadow-camera-left={-600}
