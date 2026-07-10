@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2 } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 import { soundService } from './services/audio';
 
@@ -132,6 +132,8 @@ const App: React.FC = () => {
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [gameSpeed, setGameSpeed] = useState<1 | 2>(1);
   const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
   const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>('off');
   const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
@@ -148,7 +150,7 @@ const App: React.FC = () => {
   const resetGame = () => {
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
-    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear');
+    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear'); setPaused(false);
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
@@ -421,6 +423,8 @@ const App: React.FC = () => {
           <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
           <div className="flex items-center gap-4">
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
+            <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
+            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
@@ -438,7 +442,7 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
@@ -453,6 +457,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
+            <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund their <span className="text-green-400">Full Cost</span>.</li>
           </ul>
         </div>

@@ -38,6 +38,8 @@ interface GameCanvasProps {
   cpuTeam: Team | null;
   cpuDifficulty: CpuDifficulty;
   mapType: MapType;
+  paused: boolean;
+  gameSpeed: 1 | 2;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -49,6 +51,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cpuTeam,
   cpuDifficulty,
   mapType,
+  paused,
+  gameSpeed,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -88,8 +92,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   });
   const cpuTimerRef = useRef(0);
   const cpuRef = useRef<{ team: Team | null, difficulty: CpuDifficulty }>({ team: cpuTeam, difficulty: cpuDifficulty });
+  const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
+  const statsRef = useRef({
+    [Team.WEST]: { built: 0, lost: 0 },
+    [Team.EAST]: { built: 0, lost: 0 },
+  });
+  const matchStartRef = useRef(Date.now());
 
   useEffect(() => { cpuRef.current = { team: cpuTeam, difficulty: cpuDifficulty }; }, [cpuTeam, cpuDifficulty]);
+  useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
 
   // Debug Keys
   useEffect(() => {
@@ -307,6 +318,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     unitsRef.current.push(newUnit);
     if (type !== UnitType.NAPALM && type !== UnitType.MINE_PERSONAL && type !== UnitType.MINE_TANK) {
       soundService.playSpawnSound(team === Team.EAST);
+      statsRef.current[team].built++;
     }
   }, []);
 
@@ -1441,6 +1453,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
     deadUnits.forEach(u => {
+      if (u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
+        statsRef.current[u.team].lost++;
+      }
       // Kill Reward: Award 40% of unit cost to enemy
       const reward = Math.floor(((UNIT_CONFIG[u.type] as any).cost || 0) * 0.4);
       if (reward > 0) {
@@ -1674,6 +1689,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
                     spawnTime: Date.now(), isInCover: false, squadId: sqId
                   });
+                  statsRef.current[ME].built++;
                 }
               } else {
                 spawnUnit(ME, chosen);
@@ -1706,7 +1722,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const tick = useCallback(() => {
     if (!gameOverRef.current) {
       try {
-        updateRef.current();
+        if (!speedRef.current.paused) {
+          for (let s = 0; s < speedRef.current.speed; s++) updateRef.current();
+        }
       } catch (e) {
         console.error("Game Loop Error:", e);
       }
@@ -1744,6 +1762,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }} />
       )}
 
+      {paused && !gameOver && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
+          <div className="text-4xl font-black uppercase tracking-widest text-stone-200 drop-shadow-lg">⏸ Paused</div>
+        </div>
+      )}
+
       {gameOver && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
@@ -1753,6 +1777,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <div className="text-2xl font-bold text-stone-300">
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!
             </div>
+
+            {/* Post-game stats */}
+            <div className="grid grid-cols-3 gap-x-6 gap-y-1 text-sm text-stone-300 border border-stone-700 rounded-lg p-4 bg-stone-950/60">
+              <div></div>
+              <div className="font-bold text-blue-400 text-center uppercase">West</div>
+              <div className="font-bold text-red-400 text-center uppercase">East</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Score</div>
+              <div className="text-center font-mono">{scoreRef.current[Team.WEST]}</div>
+              <div className="text-center font-mono">{scoreRef.current[Team.EAST]}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Units Built</div>
+              <div className="text-center font-mono">{statsRef.current[Team.WEST].built}</div>
+              <div className="text-center font-mono">{statsRef.current[Team.EAST].built}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Units Lost</div>
+              <div className="text-center font-mono">{statsRef.current[Team.WEST].lost}</div>
+              <div className="text-center font-mono">{statsRef.current[Team.EAST].lost}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Duration</div>
+              <div className="text-center font-mono col-span-2">{Math.floor((Date.now() - matchStartRef.current) / 60000)}m {Math.floor(((Date.now() - matchStartRef.current) % 60000) / 1000)}s</div>
+            </div>
+
             <button
               onClick={() => window.location.reload()}
               className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95 flex items-center gap-2"
