@@ -702,6 +702,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                                 <sphereGeometry args={[5, 16, 16]} />
                                 <meshStandardMaterial color="#e0f2fe" emissive="#e0f2fe" emissiveIntensity={10} />
                             </mesh>
+                            {/* Orbiting charge sparks */}
+                            <group position={[0, 34, 0]} rotation={[0, Date.now() * 0.008, 0]}>
+                                {[0, Math.PI].map((a, i) => (
+                                    <mesh key={i} position={[Math.cos(a) * 7.5, Math.sin(Date.now() * 0.01 + a) * 2, Math.sin(a) * 7.5]}>
+                                        <sphereGeometry args={[0.9, 6, 6]} />
+                                        <meshBasicMaterial color="#7dd3fc" toneMapped={false} />
+                                    </mesh>
+                                ))}
+                            </group>
                         </group>
                     )
                 }
@@ -809,17 +818,26 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             <mesh position={[6, 11, 2]} rotation={[-0.4, 0, -0.3]}>
                                 <boxGeometry args={[3.5, 10, 3.5]} />
                                 <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                                {/* Big Gun (Minigun style) */}
+                                {/* Minigun: housing + spinning six-barrel cluster + ammo drum */}
                                 <group position={[0, -6, 2]} rotation={[Math.PI / 2, 0, 0]}>
                                     <mesh>
-                                        <cylinderGeometry args={[2, 2, 12]} />
+                                        <cylinderGeometry args={[2.2, 2.2, 8]} />
                                         <meshStandardMaterial color="#1c1917" transparent={transparent} opacity={opacity} />
                                     </mesh>
-                                    <mesh position={[0, 6, 0]}>
-                                        <meshStandardMaterial color="#1c1917" transparent={transparent} opacity={opacity} />
+                                    <group rotation={[0, Date.now() / (unit.attackCooldown > 5 ? 18 : 240), 0]}>
+                                        {[0, 1, 2, 3, 4, 5].map(i => (
+                                            <mesh key={i} position={[Math.cos(i * Math.PI / 3) * 1.3, 7, Math.sin(i * Math.PI / 3) * 1.3]}>
+                                                <cylinderGeometry args={[0.45, 0.45, 9, 6]} />
+                                                <meshStandardMaterial color="#3f3f46" />
+                                            </mesh>
+                                        ))}
+                                    </group>
+                                    <mesh position={[0, -2, -2.5]}>
+                                        <cylinderGeometry args={[2, 2, 3.5, 10]} />
+                                        <meshStandardMaterial color="#44403c" />
                                     </mesh>
                                     {unit.attackCooldown > 5 && (
-                                        <group position={[0, 8, 0]} rotation={[0, 0, Math.PI / 2]}>
+                                        <group position={[0, 12, 0]} rotation={[0, 0, Math.PI / 2]}>
                                             <MuzzleFlash size={1.5} />
                                         </group>
                                     )}
@@ -993,6 +1011,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                         <mesh position={[0, 1, 0]}>
                             <cylinderGeometry args={[3, 3, 2]} />
                             <meshStandardMaterial color="black" />
+                            {/* Armed indicator LED */}
+                            <mesh position={[0, 1.3, 0]}>
+                                <sphereGeometry args={[0.6, 6, 6]} />
+                                <meshBasicMaterial color={Date.now() % 1400 < 140 ? '#ef4444' : '#450a0a'} toneMapped={Date.now() % 1400 >= 140} />
+                            </mesh>
                         </mesh>
                     )
                 }
@@ -1001,6 +1024,10 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                         <mesh position={[0, 1, 0]}>
                             <cylinderGeometry args={[5, 5, 3]} />
                             <meshStandardMaterial color="#222" />
+                            <mesh position={[0, 1.8, 0]}>
+                                <sphereGeometry args={[0.8, 6, 6]} />
+                                <meshBasicMaterial color={Date.now() % 1400 < 140 ? '#ef4444' : '#450a0a'} toneMapped={Date.now() % 1400 >= 140} />
+                            </mesh>
                         </mesh>
                     )
                 }
@@ -1121,6 +1148,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                                         <cylinderGeometry args={[0.8, 0.8, 6]} />
                                         <meshStandardMaterial color="#000" />
                                     </mesh>
+                                    {/* Periodic scope glint */}
+                                    {(Date.now() % 2400) < 180 && (
+                                        <mesh position={[0, 11.5, 1.5]}>
+                                            <sphereGeometry args={[0.9, 6, 6]} />
+                                            <meshBasicMaterial color="#e0f2fe" toneMapped={false} />
+                                        </mesh>
+                                    )}
                                 </group>
                             </mesh>
                             <InfantryLegs walking={walking} phase={walkPhase} color="#3f6212" />
@@ -1172,6 +1206,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             <mesh position={[0, -5, 1.5]} rotation={[Math.PI / 2, 0, 0]}>
                                 <cylinderGeometry args={[1.2, 0.8, 10]} />
                                 <meshStandardMaterial color="#78350f" />
+                                {/* Pilot flame flickering at the nozzle tip */}
+                                <mesh position={[0, 5.5, 0]} scale={1 + 0.3 * Math.sin(Date.now() * 0.03)}>
+                                    <sphereGeometry args={[0.8, 6, 6]} />
+                                    <meshBasicMaterial color={Math.floor(Date.now() / 120) % 2 === 0 ? '#f97316' : '#fbbf24'} toneMapped={false} />
+                                </mesh>
                             </mesh>
                         </mesh>
                         <InfantryLegs walking={walking} phase={walkPhase} />
@@ -1652,7 +1691,7 @@ const Particle3D = ({ p }: { p: Particle }) => {
     );
 };
 
-const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasClick: (x: number, y: number) => void }) => {
+const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
     // River handled by RiverRenderer now
     // if (item.type === 'river') { ... } 
 
@@ -1701,18 +1740,25 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
         const radius = item.size;
         const height = 40; // Matches logic
         const plateauRadius = radius * 0.5;
+        // Hills match their map: dunes in the desert, rubble mounds in the city
+        const slopeColor =
+            mapType === MapType.DESERT ? '#b45309' :
+            mapType === MapType.URBAN ? '#57534e' : '#4d7c0f';
+        const capColor =
+            mapType === MapType.DESERT ? '#92400e' :
+            mapType === MapType.URBAN ? '#44403c' : '#3f6212';
 
         return (
             <ClickableGroup position={[item.x, height / 2 - 1, item.y]} onCanvasClick={onCanvasClick}>
                 {/* Truncated Cone for Plateau */}
                 <mesh receiveShadow>
                     <cylinderGeometry args={[plateauRadius, radius, height, 32]} />
-                    <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
+                    <meshStandardMaterial color={slopeColor} roughness={0.9} />
                 </mesh>
                 {/* Worn plateau cap */}
                 <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
                     <circleGeometry args={[plateauRadius * 0.85, 24]} />
-                    <meshStandardMaterial color="#3f6212" roughness={1} />
+                    <meshStandardMaterial color={capColor} roughness={1} />
                 </mesh>
                 {/* Rocky outcrops on the slope */}
                 {[0.9, 2.4, 4.1].map((a, i) => (
@@ -2138,7 +2184,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments
-                    return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />;
+                    return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} mapType={mapType} />;
                 })}
 
                 {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} />)}
