@@ -14,7 +14,7 @@ The first team to reach **100 Points** wins.
 
 ### Resources
 - **Money** generates automatically over time.
-- **Refunds**: Units that successfully reach the enemy edge refund their full deployment cost.
+- **Refunds**: Units that successfully reach the enemy edge refund 50% of their deployment cost.
 
 ### 🕹️ Controls
 

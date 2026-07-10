@@ -458,7 +458,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
-            <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund their <span className="text-green-400">Full Cost</span>.</li>
+            <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>
 

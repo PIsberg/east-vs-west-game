@@ -1316,9 +1316,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           setGameOver(unit.team);
         }
 
-        // Refund logic
+        // Refund logic: 50% of cost — full refunds let the winning side snowball
         const cost = UNIT_CONFIG[unit.type].cost;
-        moneyRef.current[unit.team] += cost;
+        moneyRef.current[unit.team] += Math.floor(cost * 0.5);
         unit.health = 0;
       }
     });
