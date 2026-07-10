@@ -1256,13 +1256,30 @@ const Particle3D = ({ p }: { p: Particle }) => {
         );
     }
 
-    // Scorch Mark / Ground Decal
+    // Scorch Mark / Ground Decal — large ones get a raised earth rim (crater look)
     if (p.isGroundDecal) {
+        const opacity = Math.min(0.85, p.life / 600);
         return (
-            <mesh position={[p.position.x, 0.2, p.position.y]} rotation={[-Math.PI / 2, 0, 0]}>
-                <circleGeometry args={[p.size, 16]} />
-                <meshStandardMaterial color={p.color} transparent opacity={p.life / 600} depthWrite={false} />
-            </mesh>
+            <group position={[p.position.x, 0, p.position.y]}>
+                <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[p.size, 16]} />
+                    <meshStandardMaterial color={p.color} transparent opacity={opacity} depthWrite={false} />
+                </mesh>
+                {p.size >= 30 && (
+                    <>
+                        {/* Inner burnt core */}
+                        <mesh position={[0, 0.35, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <circleGeometry args={[p.size * 0.45, 16]} />
+                            <meshStandardMaterial color="#0c0a09" transparent opacity={opacity} depthWrite={false} />
+                        </mesh>
+                        {/* Raised earth rim */}
+                        <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <torusGeometry args={[p.size * 0.92, p.size * 0.09, 6, 24]} />
+                            <meshStandardMaterial color="#44403c" transparent opacity={opacity} roughness={1} />
+                        </mesh>
+                    </>
+                )}
+            </group>
         );
     }
 

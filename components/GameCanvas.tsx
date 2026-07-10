@@ -417,6 +417,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
         });
+        // Impact crater decal
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: m.target.x, y: m.target.y },
+          life: isNuke ? 3600 : 900,
+          color: '#1c1917',
+          size: isNuke ? 170 : 42,
+          isGroundDecal: true
+        });
         // Explosion particles ( Standard )
         if (!isNuke) {
           for (let p = 0; p < 20; p++) {
@@ -609,6 +618,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               v.health -= damage * (1 - d / (radius * 2)); // Falloff
               v.lastHitTime = Date.now();
             }
+          });
+          // Mine crater decal
+          particlesRef.current.push({
+            id: generateId(),
+            position: { ...unit.position },
+            life: 600,
+            color: '#292524',
+            size: radius * 1.2,
+            isGroundDecal: true
           });
           return;
         }
@@ -1278,6 +1296,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 u.health -= p.damage * (1 - d / p.explosionRadius!);
               }
             }
+          });
+        }
+
+        // Small scorch from heavy direct-fire shells (tank etc.)
+        if (!p.explosionRadius && p.damage > 30 && p.targetType !== 'air') {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: p.position.x, y: p.position.y },
+            life: 300,
+            color: '#292524',
+            size: 9,
+            isGroundDecal: true
           });
         }
 
