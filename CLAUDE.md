@@ -63,6 +63,10 @@ This split is intentional. Never move hot-path game data into React state.
 
 `GameCanvas.tsx` contains a side-agnostic AI commander (search `// CPU AI`), configured via `cpuTeam` + `cpuDifficulty` props (side and easy/normal/hard chosen on the splash screen; difficulty scales spawn cadence, special-tactic frequency, and an income bonus — see `CPU_DIFFICULTY`). It runs inside `tick()` on a spawn-interval timer that speeds up when losing. Each cycle it does threat analysis of the foe's units (air/armor/infantry/mine counts), builds a weighted priority map of affordable counter-units, and occasionally fires special tactics (missile strike at enemy clusters, airborne drops behind lines, defensive minefields). When adding a unit type, consider adding it to the CPU's counter-pick/composition weights so the computer player uses it.
 
+### Balance testing
+
+`node scripts/balance-harness.js` runs CPU-vs-CPU matches headlessly against the dev server (one per map) and prints per-unit kill-value-per-dollar efficiency. It uses hidden URL params (`?spectate&map=X&speed=N&mode=basehp`) and the `window.__ewDebug` telemetry hook in `GameCanvas.tsx`. Spectator mode uses wall-clock catch-up ticking so low-fps headless runs still simulate at full speed. When changing unit stats in `constants.ts`, run a round before and after; healthy efficiency band is roughly 0.5–1.5 (Anti-Air runs hotter by design — hard counters trade up).
+
 ### Other gameplay systems (all in `GameCanvas.tsx`)
 
 Weather cycle (rain/snow/fog/storm with combat penalties + lightning strikes), mid-map capture point (+50% income to holder), veterancy (kills → up to 3 ranks: +damage/+HP/+reload), lane-biased spawning (`SpawnLane`), two win modes (`GameMode`: 100 points or base HP), pause/2× speed (ticks per frame), engineer mine-defusal, and per-team built/lost stats shown on the victory screen.

@@ -355,6 +355,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     moneyRef.current[Team.WEST] += MONEY_PER_TICK;
     moneyRef.current[Team.EAST] += MONEY_PER_TICK;
 
+    // Underdog rubber-band, two signals:
+    // 1. Score/base deficit (+1% income per point behind, cap +40%)
+    // 2. Standing-army value deficit (up to +60%) — reacts to a wiped army long
+    //    before the score reflects it, which is where snowballs actually start.
+    {
+      const lead = gameModeRef.current === 'basehp'
+        ? baseHPRef.current[Team.WEST] - baseHPRef.current[Team.EAST]
+        : scoreRef.current[Team.WEST] - scoreRef.current[Team.EAST];
+      let armyValue = { [Team.WEST]: 0, [Team.EAST]: 0 };
+      for (const u of unitsRef.current) {
+        if (u.type === UnitType.NAPALM || u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK) continue;
+        armyValue[u.team] += (UNIT_CONFIG[u.type] as any).cost || 0;
+      }
+      const armyDeficit = armyValue[Team.WEST] - armyValue[Team.EAST];
+      const scoreBonus = Math.min(0.4, Math.abs(lead) * 0.01);
+      const armyBonus = Math.min(0.6, Math.max(0, Math.abs(armyDeficit) - 200) / 2000 * 0.6);
+      const scoreTrailing = lead > 0 ? Team.EAST : lead < 0 ? Team.WEST : null;
+      const armyTrailing = armyDeficit > 0 ? Team.EAST : armyDeficit < 0 ? Team.WEST : null;
+      if (scoreTrailing === armyTrailing && scoreTrailing) {
+        moneyRef.current[scoreTrailing] += MONEY_PER_TICK * Math.max(scoreBonus, armyBonus);
+      } else {
+        if (scoreTrailing) moneyRef.current[scoreTrailing] += MONEY_PER_TICK * scoreBonus;
+        if (armyTrailing) moneyRef.current[armyTrailing] += MONEY_PER_TICK * armyBonus;
+      }
+    }
+
     // Capture point: uncontested ground presence flips it; holder earns +50% income
     {
       const cap = captureRef.current;
@@ -1414,9 +1440,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           explode = true;
 
           let damage = p.damage;
-          // AA is the hard counter to air — 4× vs helicopter, 2× vs drone
+          // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
           if (p.sourceType === UnitType.ANTI_AIR) {
-            if (target.type === UnitType.HELICOPTER) damage *= 4;
+            if (target.type === UnitType.HELICOPTER) damage *= 3;
             else if (target.type === UnitType.DRONE) damage *= 2;
           }
           // Small arms (soldiers, rambo) are 30% effective against aircraft
@@ -1536,8 +1562,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
       }
-      // Kill Reward: Award 40% of unit cost to enemy
-      const reward = Math.floor(((UNIT_CONFIG[u.type] as any).cost || 0) * 0.4);
+      // Kill Reward: Award 25% of unit cost to enemy (40% snowballed too hard)
+      const reward = Math.floor(((UNIT_CONFIG[u.type] as any).cost || 0) * 0.25);
       if (reward > 0) {
         const killerTeam = u.team === Team.WEST ? Team.EAST : Team.WEST;
         moneyRef.current[killerTeam] += reward;

@@ -42,7 +42,7 @@ export const UNIT_CONFIG = {
   [UnitType.ARTILLERY]: {
     cost: 80,
     health: 45,
-    damage: 30,
+    damage: 38,
     explosionRadius: 65,
     speed: 0.2,
     deployDistance: 80,
@@ -81,7 +81,7 @@ export const UNIT_CONFIG = {
   [UnitType.SNIPER]: {
     cost: 90,
     health: 20,
-    damage: 80,
+    damage: 95,
     speed: 0.35,
     range: 350,
     attackSpeed: 180,
@@ -92,8 +92,8 @@ export const UNIT_CONFIG = {
   },
   [UnitType.AIRBORNE]: {
     cost: 70,
-    health: 20,
-    damage: 14,
+    health: 28,
+    damage: 16,
     speed: 0.6,
     range: 160,
     attackSpeed: 48,
@@ -167,7 +167,7 @@ export const UNIT_CONFIG = {
   [UnitType.DRONE]: {
     cost: 45,
     health: 25,
-    damage: 25,
+    damage: 35,
     speed: 2.2,
     range: 30,
     attackSpeed: 45,
@@ -178,7 +178,7 @@ export const UNIT_CONFIG = {
     isFlying: true
   },
   [UnitType.ANTI_AIR]: {
-    cost: 65,
+    cost: 80,
     health: 55,
     damage: 60,
     speed: 0.5,
@@ -215,9 +215,9 @@ export const UNIT_CONFIG = {
     colorEast: '#65a30d',
   },
   [UnitType.FLAMETHROWER]: {
-    cost: 65,
+    cost: 70,
     health: 32,
-    damage: 10,
+    damage: 8,
     speed: 0.42,
     range: 88,
     attackSpeed: 10,
@@ -254,7 +254,7 @@ export const UNIT_CONFIG = {
   [UnitType.APC]: {
     cost: 95,
     health: 150,
-    damage: 18,
+    damage: 24,
     speed: 0.52,
     range: 165,
     attackSpeed: 52,
@@ -292,7 +292,8 @@ export const UNIT_CONFIG = {
 
 export const PROJECTILE_SPEED = 6;
 export const MONEY_PER_TICK = 0.15;
-export const INITIAL_MONEY = 2000;
+// 2000 bought a ~20-unit opening all-in whose winner snowballed the match
+export const INITIAL_MONEY = 1200;
 
 export const HILL_RANGE_BONUS = 1.3;
 export const HILL_RELOAD_BONUS = 0.8;
