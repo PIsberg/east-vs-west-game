@@ -1,5 +1,5 @@
 
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
@@ -1978,10 +1978,12 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     return (
         <Canvas shadows camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
             <color attach="background" args={[skyColor]} />
+            {/* Default camera sits ~735 units out — keep fog far beyond that so
+                fog weather reads as heavy haze, not a total whiteout */}
             <fog attach="fog" args={[
                 skyColor,
-                weather === 'fog' ? 180 : 500,
-                weather === 'fog' ? 550 : 1500
+                weather === 'fog' ? 350 : 500,
+                weather === 'fog' ? 1050 : 1500
             ]} />
 
             {weather === 'rain'  && <RainEffect />}
