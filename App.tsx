@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 import { soundService } from './services/audio';
 
@@ -107,6 +107,15 @@ const SniperIcon = ({ size = 20 }: { size?: number }) => (
     <line x1="4" y1="12" x2="8" y2="12" strokeWidth="1.5" />
     <line x1="16" y1="12" x2="20" y2="12" strokeWidth="1.5" />
     <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+  </svg>
+);
+
+const MortarIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 18L18 6" strokeWidth="3" /> {/* Tube */}
+    <path d="M5 20h8" /> {/* Baseplate */}
+    <path d="M9 17l-3 4" /> {/* Bipod */}
+    <circle cx="19" cy="5" r="1.5" /> {/* Round leaving tube */}
   </svg>
 );
 
@@ -278,6 +287,9 @@ const App: React.FC = () => {
       [UnitType.FLAMETHROWER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MEDIC]: [<Heart size={8} key="h" />],
       [UnitType.ENGINEER]: [<PersonalMineIcon size={8} key="m" />, <TankMineIcon size={8} key="t" />],
+      [UnitType.MORTAR]: [<User size={8} key="u" />, <CircleDashed size={8} key="c" />],
+      [UnitType.JEEP]: [<User size={8} key="u" />],
+      [UnitType.FIGHTER]: [<Plane size={8} key="p" />, <Radio size={8} key="r" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
@@ -364,14 +376,17 @@ const App: React.FC = () => {
           { type: UnitType.FLAMETHROWER, label: "FLAMER", icon: <Flame size={16} /> },
           { type: UnitType.MEDIC, label: "MEDIC", icon: <Heart size={16} /> },
           { type: UnitType.ENGINEER, label: "ENGINEER", icon: <ShieldAlert size={16} /> },
+          { type: UnitType.MORTAR, label: "MORTAR", icon: <MortarIcon size={16} /> },
           { type: UnitType.MINE_PERSONAL, label: "P.MINE", icon: <PersonalMineIcon size={14} /> },
         ])}
         {renderGroup("Vehicles", [
+          { type: UnitType.JEEP, label: "JEEP", icon: <Car size={16} /> },
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },
           { type: UnitType.ARTILLERY, label: "ARTY", icon: <ArtilleryIcon size={16} /> },
           { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
+          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
           { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },

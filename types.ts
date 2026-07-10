@@ -26,6 +26,9 @@ export enum UnitType {
   APC = 'APC',
   BUNKER = 'BUNKER',
   GUNSHIP = 'GUNSHIP',
+  MORTAR = 'MORTAR',
+  JEEP = 'JEEP',
+  FIGHTER = 'FIGHTER',
 }
 
 export enum MapType {

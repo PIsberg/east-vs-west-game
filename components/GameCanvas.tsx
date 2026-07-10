@@ -854,7 +854,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.isOnHill = terrainRef.current.some(t => t.type === 'hill' && Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < t.size * 0.7);
       }
       const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY ||
-        unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA;
+        unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA ||
+        unit.type === UnitType.JEEP;
 
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
@@ -889,6 +890,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             target = unitsRef.current.find(o => o.team !== unit.team && o.type === UnitType.TESLA) || null;
           }
 
+          // Fighter: hunt enemy aircraft across the whole map before anything else
+          if (unit.type === UnitType.FIGHTER && !target) {
+            let minAirDist = 900;
+            unitsRef.current.forEach(o => {
+              if (o.team === unit.team || !(UNIT_CONFIG[o.type] as any).isFlying) return;
+              const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (unit.position.y - o.position.y) ** 2);
+              if (d < minAirDist) { minAirDist = d; target = o; }
+            });
+          }
+
           if (!target) {
             let minDist = 600;
             unitsRef.current.forEach(o => { if (o.team !== unit.team && o.type !== UnitType.NAPALM) { const d = Math.sqrt((unit.position.x - o.position.x) ** 2 + (o.position.y - unit.position.y) ** 2); if (d < minDist) { minDist = d; target = o; } } });
@@ -898,7 +909,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
 
             // Set Rotation for Helicopters
-            if (unit.type === UnitType.HELICOPTER) {
+            if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) {
               unit.rotation = -a; // Invert for 3D logic usually (or check visuals)
             }
 
@@ -927,7 +938,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // No target: fly per stance (advance forward, hold hover, retreat back)
             const fwd = (unit.team === Team.WEST ? 1 : -1);
             moveX = stance === 'hold' ? 0 : stance === 'retreat' ? -fwd * config.speed * 0.8 : fwd * config.speed;
-            if (unit.type === UnitType.HELICOPTER) unit.rotation = unit.team === Team.WEST ? 0 : Math.PI;
+            if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) unit.rotation = unit.team === Team.WEST ? 0 : Math.PI;
           }
         } else {
           // ── Ground Unit Movement ──────────────────────────────────────────
@@ -991,8 +1002,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
 
-          // ARTILLERY: stop completely when targets are in range
-          if (unit.type === UnitType.ARTILLERY) {
+          // ARTILLERY / MORTAR: stop completely when targets are in range
+          if (unit.type === UnitType.ARTILLERY || unit.type === UnitType.MORTAR) {
             const artRange = config.range * currentScale;
             const hasArtTarget = spatialHash.current.query(unit.position.x, unit.position.y, artRange)
               .some(o => o.team !== unit.team && o.type !== UnitType.NAPALM);
@@ -1264,7 +1275,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // AA targets Drones AND Descending Paratroopers
           let target = unitsRef.current.find(u => {
             if (u.team === unit.team) return false;
-            const isAirTarget = u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
+            const isAirTarget = u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
             return isAirTarget && Math.sqrt((u.position.x - unit.position.x) ** 2 + (u.position.y - unit.position.y) ** 2) < range;
           });
 
@@ -1432,7 +1443,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (ft) {
                 const ftIsAir = !!(UNIT_CONFIG[ft.type] as any).isFlying;
                 const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
-                  unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER;
+                  unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
                 const fd = Math.sqrt((ft.position.x - unit.position.x) ** 2 + (ft.position.y - unit.position.y) ** 2);
                 if ((!ftIsAir || canEngageAirFocus) && fd < range) target = ft;
               } else {
@@ -1443,6 +1454,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Helicopter Priority Target: Tesla
             if (!target && unit.type === UnitType.HELICOPTER) {
               target = potentialTargets.find(o => o.team !== unit.team && o.type === UnitType.TESLA && Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range);
+            }
+
+            // Fighter Priority Target: enemy aircraft
+            if (!target && unit.type === UnitType.FIGHTER) {
+              target = potentialTargets.find(o =>
+                o.team !== unit.team && (UNIT_CONFIG[o.type] as any).isFlying &&
+                Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
+              ) || null;
             }
 
             // Primary pass: ground targets (all unit types)
@@ -1460,7 +1479,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Tanks and Artillery are strictly ground-only weapons
             if (!target) {
               const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
-                unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER;
+                unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
               if (canEngageAir) {
                 target = potentialTargets.find(o => {
                   if (o.team === unit.team) return false;
@@ -1487,6 +1506,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               let spread = 0;
               if (unit.type === UnitType.ARTILLERY) {
                 spread = (Math.random() - 0.5) * 0.55;
+              } else if (unit.type === UnitType.MORTAR) {
+                spread = (Math.random() - 0.5) * 0.4;
               }
               const isMissile = unit.type === UnitType.HELICOPTER;
 
@@ -1506,9 +1527,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER) soundService.playHeavyShot();
-              else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
+              else if (unit.type === UnitType.ARTILLERY || unit.type === UnitType.MORTAR) soundService.playArtilleryFire();
               else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
-              else if (unit.type === UnitType.HELICOPTER) soundService.playRocketSound();
+              else if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) soundService.playRocketSound();
               else soundService.playRifleShot();
             }
           }
@@ -1585,7 +1606,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
           if (p.sourceType === UnitType.ANTI_AIR) {
             if (target.type === UnitType.HELICOPTER) damage *= 3;
-            else if (target.type === UnitType.DRONE) damage *= 2;
+            else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
           }
           // Small arms (soldiers, rambo) are 30% effective against aircraft
           if ((UNIT_CONFIG[target.type] as any).isFlying &&
@@ -1734,7 +1755,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             life: 45, color: k % 2 === 0 ? '#ef4444' : '#f97316', size: 8 + Math.random() * 10
           });
         }
-      } else if (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY) {
+      } else if (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.JEEP) {
         soundService.playLargeExplosion();
         for (let k = 0; k < 15; k++) {
           particlesRef.current.push({
@@ -1745,7 +1766,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
       } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
-                 u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER) {
+                 u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
+                 u.type === UnitType.MORTAR) {
         // Troops Scream & Blood (flat pool at ground level)
         soundService.playScreamSound();
         particlesRef.current.push({
@@ -1761,8 +1783,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Corpse / wreck left on the battlefield
       const cfg = UNIT_CONFIG[u.type] as any;
       const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
-        u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER;
-      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC;
+        u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
+        u.type === UnitType.MORTAR;
+      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP;
       if (isInfantryDeath || isVehicleDeath) {
         particlesRef.current.push({
           id: generateId(),
@@ -1843,7 +1866,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // --- Threat analysis ---
         const foeUnits = unitsRef.current.filter(u => u.team === FOE);
-        const airThreats    = foeUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE).length;
+        const airThreats    = foeUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER).length;
         const armorThreats  = foeUnits.filter(u => u.type === UnitType.TANK || u.type === UnitType.APC).length;
         const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
         // Foe front line: their furthest advance toward the CPU's edge
@@ -1864,6 +1887,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // --- Counter-picks (emergency priority) ---
         if (airThreats >= 2 && !myHasAA)  add(UnitType.ANTI_AIR, 10);
         else if (airThreats >= 1 && !myHasAA) add(UnitType.ANTI_AIR, 5);
+        if (airThreats >= 2) add(UnitType.FIGHTER, 4);
+        if (infThreats >= 4) add(UnitType.MORTAR, 3);
         if (armorThreats >= 3)               { add(UnitType.ARTILLERY, 6); add(UnitType.HELICOPTER, 4); }
         else if (armorThreats >= 1)          add(UnitType.ARTILLERY, 3);
         if (infThreats >= 6 && !myHasTesla) add(UnitType.TESLA, 7);
@@ -1894,6 +1919,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         add(UnitType.DRONE, 1);
         add(UnitType.RAMBO, 1);
         add(UnitType.FLAMETHROWER, 1);
+        add(UnitType.JEEP, 2);
+        add(UnitType.MORTAR, 1);
+        add(UnitType.FIGHTER, 1);
 
         // --- Special tactics (override normal spawn with a chance) ---
         let specialSpawned = false;

@@ -39,11 +39,13 @@ The first team to reach **100 Points** wins.
 | **Sniper** | **Long Range** specialist. High damage, slow reload. 30% Miss chance. | Swarms, Close combat. |
 | **Rambo** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
 | **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
-| **Engineer** | Detects & defuses enemy mines. Unarmed. | Everything that shoots. |
+| **Engineer** | Detects & defuses enemy mines, repairs bridges. Unarmed. | Everything that shoots. |
+| **Mortar** | Indirect splash fire at long range. Stops to shoot. | Rushes, Snipers. |
 
 ### Vehicles
 | Unit | Role | Weakness |
 | :--- | :--- | :--- |
+| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
 | **Artillery** | **Siege Unit**. Massive range & Splash damage. Stationary when firing. | Fast units, Air attacks. |
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |
@@ -52,7 +54,8 @@ The first team to reach **100 Points** wins.
 ### Air Support
 | Unit | Role | Note |
 | :--- | :--- | :--- |
-| **Helicopter** | **Flying Gunship**. Hovers at range. Attacks Ground & Air. | Anti-Air (AA). |
+| **Helicopter** | **Flying Gunship**. Hovers at range. Attacks Ground & Air. | Anti-Air (AA), Fighters. |
+| **Fighter** | **Air superiority jet**. Hunts enemy aircraft, strafes ground. | Anti-Air (AA). |
 | **Drone** | **Kamikaze**. Flying bomb. Targets specific units. | Anti-Air (AA). |
 | **Airstrike** | **Napalm Run**. Burns a wide area over time. | Cooldown/Money. |
 | **Paratroopers** | **Deep Strike**. Drop squad behind enemy lines. | Vulnerable while falling. |
