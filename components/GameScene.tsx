@@ -2,6 +2,7 @@
 import React, { useMemo, useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D, MapType } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
@@ -1604,6 +1605,12 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             {missiles.map(m => <Missile3D key={m.id} m={m} />)}
 
             <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />
+
+            {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
+                materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
+            <EffectComposer>
+                <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+            </EffectComposer>
         </Canvas>
     );
 };
