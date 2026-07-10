@@ -427,6 +427,11 @@ const App: React.FC = () => {
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
             {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
             {gameState.weather === 'clear' && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
+            {gameState.captureOwner && (
+              <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
+                <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">Score: {gameState.score[Team.EAST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>

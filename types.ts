@@ -135,6 +135,15 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+  captureOwner?: Team | null;
+}
+
+export interface CapturePoint {
+  x: number;
+  y: number;
+  radius: number;
+  owner: Team | null;
+  progress: number; // -max..+max, positive = West capturing
 }
 
 export interface Flyover {

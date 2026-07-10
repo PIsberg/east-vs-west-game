@@ -13,7 +13,7 @@ import {
   HILL_RELOAD_BONUS,
   WIN_SCORE
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -78,6 +78,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
+  const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
+  const captureRef = useRef<CapturePoint>({
+    x: CANVAS_WIDTH / 2,
+    y: HORIZON_Y + (CANVAS_HEIGHT - HORIZON_Y) / 2,
+    radius: 60,
+    owner: null,
+    progress: 0,
+  });
   const cpuTimerRef = useRef(0);
   const cpuRef = useRef<{ team: Team | null, difficulty: CpuDifficulty }>({ team: cpuTeam, difficulty: cpuDifficulty });
 
@@ -321,6 +329,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     moneyRef.current[Team.WEST] += MONEY_PER_TICK;
     moneyRef.current[Team.EAST] += MONEY_PER_TICK;
+
+    // Capture point: uncontested ground presence flips it; holder earns +50% income
+    {
+      const cap = captureRef.current;
+      let westIn = false, eastIn = false;
+      for (const u of unitsRef.current) {
+        if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) continue;
+        if ((UNIT_CONFIG[u.type] as any).isFlying) continue;
+        if (Math.sqrt((u.position.x - cap.x) ** 2 + (u.position.y - cap.y) ** 2) < cap.radius) {
+          if (u.team === Team.WEST) westIn = true; else eastIn = true;
+          if (westIn && eastIn) break;
+        }
+      }
+      if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + 1);
+      else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; soundService.playSpawnSound(false); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; soundService.playSpawnSound(true); }
+      if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * 0.5;
+    }
 
     // Optimization: Build Spatial Grid
     spatialHash.current.clear();
@@ -1664,7 +1691,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, captureOwner: captureRef.current.owner });
       lastUiUpdateRef.current = Date.now();
     }
   }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
@@ -1706,6 +1733,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         weather={weatherRef.current}
         mapType={mapType}
         shake={shakeRef}
+        capture={captureRef.current}
       />
 
       {flashOpacity.current > 0 && (

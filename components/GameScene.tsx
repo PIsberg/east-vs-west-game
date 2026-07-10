@@ -4,7 +4,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType } from '../types';
+import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 // Add type definition for the custom shader material
@@ -28,7 +28,42 @@ interface GameSceneProps {
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
+    capture?: CapturePoint;
 }
+
+// Mid-map capture point: flag + capture-progress ring
+const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
+    const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? '#b91c1c' : '#a8a29e';
+    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? '#ef4444' : '#a8a29e';
+    const pct = Math.min(1, Math.abs(cap.progress) / 300);
+    return (
+        <group position={[cap.x, 0, cap.y]}>
+            {/* Zone marker */}
+            <mesh position={[0, 0.3, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[cap.radius - 3, cap.radius, 32]} />
+                <meshBasicMaterial color={ownerColor} transparent opacity={0.5} depthWrite={false} />
+            </mesh>
+            {/* Capture progress ring */}
+            {pct > 0.02 && (
+                <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[cap.radius * 0.35, cap.radius * 0.35 + 4, 32, 1, 0, Math.PI * 2 * pct]} />
+                    <meshBasicMaterial color={leading} transparent opacity={0.8} depthWrite={false} />
+                </mesh>
+            )}
+            {/* Flag pole */}
+            <mesh position={[0, 25, 0]} castShadow>
+                <cylinderGeometry args={[0.8, 0.8, 50]} />
+                <meshStandardMaterial color="#78716c" />
+            </mesh>
+            {/* Banner */}
+            <mesh position={[6, 44, 0]} castShadow>
+                <boxGeometry args={[12, 8, 0.5]} />
+                <meshStandardMaterial color={ownerColor} />
+            </mesh>
+            {cap.owner && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
+        </group>
+    );
+};
 
 // Jitters the whole world with an absolute, decaying offset. Absolute offsets
 // (not camera deltas) stay compatible with OrbitControls — nothing accumulates.
@@ -1699,7 +1734,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake, capture }) => {
 
 
 
@@ -1752,6 +1787,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
                 <BorderLine onCanvasClick={onCanvasClick} />
+                {capture && <CapturePoint3D cap={capture} />}
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments
