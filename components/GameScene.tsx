@@ -1571,12 +1571,30 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
     if (item.type === 'bridge') {
         const width = item.width || 85;
         const height = item.height || 40;
+
+        // Collapsed: two charred halves sagging into the water
+        if (item.state === 'broken') {
+            return (
+                <group position={[item.x, 0.5, item.y]}>
+                    <mesh position={[-width * 0.28, -1.5, 0]} rotation={[0, 0, 0.35]} castShadow>
+                        <boxGeometry args={[width * 0.42, 1, height]} />
+                        <meshStandardMaterial color="#292524" roughness={1} />
+                    </mesh>
+                    <mesh position={[width * 0.28, -1.5, 0]} rotation={[0, 0, -0.35]} castShadow>
+                        <boxGeometry args={[width * 0.42, 1, height]} />
+                        <meshStandardMaterial color="#292524" roughness={1} />
+                    </mesh>
+                </group>
+            );
+        }
+
+        const damaged = (item.health ?? 320) < 320;
         return (
             <group position={[item.x, 0.5, item.y]}>
-                {/* Bridge Deck */}
+                {/* Bridge Deck (darkens when damaged) */}
                 <mesh castShadow receiveShadow>
                     <boxGeometry args={[width, 1, height]} />
-                    <meshStandardMaterial color="#78350f" roughness={0.9} />
+                    <meshStandardMaterial color={damaged ? '#57350f' : '#78350f'} roughness={0.9} />
                 </mesh>
                 {/* Railings */}
                 <mesh position={[0, 2, -height / 2 + 1]}>

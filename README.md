@@ -21,6 +21,8 @@ The first team to reach **100 Points** wins.
 #### Mouse
 - **Click Unit Buttons** (Left/Right side) to spawn units.
 - **Click Terrain**: Inspect terrain or targeting (for airstrikes).
+- **Click an Enemy Unit**: Your army focus-fires it for 6 seconds.
+- **Orders** (per side): Advance / Hold / Fall Back stances.
 
 #### Keyboard Shortcuts
 - **West Team (Left)**: `1` - `0`, `-`, `=`
@@ -64,6 +66,7 @@ The first team to reach **100 Points** wins.
 - **Hills**: Units on hills get **+30% Range** and **-20% Reload Time**. Key for artillery.
 - **Cover (Trees/Rocks)**: Infantry will automatically seek cover. Reduces incoming damage by **60%**.
 - **River**: Slows down infantry. Vehicles MUST use bridges to cross.
+- **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until an Engineer repairs the bridge (infantry can wade, slowly).
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 
 ---

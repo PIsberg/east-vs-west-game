@@ -24,6 +24,8 @@ export type CpuDifficulty = 'easy' | 'normal' | 'hard';
 export type SpawnLane = 'top' | 'mid' | 'bot';
 
 // interval: spawn-cadence multiplier · incomeBonus: extra money per tick · special: tactics-chance multiplier
+export const BRIDGE_HP = 320;
+
 const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number }> = {
   easy:   { interval: 1.7,  incomeBonus: 0,    special: 0.4 },
   normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0 },
@@ -282,6 +284,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeHills(2, ch1x + seaWidth / 2 + 30, ch2x - seaWidth / 2 - 30, allR);
     }
 
+    // Bridges are destructible: explosives damage them, engineers repair them
+    t.forEach(o => { if (o.type === 'bridge') { o.health = BRIDGE_HP; o.state = 'normal'; } });
+
     terrainRef.current = t;
   }, [mapType]);
 
@@ -371,6 +376,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const update = useCallback(() => {
     const time = Date.now();
+
+    // Explosive damage to bridges; collapse blocks crossings until repaired
+    const damageBridges = (x: number, y: number, radius: number, dmg: number) => {
+      terrainRef.current.forEach(b => {
+        if (b.type !== 'bridge' || b.state === 'broken') return;
+        if (Math.abs(b.x - x) < radius + (b.width || 60) / 2 && Math.abs(b.y - y) < radius + (b.height || 40) / 2) {
+          b.health = (b.health ?? BRIDGE_HP) - dmg;
+          if (b.health <= 0) {
+            b.state = 'broken';
+            b.health = 0;
+            soundService.playLargeExplosion();
+            shakeRef.current = Math.max(shakeRef.current, 7);
+            for (let k = 0; k < 14; k++) {
+              particlesRef.current.push({
+                id: generateId(),
+                position: { x: b.x + (Math.random() - 0.5) * (b.width || 60), y: b.y + (Math.random() - 0.5) * (b.height || 40) },
+                velocity: { x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2 },
+                drag: 0.9,
+                life: 40 + Math.random() * 30,
+                color: k % 2 === 0 ? '#78350f' : '#57534e',
+                size: 5 + Math.random() * 7,
+                alt: 4 + Math.random() * 10,
+                altVel: 0.8 + Math.random() * 0.8
+              });
+            }
+          }
+        }
+      });
+    };
     if (flashOpacity.current > 0) flashOpacity.current -= 0.02; // Flash decay
     // Spawn queue processed in useEffect now to avoid frame-loop race conditions
 
@@ -580,6 +614,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           size: isNuke ? 170 : 42,
           isGroundDecal: true
         });
+        // Bridges in the blast take structural damage (nuke capped to its epicenter)
+        damageBridges(m.target.x, m.target.y, Math.min(radius || 60, 300), damage || 200);
         // Explosion particles ( Standard )
         if (!isNuke) {
           particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fde68a', size: (radius || 60) * 1.4, isShockwave: true });
@@ -800,6 +836,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             size: radius * 1.2,
             isGroundDecal: true
           });
+          damageBridges(unit.position.x, unit.position.y, radius * 1.5, damage);
           return;
         }
       }
@@ -902,6 +939,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (dist > 35) { moveX = (dx / dist) * config.speed; moveY = (dy / dist) * config.speed; }
               else { moveX = 0; moveY = 0; }
               movingToHill = true; // skip cover logic
+            }
+          }
+
+          // ENGINEER: walk to the nearest job (enemy mine or damaged bridge) in a wide radius
+          if (!movingToHill && unit.type === UnitType.ENGINEER) {
+            let jobX: number | null = null, jobY = 0, jobDist = 260;
+            for (const m of unitsRef.current) {
+              if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
+              const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
+              if (d < jobDist) { jobDist = d; jobX = m.position.x; jobY = m.position.y; }
+            }
+            for (const b of terrainRef.current) {
+              if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
+              const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
+              if (d < jobDist) { jobDist = d; jobX = b.x; jobY = b.y; }
+            }
+            if (jobX !== null && jobDist > 45) {
+              const a = Math.atan2(jobY - unit.position.y, jobX - unit.position.x);
+              moveX = Math.cos(a) * config.speed;
+              moveY = Math.sin(a) * config.speed;
+              movingToHill = true; // skip cover logic while on the job
+            } else if (jobX !== null) {
+              moveX = 0; moveY = 0; movingToHill = true;
             }
           }
 
@@ -1098,7 +1158,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const riverRight = river.x + river.width / 2;
             if (unit.position.x + 5 > riverLeft && unit.position.x - 5 < riverRight) {
               const onBridge = terrainRef.current.some(b =>
-                b.type === 'bridge' &&
+                b.type === 'bridge' && b.state !== 'broken' &&
                 Math.abs(unit.position.y - b.y) < (b.height || 30) / 2 &&
                 Math.abs(unit.position.x - b.x) < (b.width || 60) / 2 + 10
               );
@@ -1108,7 +1168,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   let nearestBridge: TerrainObject | null = null;
                   let minBridgeDist = 10000;
                   terrainRef.current.forEach(b => {
-                    if (b.type === 'bridge' && Math.abs(b.x - river.x) < river.width! / 2 + 30) {
+                    if (b.type === 'bridge' && b.state !== 'broken' && Math.abs(b.x - river.x) < river.width! / 2 + 30) {
                       const d = Math.abs(unit.position.y - b.y);
                       if (d < minBridgeDist) { minBridgeDist = d; nearestBridge = b; }
                     }
@@ -1125,7 +1185,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                       moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
                     }
                   } else {
-                    moveX = 0;
+                    // No intact bridge: infantry wade across slowly, vehicles wait
+                    moveX = isVehicle ? 0 : (unit.team === Team.WEST ? 1 : -1) * config.speed * 0.45;
                   }
                 }
               }
@@ -1179,7 +1240,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (r.type !== 'river' || !r.width || Math.abs(r.y - unit.position.y) > 18) return false;
           if (unit.position.x < r.x - r.width / 2 || unit.position.x > r.x + r.width / 2) return false;
           return !terrainRef.current.some(b =>
-            b.type === 'bridge' &&
+            b.type === 'bridge' && b.state !== 'broken' &&
             Math.abs(unit.position.y - b.y) < (b.height || 30) / 2 &&
             Math.abs(unit.position.x - b.x) < (b.width || 60) / 2 + 10
           );
@@ -1267,6 +1328,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 });
               }
               unit.attackCooldown = config.attackSpeed;
+            } else {
+              // No mine in range: repair a damaged/broken bridge instead
+              const bridge = terrainRef.current.find(b =>
+                b.type === 'bridge' && (b.health ?? BRIDGE_HP) < BRIDGE_HP &&
+                Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2) < range
+              );
+              if (bridge) {
+                bridge.health = Math.min(BRIDGE_HP, (bridge.health ?? 0) + 55);
+                if (bridge.health >= BRIDGE_HP * 0.5 && bridge.state === 'broken') {
+                  bridge.state = 'normal'; // usable again at half integrity
+                  soundService.playSpawnSound(unit.team === Team.EAST);
+                }
+                particlesRef.current.push({
+                  id: generateId(),
+                  position: { x: bridge.x + (Math.random() - 0.5) * 20, y: bridge.y + (Math.random() - 0.5) * 14 },
+                  velocity: { x: 0, y: 0 },
+                  life: 18,
+                  color: '#fbbf24',
+                  size: 4,
+                  alt: 4, altVel: 0.4
+                });
+                unit.attackCooldown = Math.round(config.attackSpeed * 0.5);
+              }
             }
           } else if (unit.type === UnitType.MEDIC) {
             // Heal nearest low-HP friendly instead of attacking
@@ -1525,6 +1609,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (p.explosionRadius) {
           shakeRef.current = Math.max(shakeRef.current, Math.min(5, p.explosionRadius * 0.06));
           particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 14, color: '#fdba74', size: p.explosionRadius * 1.2, isShockwave: true });
+          damageBridges(p.position.x, p.position.y, p.explosionRadius, p.damage);
           // Artillery / Heavy Weapon Scorch Mark
           if (p.sourceType === UnitType.ARTILLERY || p.sourceType === UnitType.MISSILE_STRIKE) {
             particlesRef.current.push({
@@ -1778,6 +1863,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const foeMines = foeUnits.filter(u => u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK).length;
         if (foeMines >= 2) add(UnitType.ENGINEER, 5);
         else if (foeMines >= 1) add(UnitType.ENGINEER, 2);
+        // Broken bridges on my half of the map need an engineer
+        const myHasEngineer = myActive.some(u => u.type === UnitType.ENGINEER);
+        const brokenBridgesMySide = terrainRef.current.filter(b =>
+          b.type === 'bridge' && b.state === 'broken' &&
+          (ME === Team.WEST ? b.x < CANVAS_WIDTH / 2 + 60 : b.x > CANVAS_WIDTH / 2 - 60)
+        ).length;
+        if (brokenBridgesMySide > 0 && !myHasEngineer) add(UnitType.ENGINEER, 6);
 
         // --- General composition ---
         add(UnitType.TANK, 3);
