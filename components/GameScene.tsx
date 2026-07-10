@@ -7,14 +7,6 @@ import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
-// Add type definition for the custom shader material
-declare global {
-    namespace JSX {
-        interface IntrinsicElements {
-            riverMaterial: any;
-        }
-    }
-}
 
 interface GameSceneProps {
     units: Unit[];
@@ -245,6 +237,13 @@ const RiverMaterial = shaderMaterial(
 );
 
 extend({ RiverMaterial });
+
+// Register the custom shader material with R3F's JSX types (React 19 style)
+declare module '@react-three/fiber' {
+    interface ThreeElements {
+        riverMaterial: any;
+    }
+}
 
 // Build a triangle-strip geometry for one ordered list of river segments
 const buildChannelGeo = (points: TerrainObject[]): THREE.BufferGeometry | null => {

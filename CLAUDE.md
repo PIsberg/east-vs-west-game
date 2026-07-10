@@ -13,6 +13,8 @@ npm run preview    # Preview production build
 
 No test runner or linter is configured — verify changes manually in the browser.
 
+**Always run `npx tsc --noEmit` before committing.** `vite build` uses esbuild, which strips types without checking them — a missing import or type error passes the build but crashes at runtime (white screen). The codebase typechecks clean; keep it that way.
+
 Note: `vite.config.ts` sets `base: '/east-vs-west-game/'` for GitHub Pages deployment (live at https://pisberg.github.io/east-vs-west-game/).
 
 ## Environment
