@@ -404,7 +404,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (proj.targetType === 'air') {
         for (const u of unitsRef.current) {
           if (u.team !== proj.team && u.type === UnitType.DRONE) {
-            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < 18) { u.health -= proj.damage; hit = true; break; }
+            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < 18) {
+              u.health -= proj.damage;
+              u.lastHitTime = Date.now();
+              if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
+              hit = true; break;
+            }
           }
         }
         if (!hit) {
@@ -420,7 +425,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               hit = true;
               if (proj.explosionRadius) {
                 const victims = spatialHash.current.query(proj.position.x, proj.position.y, proj.explosionRadius!);
-                victims.forEach(victim => { if (victim.team !== proj.team && Math.sqrt((victim.position.x - proj.position.x) ** 2 + (victim.position.y - proj.position.y) ** 2) < proj.explosionRadius! * getScaleAt(proj.position.y)) victim.health -= proj.damage; });
+                victims.forEach(victim => {
+                  if (victim.team !== proj.team && Math.sqrt((victim.position.x - proj.position.x) ** 2 + (victim.position.y - proj.position.y) ** 2) < proj.explosionRadius! * getScaleAt(proj.position.y)) {
+                    victim.health -= proj.damage;
+                    victim.lastHitTime = Date.now();
+                    if (proj.sourceUnitId) victim.lastAttackerId = proj.sourceUnitId;
+                  }
+                });
               }
               else {
                 // Cover Logic
@@ -429,6 +440,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const ignoresCover = proj.sourceType === UnitType.TANK || proj.sourceType === UnitType.ARTILLERY || proj.sourceType === UnitType.DRONE || proj.sourceType === UnitType.AIRSTRIKE || proj.sourceType === UnitType.MISSILE_STRIKE || proj.sourceType === UnitType.NUKE;
                 const damage = (u.isInCover && !ignoresCover) ? proj.damage * 0.4 : proj.damage;
                 u.health -= damage;
+                u.lastHitTime = Date.now();
+                if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
               }
               break;
             }
@@ -1820,11 +1833,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   gameOverRef.current = gameOver;
 
   // Game Loop - Stable Identity
+  const lastFrameTimeRef = useRef(0);
   const tick = useCallback(() => {
     if (!gameOverRef.current) {
       try {
         if (!speedRef.current.paused) {
-          for (let s = 0; s < speedRef.current.speed; s++) updateRef.current();
+          // Spectator/balance mode: catch up on wall-clock time so low headless
+          // frame rates still simulate at the requested speed. Normal play stays
+          // strictly frame-locked (speed ticks per rAF).
+          let ticks = speedRef.current.speed;
+          if (cpuRef.current.teams.length === 2) {
+            const now = performance.now();
+            const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
+            lastFrameTimeRef.current = now;
+            ticks = Math.min(600, Math.max(1, Math.round((elapsed / 16.7) * speedRef.current.speed)));
+          }
+          for (let s = 0; s < ticks; s++) {
+            updateRef.current();
+            if (gameOverRef.current) break;
+          }
         }
       } catch (e) {
         console.error("Game Loop Error:", e);
