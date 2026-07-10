@@ -36,11 +36,11 @@ interface GameCanvasProps {
   clearSpawnQueue: () => void;
   onCanvasClick: (x: number, y: number) => void;
   targetingInfo: { team: Team, type: UnitType } | null;
-  cpuTeam: Team | null;
+  cpuTeams: Team[]; // one entry = normal CPU opponent; two = CPU-vs-CPU spectator/balance mode
   cpuDifficulty: CpuDifficulty;
   mapType: MapType;
   paused: boolean;
-  gameSpeed: 1 | 2;
+  gameSpeed: number;
   gameMode: GameMode;
 }
 
@@ -50,7 +50,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   clearSpawnQueue,
   onCanvasClick,
   targetingInfo,
-  cpuTeam,
+  cpuTeams,
   cpuDifficulty,
   mapType,
   paused,
@@ -93,19 +93,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     owner: null,
     progress: 0,
   });
-  const cpuTimerRef = useRef(0);
-  const cpuRef = useRef<{ team: Team | null, difficulty: CpuDifficulty }>({ team: cpuTeam, difficulty: cpuDifficulty });
+  const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
+  const cpuRef = useRef<{ teams: Team[], difficulty: CpuDifficulty }>({ teams: cpuTeams, difficulty: cpuDifficulty });
   const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
   const statsRef = useRef({
     [Team.WEST]: { built: 0, lost: 0 },
     [Team.EAST]: { built: 0, lost: 0 },
+  });
+  // Balance telemetry: per-team, per-unit-type counters (kills, value of kills, losses, spawns)
+  const typeStatsRef = useRef<Record<Team, { kills: Record<string, number>, killValue: Record<string, number>, lost: Record<string, number>, spawned: Record<string, number> }>>({
+    [Team.WEST]: { kills: {}, killValue: {}, lost: {}, spawned: {} },
+    [Team.EAST]: { kills: {}, killValue: {}, lost: {}, spawned: {} },
   });
   const matchStartRef = useRef(Date.now());
   const baseHPRef = useRef({ [Team.WEST]: BASE_HP, [Team.EAST]: BASE_HP });
   const gameModeRef = useRef<GameMode>(gameMode);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
 
-  useEffect(() => { cpuRef.current = { team: cpuTeam, difficulty: cpuDifficulty }; }, [cpuTeam, cpuDifficulty]);
+  useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
 
   // Debug Keys
@@ -326,6 +331,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       soundService.playSpawnSound(team === Team.EAST);
       statsRef.current[team].built++;
     }
+    const sp = typeStatsRef.current[team];
+    sp.spawned[type] = (sp.spawned[type] || 0) + 1;
   }, []);
 
   useEffect(() => {
@@ -720,6 +727,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (d < radius * 2) {
               v.health -= damage * (1 - d / (radius * 2)); // Falloff
               v.lastHitTime = Date.now();
+              if (v.team !== unit.team) v.lastAttackerId = unit.id;
             }
           });
           // Mine crater decal
@@ -1503,6 +1511,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     deadUnits.forEach(u => {
       if (u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
         statsRef.current[u.team].lost++;
+        const ts = typeStatsRef.current[u.team];
+        ts.lost[u.type] = (ts.lost[u.type] || 0) + 1;
+        // Credit the killer's unit type (attacker may itself have died this tick — units not filtered yet)
+        if (u.lastAttackerId) {
+          const attacker = unitsRef.current.find(k => k.id === u.lastAttackerId);
+          if (attacker && attacker.team !== u.team) {
+            const ks = typeStatsRef.current[attacker.team];
+            ks.kills[attacker.type] = (ks.kills[attacker.type] || 0) + 1;
+            ks.killValue[attacker.type] = (ks.killValue[attacker.type] || 0) + ((UNIT_CONFIG[u.type] as any).cost || 0);
+          }
+        }
       }
       // Kill Reward: Award 40% of unit cost to enemy
       const reward = Math.floor(((UNIT_CONFIG[u.type] as any).cost || 0) * 0.4);
@@ -1615,13 +1634,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     unitsRef.current = unitsRef.current.filter(u => u.health > 0);
 
-    // CPU AI — strategic commander for either side
-    if (cpuRef.current.team) {
-      const ME = cpuRef.current.team;
+    // CPU AI — strategic commander for either side (or both, in spectator mode)
+    for (const ME of cpuRef.current.teams) {
       const FOE = ME === Team.EAST ? Team.WEST : Team.EAST;
       const DIFF = CPU_DIFFICULTY[cpuRef.current.difficulty];
 
-      cpuTimerRef.current += 1;
+      cpuTimerRef.current[ME] += 1;
       moneyRef.current[ME] += DIFF.incomeBonus; // difficulty economy edge
 
       // Battlefield snapshot (computed every frame for adaptive timing)
@@ -1635,8 +1653,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const isUnderPressure = myActive.length < foeActive.length - 2 || scoreDiff < -12;
       const spawnInterval = Math.round((isUnderPressure ? 88 : 145) * DIFF.interval);
 
-      if (cpuTimerRef.current >= spawnInterval) {
-        cpuTimerRef.current = 0;
+      if (cpuTimerRef.current[ME] >= spawnInterval) {
+        cpuTimerRef.current[ME] = 0;
         const money = moneyRef.current[ME];
 
         // --- Threat analysis ---
@@ -1758,6 +1776,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     spawnTime: Date.now(), isInCover: false, squadId: sqId
                   });
                   statsRef.current[ME].built++;
+                  typeStatsRef.current[ME].spawned[UnitType.SOLDIER] = (typeStatsRef.current[ME].spawned[UnitType.SOLDIER] || 0) + 1;
                 }
               } else {
                 spawnUnit(ME, chosen);
@@ -1777,6 +1796,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (Date.now() - lastUiUpdateRef.current > 100) {
       onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, captureOwner: captureRef.current.owner, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
+      // Balance-telemetry hook for headless harnesses
+      (window as any).__ewDebug = {
+        elapsedMs: Date.now() - matchStartRef.current,
+        score: { ...scoreRef.current },
+        baseHP: { ...baseHPRef.current },
+        money: { WEST: Math.floor(moneyRef.current[Team.WEST]), EAST: Math.floor(moneyRef.current[Team.EAST]) },
+        stats: statsRef.current,
+        typeStats: typeStatsRef.current,
+        unitCount: {
+          WEST: unitsRef.current.filter(u => u.team === Team.WEST).length,
+          EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
+        },
+        gameOver: gameOverRef.current,
+      };
     }
   }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
 
@@ -1840,7 +1873,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
             <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
-              {cpuTeam ? (gameOver !== cpuTeam ? 'VICTORY' : 'DEFEAT') : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
+              {cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT') : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
             </h2>
             <div className="text-2xl font-bold text-stone-300">
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!

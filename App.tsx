@@ -116,6 +116,12 @@ const TeslaIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 
+// Hidden harness params: ?spectate (CPU vs CPU), &map=URBAN, &speed=4, &mode=basehp
+const URL_PARAMS = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+const SPECTATE = URL_PARAMS.has('spectate');
+const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
+const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
+
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
@@ -130,16 +136,19 @@ const App: React.FC = () => {
   const [commentary, setCommentary] = useState<string>("");
   const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(!SPECTATE);
   const [splashFading, setSplashFading] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [gameSpeed, setGameSpeed] = useState<1 | 2>(1);
+  const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
   const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
-  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>('off');
-  const [gameMode, setGameMode] = useState<GameMode>('points');
-  const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
+  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(SPECTATE ? 'normal' : 'off');
+  const [gameMode, setGameMode] = useState<GameMode>(URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : 'points');
+  const [mapType, setMapType] = useState<MapType>(
+    Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType : MapType.COUNTRYSIDE
+  );
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
+  const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
   const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const handleStartClick = () => {
@@ -450,7 +459,7 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
