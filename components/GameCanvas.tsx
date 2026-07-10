@@ -1037,6 +1037,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const fogPenalty = weatherRef.current === 'fog' ? 0.45 : weatherRef.current === 'storm' ? 0.70 : 1.0;
         const range = (unit.isOnHill ? config.range * HILL_RANGE_BONUS : (inWater ? config.range * 0.4 : config.range)) * currentScale * fogPenalty;
         const vetMult = 1 + 0.1 * (unit.veterancy || 0);
+        const vetReload = 1 - 0.06 * (unit.veterancy || 0); // veterans reload up to 18% faster
 
         if (unit.type === UnitType.ANTI_AIR) {
           // AA targets Drones AND Descending Paratroopers
@@ -1052,12 +1053,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (fly) {
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
               projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
-              unit.attackCooldown = config.attackSpeed; soundService.playRocketSound();
+              unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
             projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
-            unit.attackCooldown = config.attackSpeed; soundService.playRocketSound();
+            unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
           }
         } else {
           // Standard Targeting (Ground)
@@ -1092,7 +1093,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 }
               }
             });
-            if (fired) { soundService.playFlameSound(); unit.attackCooldown = config.attackSpeed; }
+            if (fired) { soundService.playFlameSound(); unit.attackCooldown = Math.round(config.attackSpeed * vetReload); }
           } else if (unit.type === UnitType.ENGINEER) {
             // Defuse the nearest enemy mine in detection range (mines don't trigger on engineers)
             const mine = unitsRef.current.find(m =>
@@ -1172,7 +1173,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   particlesRef.current.push({ id: generateId(), position: { ...target.position }, life: 10, color: '#bae6fd', size: 6 });
 
                   unit.burstCount = (unit.burstCount || 0) - 1;
-                  unit.attackCooldown = unit.burstCount > 0 ? 5 : config.attackSpeed;
+                  unit.attackCooldown = unit.burstCount > 0 ? 5 : Math.round(config.attackSpeed * vetReload);
                 }
               }
               // If waiting for cooldown, do nothing
@@ -1244,7 +1245,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 sourceUnitId: unit.id,
                 isMissile
               });
-              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0));
+              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER) soundService.playHeavyShot();
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
               else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
