@@ -14,6 +14,7 @@ The first team to reach **100 Points** wins.
 
 ### Resources
 - **Money** generates automatically over time.
+- **Supply Drops**: Every ~30s a crate parachutes onto the midfield — the first team to reach it claims **cash ($150)**, a **veteran squad**, or a **field medkit** (heals your whole army). Crate stripe color shows the prize.
 - **Refunds**: Units that successfully reach the enemy edge refund 50% of their deployment cost.
 
 ### 🕹️ Controls

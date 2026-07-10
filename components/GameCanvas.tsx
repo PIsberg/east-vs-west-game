@@ -14,7 +14,7 @@ import {
   WIN_SCORE,
   BASE_HP
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -92,6 +92,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const terraformRef = useRef<TerrainObject[]>([]);
   const missilesRef = useRef<Missile[]>([]);
   const lasersRef = useRef<LaserStrike[]>([]);
+  const cratesRef = useRef<SupplyCrate[]>([]);
+  const nextCrateTickRef = useRef(1500); // first drop ~25s in
   const LASER_DESIGNATE = 55; // red targeting beam before the real one fires
   const LASER_LIFE = 235;     // designate + ~3s burn
   const flashOpacity = useRef(0);
@@ -704,6 +706,80 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
         missilesRef.current.splice(i, 1);
       }
+    }
+
+    // Supply drops: a crate parachutes onto the midfield every 25-45s;
+    // the first team to get a ground unit next to it claims the reward.
+    if (tickCountRef.current >= nextCrateTickRef.current) {
+      nextCrateTickRef.current = tickCountRef.current + 1500 + Math.floor(Math.random() * 1200);
+      const types: SupplyCrate['type'][] = ['cash', 'cash', 'squad', 'medkit']; // cash slightly more common
+      cratesRef.current.push({
+        id: generateId(),
+        x: 300 + Math.random() * 200,
+        y: HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120),
+        alt: 230,
+        type: types[Math.floor(Math.random() * types.length)],
+        life: 1300, // ~22s on the ground before it despawns
+      });
+    }
+    for (let i = cratesRef.current.length - 1; i >= 0; i--) {
+      const c = cratesRef.current[i];
+      if (c.alt > 0) {
+        c.alt = Math.max(0, c.alt - 0.85);
+        continue;
+      }
+      c.life--;
+      if (c.life <= 0) { cratesRef.current.splice(i, 1); continue; }
+
+      // Claim check
+      const claimer = spatialHash.current.query(c.x, c.y, 34).find(u =>
+        u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM &&
+        !(UNIT_CONFIG[u.type] as any).isFlying &&
+        Math.sqrt((u.position.x - c.x) ** 2 + (u.position.y - c.y) ** 2) < 34
+      );
+      if (!claimer) continue;
+
+      const team = claimer.team;
+      soundService.playSpawnSound(team === Team.EAST);
+      if (c.type === 'cash') {
+        moneyRef.current[team] += 150;
+        particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, velocity: { x: 0, y: 0.5 }, life: 90, color: '#22c55e', size: 8, text: '+$150' });
+      } else if (c.type === 'squad') {
+        const cfg = UNIT_CONFIG[UnitType.SOLDIER];
+        const sqId = generateId();
+        for (let s = 0; s < 3; s++) {
+          unitsRef.current.push({
+            id: generateId(), team, type: UnitType.SOLDIER,
+            position: { x: c.x + (s - 1) * 14, y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, c.y + (s % 2) * 18 - 9)) },
+            state: UnitState.MOVING, health: cfg.health, maxHealth: cfg.health,
+            attackCooldown: 0, targetId: null, width: cfg.width, height: cfg.height,
+            spawnTime: Date.now(), isInCover: false, squadId: sqId,
+            kills: 3, veterancy: 1, // drop-in veterans
+          });
+          statsRef.current[team].built++;
+          typeStatsRef.current[team].spawned[UnitType.SOLDIER] = (typeStatsRef.current[team].spawned[UnitType.SOLDIER] || 0) + 1;
+        }
+        particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, velocity: { x: 0, y: 0.5 }, life: 90, color: '#fbbf24', size: 8, text: '★ SQUAD' });
+      } else {
+        // Medkit: patch up every unit on the claiming team
+        unitsRef.current.forEach(u => {
+          if (u.team === team && u.health > 0 && u.health < u.maxHealth) {
+            u.health = Math.min(u.maxHealth, u.health + 30);
+          }
+        });
+        particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, velocity: { x: 0, y: 0.5 }, life: 90, color: '#4ade80', size: 8, text: '+MEDKIT' });
+      }
+      // Claim burst
+      for (let k = 0; k < 10; k++) {
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: c.x + (Math.random() - 0.5) * 16, y: c.y + (Math.random() - 0.5) * 12 },
+          velocity: { x: (Math.random() - 0.5) * 1.5, y: (Math.random() - 0.5) * 1.5 },
+          drag: 0.92, life: 25, color: '#fbbf24', size: 3 + Math.random() * 3,
+          alt: 3, altVel: 0.8
+        });
+      }
+      cratesRef.current.splice(i, 1);
     }
 
     // Satellite laser strikes: designator phase, then a sustained burn
@@ -2277,6 +2353,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         flyovers={flyoversRef.current}
         missiles={missilesRef.current}
         lasers={lasersRef.current}
+        crates={cratesRef.current}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}

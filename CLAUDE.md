@@ -19,11 +19,7 @@ Note: `vite.config.ts` sets `base: '/east-vs-west-game/'` for GitHub Pages deplo
 
 ## Environment
 
-The AI commentary feature requires a Gemini API key. Set in `.env.local`:
-```
-GEMINI_API_KEY=your_key_here
-```
-Vite exposes this as `process.env.API_KEY` inside the app (see `vite.config.ts`). The game runs fine without it — only commentary is affected.
+No API keys or environment variables are required.
 
 ## Architecture
 
@@ -42,11 +38,10 @@ This split is intentional. Never move hot-path game data into React state.
 
 | File | Role |
 |------|------|
-| `App.tsx` | HUD layout, keyboard shortcuts, spawn request validation, map/side/mode selection, CPU level, lane selector, pause/speed, AI commentary trigger |
+| `App.tsx` | HUD layout, keyboard shortcuts, spawn request validation, map/side/mode selection, CPU level, lane selector, pause/speed |
 | `components/GameCanvas.tsx` | **Game engine** — `requestAnimationFrame` loop, all unit AI, combat, spawning, collision, per-map terrain generation, CPU opponent AI, capture point, stats |
 | `components/GameScene.tsx` | **Pure renderer** — maps game-state arrays to R3F/Three.js meshes; instanced particles/projectiles, bloom, day/night, camera shake, map-specific visuals |
 | `components/ClickableGroup.tsx` | R3F click-target helper |
-| `services/ai.ts` | Gemini API call for battlefield commentary |
 | `services/audio.ts` | Web Audio API procedural sound effects (singleton `soundService`) |
 | `utils/spatialHash.ts` | Grid-based spatial hash for O(1) projectile→unit collision lookup |
 | `types.ts` | All shared enums/interfaces (`Team`, `UnitType`, `MapType`, `Unit`, `Projectile`, `GameState`, `Flyover`, etc.) |

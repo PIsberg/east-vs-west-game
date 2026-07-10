@@ -4,7 +4,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike } from '../types';
+import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 
@@ -16,6 +16,7 @@ interface GameSceneProps {
     flyovers: any[]; // Using any for now to match the internal logic refs
     missiles: any[];
     lasers?: LaserStrike[];
+    crates?: SupplyCrate[];
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -2338,6 +2339,57 @@ const Flyover3D = ({ fly }: { fly: any }) => {
     );
 };
 
+// Supply crate: parachutes down, then sits beaconed until claimed or despawned
+const CRATE_COLORS: Record<SupplyCrate['type'], string> = { cash: '#fbbf24', squad: '#60a5fa', medkit: '#4ade80' };
+const SupplyCrate3D = ({ crate }: { crate: SupplyCrate }) => {
+    const color = CRATE_COLORS[crate.type];
+    const landed = crate.alt <= 0;
+    const fading = crate.life < 240 ? (Math.floor(Date.now() / 200) % 2 === 0 ? 0.4 : 1) : 1; // blink before despawn
+    return (
+        <group position={[crate.x, crate.alt, crate.y]}>
+            {/* Crate */}
+            <group rotation={[0, 0.5, 0]}>
+                <mesh position={[0, 4, 0]} castShadow>
+                    <boxGeometry args={[10, 8, 10]} />
+                    <meshStandardMaterial color="#78350f" roughness={1} transparent opacity={fading} />
+                </mesh>
+                <mesh position={[0, 4, 0]}>
+                    <boxGeometry args={[10.3, 2.2, 10.3]} />
+                    <meshBasicMaterial color={color} toneMapped={false} transparent opacity={fading} />
+                </mesh>
+            </group>
+            {/* Parachute while descending */}
+            {!landed && (
+                <group position={[0, 22, 0]}>
+                    <mesh>
+                        <sphereGeometry args={[14, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
+                        <meshStandardMaterial color="#e7e5e4" side={THREE.DoubleSide} />
+                    </mesh>
+                    {[[-8, 0], [8, 0], [0, -8], [0, 8]].map(([lx, lz], i) => (
+                        <mesh key={i} position={[lx * 0.5, -7, lz * 0.5]} rotation={[lz !== 0 ? (lz > 0 ? -0.5 : 0.5) : 0, 0, lx !== 0 ? (lx > 0 ? 0.5 : -0.5) : 0]}>
+                            <cylinderGeometry args={[0.15, 0.15, 15]} />
+                            <meshBasicMaterial color="#d6d3d1" />
+                        </mesh>
+                    ))}
+                </group>
+            )}
+            {/* Landing beacon */}
+            {landed && (
+                <group>
+                    <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={1 + 0.12 * Math.sin(Date.now() * 0.008)}>
+                        <ringGeometry args={[14, 17, 24]} />
+                        <meshBasicMaterial color={color} transparent opacity={0.6 * fading} toneMapped={false} depthWrite={false} />
+                    </mesh>
+                    <mesh position={[0, 20, 0]}>
+                        <cylinderGeometry args={[0.6, 1.4, 32, 6]} />
+                        <meshBasicMaterial color={color} transparent opacity={0.35 * fading} toneMapped={false} depthWrite={false} />
+                    </mesh>
+                </group>
+            )}
+        </group>
+    );
+};
+
 // Orbital laser: red designator line, then a blinding column from the sky
 const SatelliteLaser3D = ({ laser }: { laser: LaserStrike }) => {
     const DESIGNATE = 55;
@@ -2668,7 +2720,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
 
 
 
@@ -2755,6 +2807,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {missiles.map(m => <Missile3D key={m.id} m={m} />)}
 
                 {lasers?.map(l => <SatelliteLaser3D key={l.id} laser={l} />)}
+
+                {crates?.map(c => <SupplyCrate3D key={c.id} crate={c} />)}
             </ShakeRig>
 
             <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />

@@ -2,8 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus } from 'lucide-react';
-import { getBattleCommentary } from './services/ai';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -143,8 +142,6 @@ const App: React.FC = () => {
     weather: 'clear'
   });
   const [weather, setWeather] = useState<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
-  const [commentary, setCommentary] = useState<string>("");
-  const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
   const [showSplash, setShowSplash] = useState(!SPECTATE);
   const [splashFading, setSplashFading] = useState(false);
@@ -170,7 +167,7 @@ const App: React.FC = () => {
   const resetGame = () => {
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
-    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear'); setPaused(false);
+    setSpawnQueue([]); setTargetingInfo(null); setWeather('clear'); setPaused(false);
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
@@ -552,14 +549,8 @@ const App: React.FC = () => {
             <li><strong className="text-white">Nuke:</strong> <span className="text-red-500 font-bold">WARNING:</span> Friendly Fire! Enemy Side Target Only.</li>
             <li><strong className="text-white">Airborne:</strong> Drops paratroopers behind lines.</li>
             <li><strong className="text-white">Mines:</strong> Hidden defense. Explodes on contact.</li>
+            <li><strong className="text-white">Supply Drops:</strong> Crates parachute onto the midfield — <span className="text-amber-400">first unit there claims</span> cash, a veteran squad, or a field medkit.</li>
           </ul>
-
-          <div className="pt-1 border-t border-stone-700">
-            <button onClick={async () => { setLoadingCommentary(true); const t = await getBattleCommentary(gameState.score[Team.WEST], gameState.score[Team.EAST], gameState.units.filter(u => u.team === Team.WEST).length, gameState.units.filter(u => u.team === Team.EAST).length); setCommentary(t); setLoadingCommentary(false); }} disabled={loadingCommentary} className="w-full py-1 bg-stone-700 hover:bg-stone-600 rounded border border-stone-600 uppercase font-black flex items-center justify-center gap-2 text-[10px]">
-              <Bot size={12} /> {loadingCommentary ? "ANALYZING BATTLEFIELD..." : "REQUEST AI SITREP"}
-            </button>
-            {commentary && <p className="mt-1 italic text-amber-200 text-center leading-tight">"{commentary}"</p>}
-          </div>
         </div>
 
       </div>

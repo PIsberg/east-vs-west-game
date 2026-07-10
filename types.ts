@@ -192,6 +192,15 @@ export interface Missile {
   customRadius?: number;
 }
 
+export interface SupplyCrate {
+  id: string;
+  x: number;
+  y: number;
+  alt: number; // descending under a parachute while > 0
+  type: 'cash' | 'squad' | 'medkit';
+  life: number; // ticks remaining once landed before it despawns
+}
+
 export interface LaserStrike {
   id: string;
   team: Team;
