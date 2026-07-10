@@ -722,6 +722,28 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                                 <boxGeometry args={[6, 14, 34]} />
                                 <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
                             </mesh>
+                            {/* Road wheels */}
+                            {[-13, -4.5, 4.5, 13].map(z => (
+                                <group key={z}>
+                                    <mesh position={[-17, 5, z]} rotation={[0, 0, Math.PI / 2]}>
+                                        <cylinderGeometry args={[4, 4, 7, 10]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                    <mesh position={[17, 5, z]} rotation={[0, 0, Math.PI / 2]}>
+                                        <cylinderGeometry args={[4, 4, 7, 10]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                </group>
+                            ))}
+                            {/* Stowage on the rear deck */}
+                            <mesh position={[0, 16, -16]} castShadow>
+                                <boxGeometry args={[18, 5, 6]} />
+                                <meshStandardMaterial color="#3f3f2e" roughness={1} />
+                            </mesh>
+                            <mesh position={[-8, 16, 14]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+                                <cylinderGeometry args={[2.5, 2.5, 12]} />
+                                <meshStandardMaterial color="#292524" />
+                            </mesh>
 
                             {/* Turret Assembly (Rotated to face enemy) */}
                             <group position={[0, 18, 0]} rotation={[0, Math.PI / 2, 0]}>
@@ -870,19 +892,58 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                                 <boxGeometry args={[35, 16, 25]} />
                                 <meshStandardMaterial color={color} />
                             </mesh>
+                            {/* Wheels */}
+                            {[-12, 0, 12].map(x => (
+                                <group key={x}>
+                                    <mesh position={[x, 4, -12]} rotation={[Math.PI / 2, 0, 0]}>
+                                        <cylinderGeometry args={[4.5, 4.5, 5, 10]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                    <mesh position={[x, 4, 12]} rotation={[Math.PI / 2, 0, 0]}>
+                                        <cylinderGeometry args={[4.5, 4.5, 5, 10]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                </group>
+                            ))}
                             <mesh position={[0, 22, 0]}>
                                 <cylinderGeometry args={[8, 8, 8, 8]} />
                                 <meshStandardMaterial color="#333" />
                             </mesh>
-                            <mesh position={[0, 28, 5]} rotation={[-Math.PI / 4, 0, 0]}>
-                                <boxGeometry args={[10, 20, 6]} />
-                                <meshStandardMaterial color="#222" />
+                            {/* Quad missile rack */}
+                            <group position={[0, 28, 5]} rotation={[-Math.PI / 4, 0, 0]}>
+                                <mesh>
+                                    <boxGeometry args={[12, 20, 7]} />
+                                    <meshStandardMaterial color="#222" />
+                                </mesh>
+                                {[[-3.2, 2], [3.2, 2], [-3.2, -2], [3.2, -2]].map(([tx, tz], i) => (
+                                    <mesh key={i} position={[tx, 4, tz]}>
+                                        <cylinderGeometry args={[1.7, 1.7, 16, 8]} />
+                                        <meshStandardMaterial color="#3f3f46" />
+                                        <mesh position={[0, 8.2, 0]}>
+                                            <coneGeometry args={[1.4, 3, 8]} />
+                                            <meshStandardMaterial color="#b91c1c" />
+                                        </mesh>
+                                    </mesh>
+                                ))}
                                 {unit.attackCooldown > 35 && (
                                     <group position={[0, 12, 0]} rotation={[Math.PI / 2, 0, 0]}>
                                         <MuzzleFlash size={3} />
                                     </group>
                                 )}
-                            </mesh>
+                            </group>
+                            {/* Spinning search radar */}
+                            <group position={[0, 30, -8]}>
+                                <mesh>
+                                    <cylinderGeometry args={[0.8, 0.8, 6]} />
+                                    <meshStandardMaterial color="#52525b" />
+                                </mesh>
+                                <group position={[0, 4, 0]} rotation={[0, Date.now() * 0.004, 0]}>
+                                    <mesh rotation={[0, 0, Math.PI / 2]}>
+                                        <boxGeometry args={[1.5, 12, 4]} />
+                                        <meshStandardMaterial color="#71717a" />
+                                    </mesh>
+                                </group>
+                            </group>
                         </group>
                     )
                 }
@@ -1204,9 +1265,36 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             <boxGeometry args={[8, 10, 26]} />
                             <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                         </mesh>
-                        {/* Wheels/tracks */}
-                        <mesh position={[0, 4, -15]}><boxGeometry args={[40, 8, 6]} /><meshStandardMaterial color="#222" /></mesh>
-                        <mesh position={[0, 4, 15]}><boxGeometry args={[40, 8, 6]} /><meshStandardMaterial color="#222" /></mesh>
+                        {/* Eight-wheeler running gear */}
+                        {[-15, -5, 5, 15].map(x => (
+                            <group key={x}>
+                                <mesh position={[x, 4, -15]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[5, 5, 6, 12]} />
+                                    <meshStandardMaterial color="#18181b" />
+                                    <mesh position={[0, 3.2, 0]}>
+                                        <cylinderGeometry args={[2, 2, 0.6, 8]} />
+                                        <meshStandardMaterial color="#52525b" />
+                                    </mesh>
+                                </mesh>
+                                <mesh position={[x, 4, 15]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[5, 5, 6, 12]} />
+                                    <meshStandardMaterial color="#18181b" />
+                                    <mesh position={[0, -3.2, 0]}>
+                                        <cylinderGeometry args={[2, 2, 0.6, 8]} />
+                                        <meshStandardMaterial color="#52525b" />
+                                    </mesh>
+                                </mesh>
+                            </group>
+                        ))}
+                        {/* Roof hatch + whip antenna */}
+                        <mesh position={[-10, 15, 6]}>
+                            <cylinderGeometry args={[3.5, 3.5, 1.5, 10]} />
+                            <meshStandardMaterial color="#374151" />
+                        </mesh>
+                        <mesh position={[-18, 22, -8]} rotation={[0, 0, 0.15]}>
+                            <cylinderGeometry args={[0.25, 0.25, 14]} />
+                            <meshStandardMaterial color="#888" />
+                        </mesh>
                         {/* Small turret / MG mount */}
                         <mesh position={[0, 18, 0]} castShadow>
                             <boxGeometry args={[14, 6, 14]} />
