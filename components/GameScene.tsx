@@ -1740,25 +1740,64 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
         const radius = item.size;
         const height = 40; // Matches logic
         const plateauRadius = radius * 0.5;
-        // Hills match their map: dunes in the desert, rubble mounds in the city
-        const slopeColor =
-            mapType === MapType.DESERT ? '#b45309' :
-            mapType === MapType.URBAN ? '#57534e' : '#4d7c0f';
-        const capColor =
-            mapType === MapType.DESERT ? '#92400e' :
-            mapType === MapType.URBAN ? '#44403c' : '#3f6212';
+        const hillSeed = Math.abs((item.x * 92837111) ^ (item.y * 689287499));
 
+        // Desert: smooth wind-blown dune (hemisphere squashed to gameplay height)
+        if (mapType === MapType.DESERT) {
+            return (
+                <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
+                    <mesh position={[0, 1, 0]} scale={[radius, height + 4, radius * 0.85]} receiveShadow castShadow>
+                        <sphereGeometry args={[1, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                        <meshStandardMaterial color="#b45309" roughness={1} />
+                    </mesh>
+                    {/* Wind ripple crest */}
+                    <mesh position={[radius * 0.25, 1, radius * 0.3]} scale={[radius * 0.55, height * 0.5, radius * 0.4]} castShadow>
+                        <sphereGeometry args={[1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                        <meshStandardMaterial color="#c2620c" roughness={1} />
+                    </mesh>
+                </ClickableGroup>
+            );
+        }
+
+        // Urban: rubble mound — piled concrete chunks with jutting rebar
+        if (mapType === MapType.URBAN) {
+            return (
+                <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
+                    <mesh position={[0, height * 0.35, 0]} scale={[radius * 0.95, height * 0.75, radius * 0.85]} receiveShadow castShadow>
+                        <dodecahedronGeometry args={[1, 0]} />
+                        <meshStandardMaterial color="#57534e" roughness={1} />
+                    </mesh>
+                    {[0.6, 1.9, 3.3, 4.8].map((a, i) => (
+                        <mesh key={i}
+                            position={[Math.cos(a) * radius * 0.5, height * (0.18 + (hillSeed >> i) % 3 * 0.08), Math.sin(a) * radius * 0.5]}
+                            rotation={[a, a * 2, 0]} castShadow>
+                            <boxGeometry args={[radius * 0.3, radius * 0.14, radius * 0.22]} />
+                            <meshStandardMaterial color={i % 2 === 0 ? '#44403c' : '#6b7280'} roughness={1} />
+                        </mesh>
+                    ))}
+                    {/* Rebar */}
+                    {[1.2, 3.9].map((a, i) => (
+                        <mesh key={i} position={[Math.cos(a) * radius * 0.3, height * 0.7, Math.sin(a) * radius * 0.3]} rotation={[0.4, 0, a]}>
+                            <cylinderGeometry args={[0.35, 0.35, 16]} />
+                            <meshStandardMaterial color="#7c2d12" roughness={1} />
+                        </mesh>
+                    ))}
+                </ClickableGroup>
+            );
+        }
+
+        // Countryside / archipelago: grassy plateau
         return (
             <ClickableGroup position={[item.x, height / 2 - 1, item.y]} onCanvasClick={onCanvasClick}>
                 {/* Truncated Cone for Plateau */}
                 <mesh receiveShadow>
                     <cylinderGeometry args={[plateauRadius, radius, height, 32]} />
-                    <meshStandardMaterial color={slopeColor} roughness={0.9} />
+                    <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
                 </mesh>
                 {/* Worn plateau cap */}
                 <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
                     <circleGeometry args={[plateauRadius * 0.85, 24]} />
-                    <meshStandardMaterial color={capColor} roughness={1} />
+                    <meshStandardMaterial color="#3f6212" roughness={1} />
                 </mesh>
                 {/* Rocky outcrops on the slope */}
                 {[0.9, 2.4, 4.1].map((a, i) => (
@@ -1770,12 +1809,24 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
             </ClickableGroup>
         );
     } else if (item.type === 'rock') {
+        const rockSeed = Math.abs((item.x * 73856093) ^ (item.y * 19349663));
         return (
             <ClickableGroup position={[item.x, item.size / 2, item.y]} onCanvasClick={onCanvasClick}>
                 <mesh castShadow receiveShadow rotation={[item.size, item.x, item.y]}>
                     <dodecahedronGeometry args={[item.size, 0]} />
                     <meshStandardMaterial color="#57534e" />
                 </mesh>
+                {/* Smaller companion boulders */}
+                <mesh position={[item.size * 0.9, -item.size * 0.25, item.size * 0.4]} rotation={[rockSeed % 3, rockSeed % 5, 0]} castShadow>
+                    <dodecahedronGeometry args={[item.size * 0.45, 0]} />
+                    <meshStandardMaterial color="#4b4642" />
+                </mesh>
+                {rockSeed % 2 === 0 && (
+                    <mesh position={[-item.size * 0.8, -item.size * 0.3, -item.size * 0.35]} rotation={[rockSeed % 4, 0, rockSeed % 3]} castShadow>
+                        <dodecahedronGeometry args={[item.size * 0.35, 0]} />
+                        <meshStandardMaterial color="#6b6560" />
+                    </mesh>
+                )}
             </ClickableGroup>
         );
     } else if (item.type === 'building') {
@@ -1784,17 +1835,64 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
         const w = item.width || 30;
         const d = item.height || 30;
         const wallColor = item.state === 'burnt' ? '#1c1917' : (seed % 3 === 0 ? '#374151' : seed % 3 === 1 ? '#4b5563' : '#6b7280');
+        const roofProp = seed % 4; // 0 water tank, 1 AC units, 2 antenna, 3 bare
+        const hasSetback = h > 52;
         return (
             <ClickableGroup position={[item.x, h / 2, item.y]} onCanvasClick={onCanvasClick}>
                 <mesh castShadow receiveShadow>
                     <boxGeometry args={[w, h, d]} />
                     <meshStandardMaterial color={wallColor} roughness={0.85} />
                 </mesh>
+                {/* Sidewalk base */}
+                <mesh position={[0, -h / 2 + 0.4, 0]} receiveShadow>
+                    <boxGeometry args={[w + 10, 0.8, d + 10]} />
+                    <meshStandardMaterial color="#6b7280" roughness={1} />
+                </mesh>
                 {/* Roof */}
                 <mesh position={[0, h / 2 + 1, 0]}>
                     <boxGeometry args={[w + 2, 2, d + 2]} />
                     <meshStandardMaterial color="#1f2937" roughness={0.9} />
                 </mesh>
+                {/* Upper-floor setback on taller buildings */}
+                {hasSetback && (
+                    <mesh position={[0, h / 2 + 7, 0]} castShadow>
+                        <boxGeometry args={[w - 8, 12, d - 8]} />
+                        <meshStandardMaterial color={wallColor} roughness={0.85} />
+                    </mesh>
+                )}
+                {/* Rooftop props (seeded) */}
+                {item.state !== 'burnt' && roofProp === 0 && (
+                    <group position={[w * 0.22, h / 2 + (hasSetback ? 13 : 0), -d * 0.2]}>
+                        <mesh position={[0, 6, 0]} castShadow>
+                            <cylinderGeometry args={[4, 4, 7, 10]} />
+                            <meshStandardMaterial color="#7c5f46" roughness={1} />
+                        </mesh>
+                        {[[-2.5, -2.5], [2.5, 2.5], [-2.5, 2.5], [2.5, -2.5]].map(([lx, lz], i) => (
+                            <mesh key={i} position={[lx, 1.5, lz]}>
+                                <cylinderGeometry args={[0.4, 0.4, 5]} />
+                                <meshStandardMaterial color="#44403c" />
+                            </mesh>
+                        ))}
+                    </group>
+                )}
+                {item.state !== 'burnt' && roofProp === 1 && [[-w * 0.2, d * 0.15], [w * 0.18, -d * 0.18]].map(([lx, lz], i) => (
+                    <mesh key={i} position={[lx, h / 2 + 3.5, lz]} castShadow>
+                        <boxGeometry args={[6, 3.5, 5]} />
+                        <meshStandardMaterial color="#9ca3af" roughness={0.8} />
+                    </mesh>
+                ))}
+                {item.state !== 'burnt' && roofProp === 2 && (
+                    <group position={[-w * 0.2, h / 2 + (hasSetback ? 13 : 0), d * 0.15]}>
+                        <mesh position={[0, 7, 0]}>
+                            <cylinderGeometry args={[0.3, 0.5, 14]} />
+                            <meshStandardMaterial color="#71717a" />
+                        </mesh>
+                        <mesh position={[0, 14, 0]}>
+                            <sphereGeometry args={[0.8, 6, 6]} />
+                            <meshBasicMaterial color={Math.floor(Date.now() / 900) % 2 === 0 ? '#ef4444' : '#450a0a'} toneMapped={false} />
+                        </mesh>
+                    </group>
+                )}
                 {/* Window grid — rooms light up amber at night */}
                 {(() => {
                     const night = getDayFactor() < 0.35 && item.state !== 'burnt';
