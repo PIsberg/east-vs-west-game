@@ -147,6 +147,8 @@ export interface GameState {
 
 export type GameMode = 'points' | 'basehp';
 
+export type Stance = 'advance' | 'hold' | 'retreat';
+
 export interface CapturePoint {
   x: number;
   y: number;

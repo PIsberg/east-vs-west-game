@@ -14,7 +14,7 @@ import {
   WIN_SCORE,
   BASE_HP
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -42,6 +42,7 @@ interface GameCanvasProps {
   paused: boolean;
   gameSpeed: number;
   gameMode: GameMode;
+  stances: Record<Team, Stance>;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -56,6 +57,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   paused,
   gameSpeed,
   gameMode,
+  stances,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -109,6 +111,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const baseHPRef = useRef({ [Team.WEST]: BASE_HP, [Team.EAST]: BASE_HP });
   const gameModeRef = useRef<GameMode>(gameMode);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
+  const stancesRef = useRef<Record<Team, Stance>>(stances);
+  useEffect(() => { stancesRef.current = stances; }, [stances]);
 
   useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
@@ -794,6 +798,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           : (weatherRef.current === 'rain' ? 0.60 : weatherRef.current === 'snow' ? 0.65 : 1.0);
         let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * weatherMovePenalty;
 
+        // Team stance orders: hold stops the advance, retreat pulls back toward
+        // your own edge (units still fight, seek cover and keep separation).
+        const stance = stancesRef.current[unit.team];
+        if (stance === 'hold') {
+          moveX = 0;
+        } else if (stance === 'retreat') {
+          const nearOwnEdge = unit.team === Team.WEST ? unit.position.x < 60 : unit.position.x > CANVAS_WIDTH - 60;
+          moveX = nearOwnEdge ? 0 : -(unit.team === Team.WEST ? 1 : -1) * config.speed * 0.8 * weatherMovePenalty;
+        }
+
         // Organic lateral drift: two-frequency noise avoids synchronized waves
         const _uid = (unit.id.charCodeAt(0) * 7 + unit.id.charCodeAt(unit.id.length - 1) * 31) % 1000;
         const _phase = (_uid / 1000) * Math.PI * 2;
@@ -846,8 +860,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               moveY = Math.sin(a) * config.speed;
             }
           } else {
-            // No target, fly forward
-            moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
+            // No target: fly per stance (advance forward, hold hover, retreat back)
+            const fwd = (unit.team === Team.WEST ? 1 : -1);
+            moveX = stance === 'hold' ? 0 : stance === 'retreat' ? -fwd * config.speed * 0.8 : fwd * config.speed;
             if (unit.type === UnitType.HELICOPTER) unit.rotation = unit.team === Team.WEST ? 0 : Math.PI;
           }
         } else {

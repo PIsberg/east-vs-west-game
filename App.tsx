@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
-import { Team, GameState, UnitType, MapType, GameMode } from './types';
+import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
 import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
@@ -126,6 +126,7 @@ const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
+  const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
     units: [], projectiles: [], particles: [],
     score: { [Team.WEST]: 0, [Team.EAST]: 0 },
@@ -308,9 +309,31 @@ const App: React.FC = () => {
     const laneOptions: { key: 'random' | 'top' | 'mid' | 'bot', label: string }[] = [
       { key: 'random', label: '⤨' }, { key: 'top', label: '▲' }, { key: 'mid', label: '●' }, { key: 'bot', label: '▼' },
     ];
+    const stanceOptions: { key: Stance, label: string, title: string, activeColor: string }[] = [
+      { key: 'advance', label: '⏩', title: 'Advance — push toward the enemy edge', activeColor: 'border-green-400 bg-green-900/70 text-green-300' },
+      { key: 'hold', label: '⏸', title: 'Hold — stop and defend current ground', activeColor: 'border-amber-400 bg-amber-900/70 text-amber-300' },
+      { key: 'retreat', label: '⏪', title: 'Fall back — withdraw toward your edge', activeColor: 'border-red-400 bg-red-900/70 text-red-300' },
+    ];
 
     return (
       <div className={`flex flex-col gap-3 ${isWest ? "mr-4" : "ml-4"}`}>
+        {/* Stance orders */}
+        <div className="flex flex-col gap-1">
+          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
+          <div className="flex gap-0.5 justify-center">
+            {stanceOptions.map(o => (
+              <button
+                key={o.key}
+                title={o.title}
+                onClick={() => setStances(prev => ({ ...prev, [team]: o.key }))}
+                disabled={cpuTeam === team}
+                className={`w-6 h-6 text-[11px] leading-none rounded border transition-colors disabled:opacity-30 ${stances[team] === o.key ? o.activeColor : 'border-stone-700 text-stone-500 hover:text-white'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {/* Spawn lane selector */}
         <div className="flex flex-col gap-1">
           <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Lane</div>
@@ -459,7 +482,7 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
