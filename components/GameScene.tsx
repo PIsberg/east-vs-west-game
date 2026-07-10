@@ -1074,6 +1074,93 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
     );
 };
 
+// -- Instanced rendering for high-count entities --
+// Regular particles and projectiles are drawn via a single InstancedMesh each,
+// updated imperatively in useFrame. Special cases (beams, text, decals, missiles)
+// stay as individual components — they are rare.
+
+const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal);
+
+const MAX_PARTICLE_INSTANCES = 2048;
+const INST_PARTICLE_GEO = new THREE.BoxGeometry(1, 1, 1);
+const INST_PARTICLE_MAT = new THREE.MeshStandardMaterial({ color: 'white', transparent: true, opacity: 0.9 });
+
+const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null!);
+    const dummy = useMemo(() => new THREE.Object3D(), []);
+    const colorObj = useMemo(() => new THREE.Color(), []);
+
+    useFrame(() => {
+        const mesh = meshRef.current;
+        if (!mesh) return;
+        let count = 0;
+        for (const p of particles) {
+            if (isSpecialParticle(p)) continue;
+            if (count >= MAX_PARTICLE_INSTANCES) break;
+            // Fade by shrinking (per-instance opacity is not supported)
+            const fade = Math.max(0.05, Math.min(1, p.life / 30));
+            const s = Math.max(0.01, p.size * (0.4 + 0.6 * fade));
+            dummy.position.set(p.position.x, 10 + (30 - p.life), p.position.y);
+            dummy.scale.set(s, s, s);
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(count, dummy.matrix);
+            colorObj.set(p.color);
+            mesh.setColorAt(count, colorObj);
+            count++;
+        }
+        mesh.count = count;
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+
+    return (
+        <instancedMesh
+            ref={meshRef}
+            args={[INST_PARTICLE_GEO, INST_PARTICLE_MAT, MAX_PARTICLE_INSTANCES]}
+            frustumCulled={false}
+        />
+    );
+};
+
+const MAX_PROJECTILE_INSTANCES = 512;
+const INST_PROJECTILE_GEO = new THREE.SphereGeometry(3, 8, 8);
+const INST_PROJECTILE_MAT = new THREE.MeshBasicMaterial({ color: 'white', toneMapped: false });
+const COLOR_PROJ_AIR = new THREE.Color('#f43f5e');
+const COLOR_PROJ_GROUND = new THREE.Color('#fbbf24');
+
+const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) => {
+    const meshRef = useRef<THREE.InstancedMesh>(null!);
+    const dummy = useMemo(() => new THREE.Object3D(), []);
+
+    useFrame(() => {
+        const mesh = meshRef.current;
+        if (!mesh) return;
+        let count = 0;
+        for (const proj of projectiles) {
+            if (proj.isMissile) continue; // rendered as Projectile3D (has pointLight)
+            if (count >= MAX_PROJECTILE_INSTANCES) break;
+            dummy.position.set(proj.position.x, 15, proj.position.y);
+            dummy.scale.set(1, 1, 1);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(count, dummy.matrix);
+            mesh.setColorAt(count, proj.targetType === 'air' ? COLOR_PROJ_AIR : COLOR_PROJ_GROUND);
+            count++;
+        }
+        mesh.count = count;
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    });
+
+    return (
+        <instancedMesh
+            ref={meshRef}
+            args={[INST_PROJECTILE_GEO, INST_PROJECTILE_MAT, MAX_PROJECTILE_INSTANCES]}
+            frustumCulled={false}
+        />
+    );
+};
+
 const Particle3D = ({ p }: { p: Particle }) => {
     // Lightning / Beam Logic
     if (p.targetPos) {
@@ -1506,9 +1593,11 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} />)}
 
-            {projectiles.map(p => <Projectile3D key={p.id} proj={p} />)}
+            {projectiles.map(p => p.isMissile ? <Projectile3D key={p.id} proj={p} /> : null)}
+            <InstancedProjectiles projectiles={projectiles} />
 
-            {particles.map(p => <Particle3D key={p.id} p={p} />)}
+            {particles.map(p => isSpecialParticle(p) ? <Particle3D key={p.id} p={p} /> : null)}
+            <InstancedParticles particles={particles} />
 
             {flyovers.map(f => <Flyover3D key={f.id} fly={f} />)}
 
