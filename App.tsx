@@ -270,7 +270,7 @@ const App: React.FC = () => {
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
     };
 
-    const renderGroup = (title: string, units: any[]) => (
+    const renderGroup = (title: string, units: { type: UnitType, label: string, icon: React.ReactNode, special?: boolean }[]) => (
       <div className="flex flex-col gap-1">
         <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">{title}</div>
         {units.map(({ type, label, icon, special }) => (
