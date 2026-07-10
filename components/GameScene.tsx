@@ -561,7 +561,19 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <boxGeometry args={[45, 12, 28]} />
                                 <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                             </mesh>
-                            {/* Tracks */}
+                            {/* Front glacis slope */}
+                            <mesh position={[23, 11, 0]} rotation={[0, 0, -0.55]} castShadow>
+                                <boxGeometry args={[10, 7, 26]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {/* Rear exhaust stacks */}
+                            {[-6, 6].map(z => (
+                                <mesh key={z} position={[-22, 12, z]}>
+                                    <boxGeometry args={[3, 5, 4]} />
+                                    <meshStandardMaterial color="#1c1917" />
+                                </mesh>
+                            ))}
+                            {/* Tracks + side skirts */}
                             <mesh position={[0, 6, -15]}>
                                 <boxGeometry args={[42, 12, 8]} />
                                 <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
@@ -570,6 +582,27 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <boxGeometry args={[42, 12, 8]} />
                                 <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
                             </mesh>
+                            <mesh position={[0, 12, -19.5]}>
+                                <boxGeometry args={[44, 5, 1.5]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            <mesh position={[0, 12, 19.5]}>
+                                <boxGeometry args={[44, 5, 1.5]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {/* Road wheels */}
+                            {[-16, -8, 0, 8, 16].map(x => (
+                                <group key={x}>
+                                    <mesh position={[x, 5, -15]} rotation={[Math.PI / 2, 0, 0]}>
+                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                    <mesh position={[x, 5, 15]} rotation={[Math.PI / 2, 0, 0]}>
+                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
+                                        <meshStandardMaterial color="#111" />
+                                    </mesh>
+                                </group>
+                            ))}
                             {/* Turret + Gun (recoils backward on firing) */}
                             <group position={[-recoil, 0, 0]}>
                                 <mesh position={[0, 18, 0]} castShadow>
@@ -584,6 +617,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                         <cylinderGeometry args={[3.5, 3.5, 6]} />
                                         <meshStandardMaterial color="#333" />
                                     </mesh>
+                                </mesh>
+                                {/* Commander cupola + antenna */}
+                                <mesh position={[-5, 24, 5]} castShadow>
+                                    <cylinderGeometry args={[3.5, 4, 3.5, 10]} />
+                                    <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
+                                </mesh>
+                                <mesh position={[-9, 28, -6]}>
+                                    <cylinderGeometry args={[0.3, 0.3, 14]} />
+                                    <meshStandardMaterial color="#888" />
                                 </mesh>
                             </group>
 
@@ -817,11 +859,26 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <meshStandardMaterial color="#111" />
                             </mesh>
                             {[[-12, 0], [12, 0], [0, -12], [0, 12]].map((p, i) => (
-                                <mesh key={i} position={[p[0], 2, p[1]] as any}>
-                                    <cylinderGeometry args={[4, 4, 1]} />
-                                    <meshStandardMaterial color="black" opacity={0.5} transparent />
-                                </mesh>
+                                <group key={i} position={[p[0], 2, p[1]] as any}>
+                                    {/* Blur disc */}
+                                    <mesh>
+                                        <cylinderGeometry args={[4, 4, 0.5]} />
+                                        <meshStandardMaterial color="black" opacity={0.35} transparent />
+                                    </mesh>
+                                    {/* Spinning blade */}
+                                    <group rotation={[0, Date.now() / 25 + i * 1.7, 0]}>
+                                        <mesh position={[0, 0.6, 0]}>
+                                            <boxGeometry args={[7.5, 0.3, 0.8]} />
+                                            <meshStandardMaterial color="#222" />
+                                        </mesh>
+                                    </group>
+                                </group>
                             ))}
+                            {/* Blinking status LED */}
+                            <mesh position={[0, 3, 0]}>
+                                <sphereGeometry args={[1, 8, 8]} />
+                                <meshBasicMaterial color={Math.floor(Date.now() / 400) % 2 === 0 ? '#ef4444' : '#450a0a'} toneMapped={false} />
+                            </mesh>
                         </group>
                     )
                 }
@@ -851,6 +908,22 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <sphereGeometry args={[8, 16, 16]} />
                                 <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                             </mesh>
+                            {/* Cockpit glass (front) */}
+                            <mesh position={[0, 1.5, 5]}>
+                                <sphereGeometry args={[5.2, 16, 16]} />
+                                <meshStandardMaterial color="#7dd3fc" metalness={0.4} roughness={0.1} transparent opacity={0.85} />
+                            </mesh>
+                            {/* Stub wings + rocket pods */}
+                            <mesh position={[0, -2.5, 0]}>
+                                <boxGeometry args={[20, 1.5, 4]} />
+                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            </mesh>
+                            {[-9, 9].map(x => (
+                                <mesh key={x} position={[x, -4, 1]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[1.8, 1.8, 6, 10]} />
+                                    <meshStandardMaterial color="#374151" />
+                                </mesh>
+                            ))}
                             {/* Tail Boom */}
                             <mesh position={[0, 0, -12]} rotation={[Math.PI / 2, 0, 0]}>
                                 <cylinderGeometry args={[2, 4, 16]} />
@@ -866,17 +939,21 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <cylinderGeometry args={[1, 1, 4]} />
                                 <meshStandardMaterial color="#333" />
                             </mesh>
-                            {/* Main Rotor Blades (Spinning) */}
-                            <group position={[0, 10, 0]} rotation={[0, (Date.now() / 50), 0]}>
+                            {/* Main Rotor Blades (Spinning) + blur disc */}
+                            <group position={[0, 10, 0]} rotation={[0, (Date.now() / 40), 0]}>
                                 <mesh>
-                                    <boxGeometry args={[40, 0.5, 3]} />
+                                    <boxGeometry args={[42, 0.4, 2.2]} />
                                     <meshStandardMaterial color="#111" />
                                 </mesh>
                                 <mesh rotation={[0, Math.PI / 2, 0]}>
-                                    <boxGeometry args={[40, 0.5, 3]} />
+                                    <boxGeometry args={[42, 0.4, 2.2]} />
                                     <meshStandardMaterial color="#111" />
                                 </mesh>
                             </group>
+                            <mesh position={[0, 10, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                                <circleGeometry args={[21, 24]} />
+                                <meshBasicMaterial color="#94a3b8" transparent opacity={0.13} side={THREE.DoubleSide} depthWrite={false} />
+                            </mesh>
                             {/* Skids */}
                             <mesh position={[-4, -8, 0]}>
                                 <boxGeometry args={[1, 1, 16]} />
