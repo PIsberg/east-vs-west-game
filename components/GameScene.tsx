@@ -4,7 +4,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, Projectile, Particle, TerrainObject, Vector2D, MapType } from '../types';
+import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 // Add type definition for the custom shader material
@@ -413,14 +413,26 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
     // Calculate slope rotation? For now just keep them upright or maybe pitch based on normal.
     const rotation = [0, isWest ? 0 : Math.PI, 0];
 
+    // Walk bob for infantry on the move
+    const isInfantry = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO || unit.type === UnitType.SNIPER ||
+        unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE;
+    const walkPhase = (unit.id.charCodeAt(0) * 13 + (unit.id.charCodeAt(1) || 0) * 7) % 100;
+    const walking = isInfantry && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
+    const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
+    const bobTilt = walking ? Math.sin(Date.now() * 0.012 + walkPhase) * 0.05 : 0;
+
+    // Turret recoil right after firing (mirrors the muzzle-flash window)
+    const firing = unit.attackCooldown > (config.attackSpeed - 8);
+    const recoil = firing ? (unit.attackCooldown - (config.attackSpeed - 8)) * 0.45 : 0;
+
     // Visual cue for Cover
     const opacity = (unit as any).isInCover ? 0.6 : 1.0;
     const transparent = (unit as any).isInCover;
     const matProps = { color, transparent, opacity };
 
     return (
-        <ClickableGroup position={[position[0], position[1] + yOffset, position[2]]} rotation={rotation as any} onCanvasClick={onCanvasClick}>
-            <group receiveShadow castShadow>
+        <ClickableGroup position={[position[0], position[1] + yOffset + bobY, position[2]]} rotation={rotation as any} onCanvasClick={onCanvasClick}>
+            <group receiveShadow castShadow rotation={[0, 0, bobTilt]}>
                 {/* Health Bar (Floating) - Optimized via Scale */}
                 <mesh position={[0, 20, 0]} scale={[20, 1, 1]} geometry={GEO_HEALTH_BAR} material={MAT_HEALTH_BG} />
                 <mesh
@@ -491,20 +503,22 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <boxGeometry args={[42, 12, 8]} />
                                 <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
                             </mesh>
-                            {/* Turret */}
-                            <mesh position={[0, 18, 0]} castShadow>
-                                <boxGeometry args={[25, 9, 20]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Main Gun (Pointing Right +X) */}
-                            <mesh position={[20, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                                <cylinderGeometry args={[2.5, 2.5, 30]} />
-                                <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
-                                <mesh position={[0, 15, 0]}> {/* Bore fume extractor */}
-                                    <cylinderGeometry args={[3.5, 3.5, 6]} />
-                                    <meshStandardMaterial color="#333" />
+                            {/* Turret + Gun (recoils backward on firing) */}
+                            <group position={[-recoil, 0, 0]}>
+                                <mesh position={[0, 18, 0]} castShadow>
+                                    <boxGeometry args={[25, 9, 20]} />
+                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                                 </mesh>
-                            </mesh>
+                                {/* Main Gun (Pointing Right +X) */}
+                                <mesh position={[20, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                                    <cylinderGeometry args={[2.5, 2.5, 30]} />
+                                    <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
+                                    <mesh position={[0, 15, 0]}> {/* Bore fume extractor */}
+                                        <cylinderGeometry args={[3.5, 3.5, 6]} />
+                                        <meshStandardMaterial color="#333" />
+                                    </mesh>
+                                </mesh>
+                            </group>
 
                             {/* Muzzle Flash */}
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
@@ -569,8 +583,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                     <boxGeometry args={[22, 12, 24]} />
                                     <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
                                 </mesh>
-                                {/* Long Barrel Howitzer (Angled Up) */}
-                                <group position={[0, 2, 10]} rotation={[Math.PI / 4, 0, 0]}>
+                                {/* Long Barrel Howitzer (Angled Up, recoils on firing) */}
+                                <group position={[0, 2, 10 - recoil * 1.5]} rotation={[Math.PI / 4, 0, 0]}>
                                     <mesh position={[0, 10, 0]}>
                                         <cylinderGeometry args={[2.5, 3, 35]} />
                                         <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
@@ -1102,7 +1116,7 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
 // updated imperatively in useFrame. Special cases (beams, text, decals, missiles)
 // stay as individual components — they are rare.
 
-const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt);
+const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt || p.isCorpse);
 
 // Jagged vertical lightning bolt from the sky to a strike point
 const LightningBolt = ({ p }: { p: Particle }) => {
@@ -1218,6 +1232,29 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
 const Particle3D = ({ p }: { p: Particle }) => {
     // Sky-to-ground lightning bolt
     if (p.isBolt) return <LightningBolt p={p} />;
+
+    // Fallen body / burnt wreck lying on the ground
+    if (p.isCorpse) {
+        const seed = p.id.charCodeAt(0) * 31 + p.id.charCodeAt(p.id.length - 1) * 7;
+        const rotY = (seed % 628) / 100;
+        const opacity = Math.min(0.9, p.life / 80);
+        const isWreck = p.size > 20;
+        return (
+            <group position={[p.position.x, isWreck ? 4 : 1.2, p.position.y]} rotation={[0, rotY, 0]}>
+                <mesh castShadow>
+                    <boxGeometry args={isWreck ? [p.size, 8, p.size * 0.6] : [p.size, 2.5, p.size * 0.35]} />
+                    <meshStandardMaterial color={p.color} transparent opacity={opacity} roughness={1} />
+                </mesh>
+                {isWreck && (
+                    /* Charred turret stump + smoke glow */
+                    <mesh position={[0, 6, 0]} castShadow>
+                        <boxGeometry args={[p.size * 0.4, 5, p.size * 0.35]} />
+                        <meshStandardMaterial color="#0c0a09" transparent opacity={opacity} roughness={1} />
+                    </mesh>
+                )}
+            </group>
+        );
+    }
 
     // Lightning / Beam Logic
     if (p.targetPos) {

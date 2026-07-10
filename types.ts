@@ -117,6 +117,7 @@ export interface Particle {
   targetPos?: Vector2D; // For Lightning beams
   isGroundDecal?: boolean;
   isBolt?: boolean; // Vertical sky-to-ground lightning bolt
+  isCorpse?: boolean; // Fallen infantry body / burnt vehicle wreck
   text?: string; // For floating text (e.g. Dollar Sign)
 }
 

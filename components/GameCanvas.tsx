@@ -953,6 +953,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
 
+        // Dust trail behind moving vehicles
+        if (isVehicle && (Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05) && Math.random() < 0.18) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: unit.position.x - Math.sign(moveX || 1) * 20, y: unit.position.y + (Math.random() - 0.5) * 12 },
+            velocity: { x: -moveX * 0.4, y: -moveY * 0.4 },
+            drag: 0.9,
+            life: 20 + Math.random() * 10,
+            color: '#a8a29e',
+            size: 3 + Math.random() * 3
+          });
+        }
+
         // Hard building collision — push unit out of any building it overlaps
         if (!config.isFlying) {
           terrainRef.current.forEach(bld => {
@@ -1379,7 +1392,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             life: 45, color: k % 2 === 0 ? '#ef4444' : '#f97316', size: 8 + Math.random() * 10
           });
         }
-      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE) {
+      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+                 u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC) {
         // Troops Scream & Blood
         soundService.playScreamSound();
         particlesRef.current.push({
@@ -1388,6 +1402,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           life: 180, // 3 seconds at 60fps
           color: '#7f1d1d', // Dark Red Blood
           size: 12 + Math.random() * 5
+        });
+      }
+
+      // Corpse / wreck left on the battlefield
+      const cfg = UNIT_CONFIG[u.type] as any;
+      const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+        u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC;
+      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC;
+      if (isInfantryDeath || isVehicleDeath) {
+        particlesRef.current.push({
+          id: generateId(),
+          position: { ...u.position },
+          life: isVehicleDeath ? 420 : 240,
+          color: isVehicleDeath ? '#1c1917' : (u.team === Team.WEST ? cfg.colorWest : cfg.colorEast),
+          size: isVehicleDeath ? 30 : 14,
+          isCorpse: true
         });
       }
     });
