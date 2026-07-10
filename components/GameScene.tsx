@@ -31,6 +31,14 @@ interface GameSceneProps {
     capture?: CapturePoint;
 }
 
+// Day/night cycle: full cycle every 4 minutes, starting at noon.
+// 1 = noon, 0 = deep night. Shared by scene lighting and building windows.
+const DAY_CYCLE_MS = 240000;
+const getDayFactor = () => {
+    const t = (Date.now() % DAY_CYCLE_MS) / DAY_CYCLE_MS;
+    return Math.max(0, Math.min(1, 0.5 + 0.65 * Math.sin(t * Math.PI * 2 + Math.PI / 2)));
+};
+
 // Mid-map capture point: flag + capture-progress ring
 const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
     const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? '#b91c1c' : '#a8a29e';
@@ -273,9 +281,20 @@ const buildChannelGeo = (points: TerrainObject[]): THREE.BufferGeometry | null =
     return geo;
 };
 
-const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType: MapType }) => {
-    const riverRef = useRef<any>(null);
+// One animated water mesh (flow shader) with its own uTime driver
+const AnimatedWater = ({ geo, color, foam }: { geo: THREE.BufferGeometry, color: string, foam: string }) => {
+    const ref = useRef<any>(null);
+    const uColor = useMemo(() => new THREE.Color(color), [color]);
+    const uFoam = useMemo(() => new THREE.Color(foam), [foam]);
+    useFrame(({ clock }) => { if (ref.current) ref.current.uTime = clock.getElapsedTime(); });
+    return (
+        <mesh geometry={geo} receiveShadow>
+            <riverMaterial ref={ref} transparent side={THREE.DoubleSide} uColor={uColor} uFoamColor={uFoam} />
+        </mesh>
+    );
+};
 
+const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType: MapType }) => {
     const riverPoints = useMemo(() => terrain.filter(t => t.type === 'river'), [terrain]);
 
     // Group segments by channel — segments whose X is within 150px of a group's first segment
@@ -293,10 +312,6 @@ const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType
         () => channelGroups.map(g => buildChannelGeo(g)),
         [channelGroups]
     );
-
-    useFrame(({ clock }) => {
-        if (riverRef.current) riverRef.current.uTime = clock.getElapsedTime();
-    });
 
     // Urban: render as concrete wall segments
     if (mapType === MapType.URBAN) {
@@ -325,14 +340,12 @@ const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType
         );
     }
 
-    // Archipelago: wide sea straits — static ocean colour, no shader needed
+    // Archipelago: wide sea straits with animated deep-ocean shader
     if (mapType === MapType.ARCHIPELAGO) {
         return (
             <group>
                 {geometries.map((geo, i) => geo && (
-                    <mesh key={i} geometry={geo} receiveShadow>
-                        <meshStandardMaterial color="#0c4a6e" roughness={0.25} metalness={0.1} />
-                    </mesh>
+                    <AnimatedWater key={i} geo={geo} color="#0c4a6e" foam="#7dd3fc" />
                 ))}
             </group>
         );
@@ -342,9 +355,7 @@ const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType
     return (
         <group>
             {geometries.map((geo, i) => geo && (
-                <mesh key={i} geometry={geo} receiveShadow>
-                    <riverMaterial ref={i === 0 ? riverRef : undefined} transparent side={THREE.DoubleSide} />
-                </mesh>
+                <AnimatedWater key={i} geo={geo} color="#3b82f6" foam="#e0f2fe" />
             ))}
         </group>
     );
@@ -1567,13 +1578,26 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
                     <boxGeometry args={[w + 2, 2, d + 2]} />
                     <meshStandardMaterial color="#1f2937" roughness={0.9} />
                 </mesh>
-                {/* Windows (simple dark strips) */}
-                {[0.3, 0.6].map((frac, i) => (
-                    <mesh key={i} position={[w / 2 + 0.1, frac * h - h / 2, 0]}>
-                        <boxGeometry args={[0.5, 4, d * 0.6]} />
-                        <meshStandardMaterial color="#111827" />
-                    </mesh>
-                ))}
+                {/* Window grid — rooms light up amber at night */}
+                {(() => {
+                    const night = getDayFactor() < 0.35 && item.state !== 'burnt';
+                    const rows = Math.max(2, Math.floor(h / 16));
+                    const cols = 3;
+                    const winds = [];
+                    for (let r = 0; r < rows; r++) {
+                        for (let c = 0; c < cols; c++) {
+                            const lit = night && ((seed + r * 7 + c * 13) % 5) < 2;
+                            winds.push(
+                                // Camera-facing (+Z) wall
+                                <mesh key={`${r}-${c}`} position={[(c - 1) * (w / 3.4), (r + 0.7) * (h / (rows + 1)) - h / 2, d / 2 + 0.15]}>
+                                    <boxGeometry args={[w * 0.18, 5, 0.4]} />
+                                    <meshBasicMaterial color={lit ? '#fbbf24' : '#111827'} toneMapped={!lit} />
+                                </mesh>
+                            );
+                        }
+                    }
+                    return winds;
+                })()}
                 {item.state === 'burning' && <pointLight color="#f97316" intensity={3} distance={40} position={[0, h / 2, 0]} />}
             </ClickableGroup>
         );
@@ -1610,17 +1634,37 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
                     </mesh>
 
                     {/* Leaves */}
-                    {type === 0 && ( // Pine
-                        <mesh position={[0, 45 * scaleMod, 0]} castShadow>
-                            <coneGeometry args={[20 * scaleMod, 50 * scaleMod, 16]} />
-                            <meshStandardMaterial color={leavesColor} />
-                        </mesh>
+                    {type === 0 && ( // Pine — three stacked tiers
+                        <group>
+                            <mesh position={[0, 34 * scaleMod, 0]} castShadow>
+                                <coneGeometry args={[22 * scaleMod, 28 * scaleMod, 10]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
+                                <coneGeometry args={[16 * scaleMod, 24 * scaleMod, 10]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                            <mesh position={[0, 64 * scaleMod, 0]} castShadow>
+                                <coneGeometry args={[10 * scaleMod, 20 * scaleMod, 10]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                        </group>
                     )}
-                    {type === 1 && ( // Oak
-                        <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                            <dodecahedronGeometry args={[25 * scaleMod, 0]} />
-                            <meshStandardMaterial color={leavesColor} />
-                        </mesh>
+                    {type === 1 && ( // Oak — clustered canopy
+                        <group>
+                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
+                                <dodecahedronGeometry args={[22 * scaleMod, 0]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                            <mesh position={[12 * scaleMod, 42 * scaleMod, 6 * scaleMod]} castShadow>
+                                <dodecahedronGeometry args={[14 * scaleMod, 0]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                            <mesh position={[-11 * scaleMod, 44 * scaleMod, -5 * scaleMod]} castShadow>
+                                <dodecahedronGeometry args={[13 * scaleMod, 0]} />
+                                <meshStandardMaterial color={leavesColor} />
+                            </mesh>
+                        </group>
                     )}
                     {type === 2 && ( // Poplar
                         <mesh position={[0, 45 * scaleMod, 0]} castShadow>
@@ -1764,6 +1808,42 @@ const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) =
     return <group>{dashes}</group>;
 };
 
+// Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
+const GroundScatter = ({ mapType }: { mapType: MapType }) => {
+    const ref = useRef<THREE.InstancedMesh>(null!);
+    const COUNT = 140;
+    const active = mapType === MapType.COUNTRYSIDE || mapType === MapType.DESERT;
+    const color = mapType === MapType.DESERT ? '#a16207' : '#1a2e05';
+
+    useEffect(() => {
+        if (!active || !ref.current) return;
+        const dummy = new THREE.Object3D();
+        const rand = (i: number, salt: number) => {
+            const v = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
+            return v - Math.floor(v);
+        };
+        for (let i = 0; i < COUNT; i++) {
+            const x = 20 + rand(i, 1) * (CANVAS_WIDTH - 40);
+            const z = HORIZON_Y + 20 + rand(i, 2) * (CANVAS_HEIGHT - HORIZON_Y - 40);
+            const s = 1.2 + rand(i, 3) * 2.2;
+            dummy.position.set(x, 2, z);
+            dummy.scale.set(s, s * 1.8, s);
+            dummy.rotation.set(0, rand(i, 4) * Math.PI * 2, 0);
+            dummy.updateMatrix();
+            ref.current.setMatrixAt(i, dummy.matrix);
+        }
+        ref.current.instanceMatrix.needsUpdate = true;
+    }, [mapType, active]);
+
+    if (!active) return null;
+    return (
+        <instancedMesh ref={ref} args={[undefined as any, undefined as any, COUNT]} frustumCulled={false}>
+            <coneGeometry args={[1.6, 4.5, 5]} />
+            <meshStandardMaterial color={color} roughness={1} />
+        </instancedMesh>
+    );
+};
+
 const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
     const groundColor =
         mapType === MapType.URBAN       ? '#374151' :
@@ -1834,11 +1914,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
 
 
-    // Day/night cycle: full cycle every 4 minutes, starting at noon.
-    // dayFactor 1 = noon, 0 = deep night; blended on top of the weather palette.
-    const DAY_CYCLE_MS = 240000;
-    const cycleT = (Date.now() % DAY_CYCLE_MS) / DAY_CYCLE_MS;
-    const dayFactor = Math.max(0, Math.min(1, 0.5 + 0.65 * Math.sin(cycleT * Math.PI * 2 + Math.PI / 2)));
+    // Day/night factor blended on top of the weather palette.
+    const dayFactor = getDayFactor();
 
     const weatherSky =
         weather === 'rain'  ? '#334155' :
@@ -1881,6 +1958,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
+                <GroundScatter mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
                 <BorderLine onCanvasClick={onCanvasClick} />
                 {capture && <CapturePoint3D cap={capture} />}
