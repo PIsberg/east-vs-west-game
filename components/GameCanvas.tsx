@@ -19,13 +19,23 @@ import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
 import { useState } from 'react';
 
+export type CpuDifficulty = 'easy' | 'normal' | 'hard';
+
+// interval: spawn-cadence multiplier · incomeBonus: extra money per tick · special: tactics-chance multiplier
+const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number }> = {
+  easy:   { interval: 1.7,  incomeBonus: 0,    special: 0.4 },
+  normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0 },
+  hard:   { interval: 0.68, incomeBonus: 0.12, special: 1.4 },
+};
+
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
   spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[];
   clearSpawnQueue: () => void;
   onCanvasClick: (x: number, y: number) => void;
   targetingInfo: { team: Team, type: UnitType } | null;
-  cpuEnabled: boolean;
+  cpuTeam: Team | null;
+  cpuDifficulty: CpuDifficulty;
   mapType: MapType;
 }
 
@@ -35,7 +45,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   clearSpawnQueue,
   onCanvasClick,
   targetingInfo,
-  cpuEnabled,
+  cpuTeam,
+  cpuDifficulty,
   mapType,
 }) => {
   const requestRef = useRef<number>(0);
@@ -67,9 +78,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   const cpuTimerRef = useRef(0);
-  const cpuEnabledRef = useRef(cpuEnabled);
+  const cpuRef = useRef<{ team: Team | null, difficulty: CpuDifficulty }>({ team: cpuTeam, difficulty: cpuDifficulty });
 
-  useEffect(() => { cpuEnabledRef.current = cpuEnabled; }, [cpuEnabled]);
+  useEffect(() => { cpuRef.current = { team: cpuTeam, difficulty: cpuDifficulty }; }, [cpuTeam, cpuDifficulty]);
 
   // Debug Keys
   useEffect(() => {
@@ -1464,34 +1475,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     unitsRef.current = unitsRef.current.filter(u => u.health > 0);
 
-    // CPU AI — strategic East commander
-    if (cpuEnabledRef.current) {
+    // CPU AI — strategic commander for either side
+    if (cpuRef.current.team) {
+      const ME = cpuRef.current.team;
+      const FOE = ME === Team.EAST ? Team.WEST : Team.EAST;
+      const DIFF = CPU_DIFFICULTY[cpuRef.current.difficulty];
+
       cpuTimerRef.current += 1;
+      moneyRef.current[ME] += DIFF.incomeBonus; // difficulty economy edge
 
       // Battlefield snapshot (computed every frame for adaptive timing)
-      const eastActive = unitsRef.current.filter(u => u.team === Team.EAST && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
-      const westActive = unitsRef.current.filter(u => u.team === Team.WEST && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
-      const scoreDiff = scoreRef.current[Team.EAST] - scoreRef.current[Team.WEST]; // + = East winning
+      const myActive = unitsRef.current.filter(u => u.team === ME && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
+      const foeActive = unitsRef.current.filter(u => u.team === FOE && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
+      const scoreDiff = scoreRef.current[ME] - scoreRef.current[FOE]; // + = CPU winning
 
       // Adaptive spawn rate: faster when losing or outnumbered
-      const isUnderPressure = eastActive.length < westActive.length - 2 || scoreDiff < -12;
-      const spawnInterval = isUnderPressure ? 88 : 145;
+      const isUnderPressure = myActive.length < foeActive.length - 2 || scoreDiff < -12;
+      const spawnInterval = Math.round((isUnderPressure ? 88 : 145) * DIFF.interval);
 
       if (cpuTimerRef.current >= spawnInterval) {
         cpuTimerRef.current = 0;
-        const money = moneyRef.current[Team.EAST];
+        const money = moneyRef.current[ME];
 
         // --- Threat analysis ---
-        const westUnits = unitsRef.current.filter(u => u.team === Team.WEST);
-        const airThreats    = westUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE).length;
-        const armorThreats  = westUnits.filter(u => u.type === UnitType.TANK || u.type === UnitType.APC).length;
-        const infThreats    = westUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
-        const westFrontX    = westUnits.length > 0 ? Math.max(...westUnits.map(u => u.position.x)) : 0;
+        const foeUnits = unitsRef.current.filter(u => u.team === FOE);
+        const airThreats    = foeUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE).length;
+        const armorThreats  = foeUnits.filter(u => u.type === UnitType.TANK || u.type === UnitType.APC).length;
+        const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
+        // Foe front line: their furthest advance toward the CPU's edge
+        const foeFrontX     = foeUnits.length > 0
+          ? (FOE === Team.WEST ? Math.max(...foeUnits.map(u => u.position.x)) : Math.min(...foeUnits.map(u => u.position.x)))
+          : (FOE === Team.WEST ? 0 : CANVAS_WIDTH);
 
-        const eastHasAA     = eastActive.some(u => u.type === UnitType.ANTI_AIR);
-        const eastHasMedic  = eastActive.some(u => u.type === UnitType.MEDIC);
-        const eastHasTesla  = eastActive.some(u => u.type === UnitType.TESLA);
-        const eastInfCount  = eastActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO).length;
+        const myHasAA     = myActive.some(u => u.type === UnitType.ANTI_AIR);
+        const myHasMedic  = myActive.some(u => u.type === UnitType.MEDIC);
+        const myHasTesla  = myActive.some(u => u.type === UnitType.TESLA);
+        const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO).length;
 
         // Helper: add weight only if affordable
         const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost;
@@ -1499,16 +1518,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const add = (t: UnitType, w: number) => { if (can(t)) prio[t] = (prio[t] || 0) + w; };
 
         // --- Counter-picks (emergency priority) ---
-        if (airThreats >= 2 && !eastHasAA)  add(UnitType.ANTI_AIR, 10);
-        else if (airThreats >= 1 && !eastHasAA) add(UnitType.ANTI_AIR, 5);
+        if (airThreats >= 2 && !myHasAA)  add(UnitType.ANTI_AIR, 10);
+        else if (airThreats >= 1 && !myHasAA) add(UnitType.ANTI_AIR, 5);
         if (armorThreats >= 3)               { add(UnitType.ARTILLERY, 6); add(UnitType.HELICOPTER, 4); }
         else if (armorThreats >= 1)          add(UnitType.ARTILLERY, 3);
-        if (infThreats >= 6 && !eastHasTesla) add(UnitType.TESLA, 7);
+        if (infThreats >= 6 && !myHasTesla) add(UnitType.TESLA, 7);
         else if (infThreats >= 4)            { add(UnitType.FLAMETHROWER, 4); add(UnitType.TESLA, 3); }
         else if (infThreats >= 2)            add(UnitType.FLAMETHROWER, 2);
 
         // --- Support ---
-        if (!eastHasMedic && eastInfCount >= 3) add(UnitType.MEDIC, 5);
+        if (!myHasMedic && myInfCount >= 3) add(UnitType.MEDIC, 5);
 
         // --- General composition ---
         add(UnitType.TANK, 3);
@@ -1526,29 +1545,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         let specialSpawned = false;
 
         // Missile strike at enemy cluster
-        if (!specialSpawned && can(UnitType.MISSILE_STRIKE) && westUnits.length >= 6 && Math.random() < 0.25) {
-          const cx = westUnits.reduce((s, u) => s + u.position.x, 0) / westUnits.length;
-          const cy = westUnits.reduce((s, u) => s + u.position.y, 0) / westUnits.length;
-          spawnUnit(Team.EAST, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } });
-          moneyRef.current[Team.EAST] -= (UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any).cost;
+        if (!specialSpawned && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special) {
+          const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
+          const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
+          spawnUnit(ME, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any).cost;
           specialSpawned = true;
         }
 
-        // Airborne drop behind West lines when enemy is pushing deep
-        if (!specialSpawned && can(UnitType.AIRBORNE) && westFrontX > 450 && Math.random() < 0.2) {
-          const dropX = 80 + Math.random() * 120;
+        // Airborne drop behind foe lines when they push deep
+        const foePushedDeep = FOE === Team.WEST ? foeFrontX > 450 : foeFrontX < 350;
+        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.2 * DIFF.special) {
+          const dropX = FOE === Team.WEST ? 80 + Math.random() * 120 : CANVAS_WIDTH - 200 + Math.random() * 120;
           const dropY = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
-          spawnUnit(Team.EAST, UnitType.AIRBORNE, { absolutePos: { x: dropX, y: dropY } });
-          moneyRef.current[Team.EAST] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
+          spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: { x: dropX, y: dropY } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
           specialSpawned = true;
         }
 
-        // Tank mines when armor is a threat
-        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3) {
-          const mineX = Math.min(Math.max(westFrontX + 50, 530), 720);
+        // Tank mines when armor is a threat — laid just ahead of the foe's front line
+        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special) {
+          const mineX = ME === Team.EAST
+            ? Math.min(Math.max(foeFrontX + 50, 530), 720)
+            : Math.max(Math.min(foeFrontX - 50, 270), 80);
           const mineY = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
-          spawnUnit(Team.EAST, UnitType.MINE_TANK, { absolutePos: { x: mineX, y: mineY } });
-          moneyRef.current[Team.EAST] -= (UNIT_CONFIG[UnitType.MINE_TANK] as any).cost;
+          spawnUnit(ME, UnitType.MINE_TANK, { absolutePos: { x: mineX, y: mineY } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.MINE_TANK] as any).cost;
           specialSpawned = true;
         }
 
@@ -1584,17 +1606,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const sqId = generateId();
                 for (let si = 0; si < 3; si++) {
                   unitsRef.current.push({
-                    id: generateId(), team: Team.EAST, type: UnitType.SOLDIER,
-                    position: { x: CANVAS_WIDTH - 30, y: HORIZON_Y + 50 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 100) },
+                    id: generateId(), team: ME, type: UnitType.SOLDIER,
+                    position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: HORIZON_Y + 50 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 100) },
                     state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
                     attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
                     spawnTime: Date.now(), isInCover: false, squadId: sqId
                   });
                 }
               } else {
-                spawnUnit(Team.EAST, chosen);
+                spawnUnit(ME, chosen);
               }
-              moneyRef.current[Team.EAST] = Math.max(0, moneyRef.current[Team.EAST] - cost);
+              moneyRef.current[ME] = Math.max(0, moneyRef.current[ME] - cost);
             }
           }
         }
@@ -1663,7 +1685,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
             <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
-              {gameOver === Team.WEST ? 'VICTORY' : 'DEFEAT'}
+              {cpuTeam ? (gameOver !== cpuTeam ? 'VICTORY' : 'DEFEAT') : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
             </h2>
             <div className="text-2xl font-bold text-stone-300">
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!

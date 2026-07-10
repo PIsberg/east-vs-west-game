@@ -131,8 +131,12 @@ const App: React.FC = () => {
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
   const [showSplash, setShowSplash] = useState(true);
   const [splashFading, setSplashFading] = useState(false);
-  const [cpuEnabled, setCpuEnabled] = useState(false);
+  const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
+  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>('off');
   const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
+
+  const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
+  const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const handleStartClick = () => {
     soundService.playIntroJingle();
@@ -147,6 +151,7 @@ const App: React.FC = () => {
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
+    if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
       if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP].includes(type)) setTargetingInfo({ team, type });
@@ -267,7 +272,7 @@ const App: React.FC = () => {
             key={type}
             className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white p-1.5 rounded-lg shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible`}
             onClick={() => handleSpawnRequest(team, type)}
-            disabled={money < UNIT_CONFIG[type].cost}
+            disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
           >
             {icon}
             <span className="font-bold text-[7px] uppercase leading-none mt-0.5">{label}</span>
@@ -356,6 +361,25 @@ const App: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            {/* Side & CPU Opponent Selection */}
+            <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 border border-stone-600 mb-1 flex gap-6 items-center">
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Play As</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlayerSide(Team.WEST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-blue-400 transition-all ${playerSide === Team.WEST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>West</button>
+                  <button onClick={() => setPlayerSide(Team.EAST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-red-400 transition-all ${playerSide === Team.EAST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>East</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">CPU Opponent</p>
+                <div className="flex gap-2">
+                  {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
+                    <button key={l} onClick={() => setCpuLevel(l)} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <button
               className="px-10 py-3 bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black text-lg uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all"
               onClick={handleStartClick}
@@ -373,7 +397,7 @@ const App: React.FC = () => {
           <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
           <div className="flex items-center gap-4">
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
-            <button onClick={() => setCpuEnabled(v => !v)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuEnabled ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuEnabled ? 'ON' : 'OFF'}</button>
+            <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
@@ -385,7 +409,7 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuEnabled={cpuEnabled} mapType={mapType} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
