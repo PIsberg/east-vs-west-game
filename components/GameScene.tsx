@@ -2123,6 +2123,92 @@ const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) =
     return <group>{dashes}</group>;
 };
 
+// Horizon backdrop beyond the playfield: mountains, mesas or a city skyline
+const Backdrop = ({ mapType }: { mapType: MapType }) => {
+    const items = useMemo(() => {
+        const rand = (i: number, s: number) => { const v = Math.sin(i * 91.7 + s * 47.3) * 43758.5453; return v - Math.floor(v); };
+        return Array.from({ length: 14 }, (_, i) => ({
+            x: -150 + rand(i, 1) * 1100,
+            z: -70 - rand(i, 2) * 130,
+            h: 70 + rand(i, 3) * 150,
+            w: 45 + rand(i, 4) * 70,
+        }));
+    }, []);
+
+    if (mapType === MapType.URBAN) {
+        return (
+            <group>
+                {items.map((m, i) => (
+                    <mesh key={i} position={[m.x, m.h / 2, m.z]}>
+                        <boxGeometry args={[m.w, m.h, 30]} />
+                        <meshStandardMaterial color="#334155" roughness={1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+    if (mapType === MapType.DESERT) {
+        return (
+            <group>
+                {items.map((m, i) => (
+                    <mesh key={i} position={[m.x, m.h * 0.35, m.z]}>
+                        <cylinderGeometry args={[m.w * 0.8, m.w * 1.3, m.h * 0.7, 8]} />
+                        <meshStandardMaterial color="#92400e" roughness={1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+    // Countryside / archipelago: mountain range with snow caps on the tall ones
+    return (
+        <group>
+            {items.map((m, i) => (
+                <group key={i} position={[m.x, 0, m.z]}>
+                    <mesh position={[0, m.h * 0.8, 0]}>
+                        <coneGeometry args={[m.w * 1.5, m.h * 1.6, 7]} />
+                        <meshStandardMaterial color="#475569" roughness={1} />
+                    </mesh>
+                    {m.h > 150 && (
+                        <mesh position={[0, m.h * 1.38, 0]}>
+                            <coneGeometry args={[m.w * 0.42, m.h * 0.44, 7]} />
+                            <meshStandardMaterial color="#e2e8f0" roughness={0.9} />
+                        </mesh>
+                    )}
+                </group>
+            ))}
+        </group>
+    );
+};
+
+// Soft clouds drifting slowly across the sky
+const CLOUD_DEFS = Array.from({ length: 7 }, (_, i) => {
+    const r = (s: number) => { const v = Math.sin(i * 53.7 + s * 29.1) * 43758.5453; return v - Math.floor(v); };
+    return { base: r(1) * 1600, y: 250 + r(2) * 110, z: -80 + r(3) * 500, speed: 0.004 + r(4) * 0.005, s: 26 + r(5) * 30 };
+});
+
+const Clouds = () => {
+    const t = Date.now();
+    return (
+        <group>
+            {CLOUD_DEFS.map((c, i) => {
+                const x = ((c.base + t * c.speed) % 1600) - 400;
+                return (
+                    <group key={i} position={[x, c.y, c.z]}>
+                        <mesh scale={[c.s * 2.1, c.s * 0.55, c.s]}>
+                            <sphereGeometry args={[1, 10, 8]} />
+                            <meshStandardMaterial color="white" transparent opacity={0.45} depthWrite={false} />
+                        </mesh>
+                        <mesh position={[c.s * 1.3, 3, c.s * 0.2]} scale={[c.s * 1.2, c.s * 0.45, c.s * 0.7]}>
+                            <sphereGeometry args={[1, 10, 8]} />
+                            <meshStandardMaterial color="white" transparent opacity={0.4} depthWrite={false} />
+                        </mesh>
+                    </group>
+                );
+            })}
+        </group>
+    );
+};
+
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
 const GroundScatter = ({ mapType }: { mapType: MapType }) => {
     const ref = useRef<THREE.InstancedMesh>(null!);
@@ -2273,10 +2359,24 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 shadow-camera-bottom={-600}
             />
 
+            {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
+            <Backdrop mapType={mapType} />
+            <Clouds />
+
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
                 <GroundScatter mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
+                {/* Dirt roads leading up to each bridge */}
+                {terrain.filter(t => t.type === 'bridge').map(b => (
+                    <mesh key={'road-' + b.id} position={[b.x, 0.25, b.y]} rotation={[-Math.PI / 2, 0, 0]}>
+                        <planeGeometry args={[(b.width || 85) + 240, (b.height || 40) * 0.6]} />
+                        <meshStandardMaterial
+                            color={mapType === MapType.URBAN ? '#3f3f46' : mapType === MapType.DESERT ? '#a16207' : '#6b4f2a'}
+                            transparent opacity={0.5} depthWrite={false}
+                        />
+                    </mesh>
+                ))}
                 <BorderLine onCanvasClick={onCanvasClick} />
                 {capture && <CapturePoint3D cap={capture} />}
 
