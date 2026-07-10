@@ -31,6 +31,7 @@ export enum UnitType {
   FIGHTER = 'FIGHTER',
   SATELLITE = 'SATELLITE',
   CRUISE = 'CRUISE',
+  TRANSPORT = 'TRANSPORT',
 }
 
 export enum MapType {
@@ -93,6 +94,8 @@ export interface Unit {
   kills?: number;
   veterancy?: number; // 0=none 1=★ 2=★★ 3=★★★
   lastAttackerId?: string;
+  passengers?: Unit[]; // Transport cargo (units removed from the field while riding)
+  boarded?: boolean;   // True while riding in a transport
 }
 
 export interface Projectile {

@@ -26,6 +26,12 @@ export type SpawnLane = 'top' | 'mid' | 'bot';
 // interval: spawn-cadence multiplier · incomeBonus: extra money per tick · special: tactics-chance multiplier
 export const BRIDGE_HP = 320;
 
+// Foot units a Transport can carry
+const TRANSPORTABLE = new Set([
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
+]);
+
 const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number }> = {
   easy:   { interval: 1.7,  incomeBonus: 0,    special: 0.4 },
   normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0 },
@@ -965,6 +971,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // TRANSPORT: board nearby foot soldiers in your own half, unload at the front
+      if (unit.type === UnitType.TRANSPORT) {
+        unit.passengers = unit.passengers || [];
+        const cap = (UNIT_CONFIG[UnitType.TRANSPORT] as any).capacity || 6;
+        const inOwnHalf = unit.team === Team.WEST ? unit.position.x < CANVAS_WIDTH * 0.5 : unit.position.x > CANVAS_WIDTH * 0.5;
+
+        if (unit.passengers.length < cap && inOwnHalf) {
+          spatialHash.current.queryCallback(unit.position.x, unit.position.y, 44, o => {
+            if (unit.passengers!.length >= cap) return;
+            if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
+            if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return; // still descending
+            o.boarded = true;
+            o.isInCover = false;
+            unit.passengers!.push(o);
+          });
+        }
+
+        if (unit.passengers.length > 0) {
+          const enemyNear = spatialHash.current.query(unit.position.x, unit.position.y, 230)
+            .some(o => o.team !== unit.team && o.type !== UnitType.NAPALM && o.type !== UnitType.MINE_PERSONAL && o.type !== UnitType.MINE_TANK);
+          const deepEnough = unit.team === Team.WEST ? unit.position.x > CANVAS_WIDTH * 0.62 : unit.position.x < CANVAS_WIDTH * 0.38;
+          const badlyHurt = unit.health < unit.maxHealth * 0.4;
+          if (enemyNear || deepEnough || badlyHurt) {
+            unit.passengers.forEach((p, idx) => {
+              p.boarded = false;
+              p.state = UnitState.MOVING;
+              p.position.x = unit.position.x - (unit.team === Team.WEST ? 1 : -1) * 14 + ((idx % 3) - 1) * 16;
+              p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, unit.position.y + (Math.floor(idx / 3) - 0.5) * 26));
+              unitsRef.current.push(p);
+            });
+            unit.passengers = [];
+            soundService.playSpawnSound(unit.team === Team.EAST);
+          }
+        }
+      }
+
       const config = UNIT_CONFIG[unit.type] as any;
       const currentScale = getScaleAt(unit.position.y);
       if (unit.isOnHill === undefined || isSearchTick(unit)) {
@@ -972,7 +1014,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY ||
         unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA ||
-        unit.type === UnitType.JEEP;
+        unit.type === UnitType.JEEP || unit.type === UnitType.TRANSPORT;
 
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
@@ -1419,7 +1461,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
           let target = null;
 
-          if (unit.type === UnitType.FLAMETHROWER) {
+          if (unit.type === UnitType.TRANSPORT) {
+            // Unarmed — just drives
+          } else if (unit.type === UnitType.FLAMETHROWER) {
             // AoE instant fire — damages all enemies in short range, ignores cover
             const victims = spatialHash.current.query(unit.position.x, unit.position.y, range);
             let fired = false;
@@ -1834,6 +1878,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
     deadUnits.forEach(u => {
+      // Destroyed transports spill their passengers, shaken but alive
+      if (u.type === UnitType.TRANSPORT && u.passengers?.length) {
+        u.passengers.forEach((p, idx) => {
+          p.boarded = false;
+          p.health = Math.max(1, Math.floor(p.health * 0.5));
+          p.lastHitTime = Date.now();
+          p.state = UnitState.MOVING;
+          p.position.x = u.position.x + ((idx % 3) - 1) * 18;
+          p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + (Math.floor(idx / 3) - 0.5) * 26));
+          unitsRef.current.push(p);
+        });
+        u.passengers = [];
+      }
       if (u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
         statsRef.current[u.team].lost++;
         const ts = typeStatsRef.current[u.team];
@@ -1905,7 +1962,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
         u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
         u.type === UnitType.MORTAR;
-      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP;
+      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP || u.type === UnitType.TRANSPORT;
       if (isInfantryDeath || isVehicleDeath) {
         particlesRef.current.push({
           id: generateId(),
@@ -1959,7 +2016,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    unitsRef.current = unitsRef.current.filter(u => u.health > 0);
+    unitsRef.current = unitsRef.current.filter(u => u.health > 0 && !u.boarded);
 
     // CPU AI — strategic commander for either side (or both, in spectator mode)
     for (const ME of cpuRef.current.teams) {
@@ -2042,6 +2099,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         add(UnitType.JEEP, 2);
         add(UnitType.MORTAR, 1);
         add(UnitType.FIGHTER, 1);
+        if (myInfCount >= 4) add(UnitType.TRANSPORT, 2);
 
         // --- Special tactics (override normal spawn with a chance) ---
         let specialSpawned = false;

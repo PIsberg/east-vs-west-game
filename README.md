@@ -46,6 +46,7 @@ The first team to reach **100 Points** wins.
 | Unit | Role | Weakness |
 | :--- | :--- | :--- |
 | **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
+| **Truck** | **Troop transport**. Scoops up 6 foot soldiers in your half, delivers them to the front. Unarmed; survivors bail out if it dies. | Everything. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
 | **Artillery** | **Siege Unit**. Massive range & Splash damage. Stationary when firing. | Fast units, Air attacks. |
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |

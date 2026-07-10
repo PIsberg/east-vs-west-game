@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 import { soundService } from './services/audio';
 
@@ -292,6 +292,7 @@ const App: React.FC = () => {
       [UnitType.FIGHTER]: [<Plane size={8} key="p" />, <Radio size={8} key="r" />],
       [UnitType.SATELLITE]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
       [UnitType.CRUISE]: [<Shield size={8} key="s" />, <Building2 size={8} key="b" />],
+      [UnitType.TRANSPORT]: [<User size={8} key="u" />, <FastForward size={8} key="f" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
@@ -383,6 +384,7 @@ const App: React.FC = () => {
         ])}
         {renderGroup("Vehicles", [
           { type: UnitType.JEEP, label: "JEEP", icon: <Car size={16} /> },
+          { type: UnitType.TRANSPORT, label: "TRUCK", icon: <Bus size={16} /> },
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },

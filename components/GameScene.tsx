@@ -1359,7 +1359,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
 
                 {/* JEEP — fast recon 4x4 with roll cage and mounted MG */}
                 {unit.type === UnitType.JEEP && (
-                    <group>
+                    <group scale={0.82}>
                         {/* Body */}
                         <mesh position={[0, 8, 0]} castShadow receiveShadow>
                             <boxGeometry args={[26, 7, 15]} />
@@ -1405,6 +1405,51 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                                     <cylinderGeometry args={[1.8, 1.8, 0.5, 8]} />
                                     <meshStandardMaterial color="#52525b" />
                                 </mesh>
+                            </mesh>
+                        ))}
+                    </group>
+                )}
+
+                {/* TRANSPORT — canvas-topped troop truck; pips show riders aboard */}
+                {unit.type === UnitType.TRANSPORT && (
+                    <group>
+                        {/* Cab */}
+                        <mesh position={[14, 8, 0]} castShadow>
+                            <boxGeometry args={[10, 9, 16]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        <mesh position={[16.5, 10, 0]} rotation={[0, 0, 0.3]}>
+                            <boxGeometry args={[0.8, 5, 14]} />
+                            <meshStandardMaterial color="#7dd3fc" metalness={0.3} roughness={0.15} transparent opacity={0.8} />
+                        </mesh>
+                        {/* Flatbed */}
+                        <mesh position={[-4, 6.5, 0]} castShadow receiveShadow>
+                            <boxGeometry args={[26, 6, 17]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Canvas cover (half-cylinder) */}
+                        <mesh position={[-4, 10, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+                            <cylinderGeometry args={[8.5, 8.5, 26, 12, 1, false, 0, Math.PI]} />
+                            <meshStandardMaterial color="#3f3f2e" roughness={1} side={THREE.DoubleSide} />
+                        </mesh>
+                        {/* Wheels (3 axles) */}
+                        {[[-13, 0], [-3, 0], [13, 0]].map(([wx], i) => (
+                            <group key={i}>
+                                <mesh position={[wx, 4.5, -9.5]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[4.5, 4.5, 4, 12]} />
+                                    <meshStandardMaterial color="#18181b" />
+                                </mesh>
+                                <mesh position={[wx, 4.5, 9.5]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[4.5, 4.5, 4, 12]} />
+                                    <meshStandardMaterial color="#18181b" />
+                                </mesh>
+                            </group>
+                        ))}
+                        {/* Passenger pips over the canvas */}
+                        {Array.from({ length: unit.passengers?.length || 0 }).map((_, i) => (
+                            <mesh key={i} position={[-14 + (i % 6) * 4, 21.5, 0]}>
+                                <sphereGeometry args={[1.3, 6, 6]} />
+                                <meshBasicMaterial color="#fbbf24" toneMapped={false} />
                             </mesh>
                         ))}
                     </group>
