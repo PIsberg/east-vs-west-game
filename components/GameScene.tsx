@@ -417,6 +417,24 @@ const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: st
     );
 };
 
+// Animated infantry legs — swing from the hip while walking
+const InfantryLegs = ({ walking, phase, color = '#333', transparent, opacity }: { walking: boolean, phase: number, color?: string, transparent?: boolean, opacity?: number }) => {
+    const t = Date.now() * 0.013 + phase;
+    const s = walking ? Math.sin(t) : 0;
+    return (
+        <group>
+            {[-1, 1].map(side => (
+                <group key={side} position={[0, 6.5, side * 1.6]} rotation={[0, 0, s * side * 0.55]}>
+                    <mesh position={[0, -4.5, 0]} castShadow>
+                        <boxGeometry args={[2.5, 9, 2.5]} />
+                        <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                    </mesh>
+                </group>
+            ))}
+        </group>
+    );
+};
+
 // Shared Assets
 const MAT_HEALTH_BG = new THREE.MeshBasicMaterial({ color: 'gray' });
 const MAT_HEALTH_FG = new THREE.MeshBasicMaterial({ color: '#22c55e' });
@@ -504,20 +522,33 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                             <mesh position={[4, 10, 2]} rotation={[-0.5, 0, -0.2]}> {/* Aiming arm */}
                                 <boxGeometry args={[2.5, 9, 2.5]} />
                                 <meshStandardMaterial color={color} />
-                                <mesh position={[0, -4, 2]} rotation={[Math.PI / 2, 0, 0]}> {/* Gun */}
-                                    <boxGeometry args={[1, 8, 1]} />
-                                    <meshStandardMaterial color="black" />
+                            </mesh>
+                            {/* Rifle held across, pointing forward (+X) */}
+                            <group position={[4, 11.5, 1]}>
+                                <mesh rotation={[0, 0, Math.PI / 2]}>
+                                    <boxGeometry args={[1.2, 10, 1.2]} />
+                                    <meshStandardMaterial color="#1c1917" />
                                 </mesh>
+                                <mesh position={[-3, -0.8, 0]}> {/* Stock */}
+                                    <boxGeometry args={[3, 2, 1]} />
+                                    <meshStandardMaterial color="#44403c" />
+                                </mesh>
+                                <mesh position={[1, -1.5, 0]}> {/* Magazine */}
+                                    <boxGeometry args={[1, 2.5, 1]} />
+                                    <meshStandardMaterial color="#292524" />
+                                </mesh>
+                                {unit.attackCooldown > (config.attackSpeed - 6) && (
+                                    <group position={[6, 0, 0]}>
+                                        <MuzzleFlash size={0.8} />
+                                    </group>
+                                )}
+                            </group>
+                            {/* Backpack (behind: model faces +X) */}
+                            <mesh position={[-4.2, 10, 0]} castShadow>
+                                <boxGeometry args={[2.2, 6, 4.5]} />
+                                <meshStandardMaterial color="#3f3f46" transparent={transparent} opacity={opacity} />
                             </mesh>
-                            {/* Legs */}
-                            <mesh position={[-2, 2, 0]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
-                            <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
+                            <InfantryLegs walking={walking} phase={walkPhase} transparent={transparent} opacity={opacity} />
                         </group>
                     )
                 }
@@ -686,15 +717,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                     )}
                                 </group>
                             </mesh>
-                            {/* Legs */}
-                            <mesh position={[-3, 2, 0]}>
-                                <boxGeometry args={[3.5, 10, 3.5]} />
-                                <meshStandardMaterial color="#44403c" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[3, 2, -1]} rotation={[0.2, 0, 0]}>
-                                <boxGeometry args={[3.5, 10, 3.5]} />
-                                <meshStandardMaterial color="#44403c" />
-                            </mesh>
+                            <InfantryLegs walking={walking} phase={walkPhase} color="#44403c" transparent={transparent} opacity={opacity} />
                         </group>
                     )
                 }
@@ -729,14 +752,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                     <boxGeometry args={[2.5, 9, 2.5]} />
                                     <meshStandardMaterial color={color} />
                                 </mesh>
-                                <mesh position={[-2, 2, 0]}>
-                                    <boxGeometry args={[2.5, 9, 2.5]} />
-                                    <meshStandardMaterial color="#333" />
-                                </mesh>
-                                <mesh position={[2, 2, 0]}>
-                                    <boxGeometry args={[2.5, 9, 2.5]} />
-                                    <meshStandardMaterial color="#333" />
-                                </mesh>
+                                <InfantryLegs walking={walking} phase={walkPhase} />
                             </group>
 
                             {/* Parachute Check */}
@@ -925,15 +941,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                     </mesh>
                                 </group>
                             </mesh>
-                            {/* Legs (Prone or Standing?) Standing for now */}
-                            <mesh position={[-2, 2, 0]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#3f6212" />
-                            </mesh>
-                            <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#3f6212" />
-                            </mesh>
+                            <InfantryLegs walking={walking} phase={walkPhase} color="#3f6212" />
                         </group>
                     )
                 }
@@ -984,9 +992,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 <meshStandardMaterial color="#78350f" />
                             </mesh>
                         </mesh>
-                        {/* Legs */}
-                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
-                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        <InfantryLegs walking={walking} phase={walkPhase} />
                         {/* Flame glow when attacking */}
                         {unit.attackCooldown > 4 && <pointLight position={[5, 8, 4]} color="#f97316" distance={30} intensity={4} />}
                     </group>
@@ -1020,9 +1026,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                             {/* Medkit */}
                             <mesh position={[0, -5, 1.5]}><boxGeometry args={[4, 3, 3]} /><meshStandardMaterial color="#dc2626" /></mesh>
                         </mesh>
-                        {/* Legs */}
-                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#1f2937" /></mesh>
-                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#1f2937" /></mesh>
+                        <InfantryLegs walking={walking} phase={walkPhase} color="#1f2937" />
                         {/* Healing glow */}
                         {unit.attackCooldown > 30 && <pointLight position={[0, 12, 0]} color="#4ade80" distance={25} intensity={2} />}
                     </group>
@@ -1060,9 +1064,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                                 </mesh>
                             </mesh>
                         </mesh>
-                        {/* Legs */}
-                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
-                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        <InfantryLegs walking={walking} phase={walkPhase} />
                         {/* Defusing glow */}
                         {unit.attackCooldown > (config.attackSpeed - 12) && <pointLight position={[4, 6, 6]} color="#4ade80" distance={30} intensity={3} />}
                     </group>
