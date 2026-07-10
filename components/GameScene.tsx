@@ -27,7 +27,29 @@ interface GameSceneProps {
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
     mapType: MapType;
+    shake?: React.MutableRefObject<number>;
 }
+
+// Jitters the whole world with an absolute, decaying offset. Absolute offsets
+// (not camera deltas) stay compatible with OrbitControls — nothing accumulates.
+const ShakeRig = ({ shake, children }: { shake?: React.MutableRefObject<number>, children: React.ReactNode }) => {
+    const ref = useRef<THREE.Group>(null!);
+    useFrame(() => {
+        if (!ref.current) return;
+        const mag = shake?.current || 0;
+        if (mag > 0.05) {
+            ref.current.position.set(
+                (Math.random() - 0.5) * mag,
+                (Math.random() - 0.5) * mag * 0.4,
+                (Math.random() - 0.5) * mag
+            );
+            if (shake) shake.current = mag * 0.88;
+        } else if (ref.current.position.lengthSq() > 0) {
+            ref.current.position.set(0, 0, 0);
+        }
+    });
+    return <group ref={ref}>{children}</group>;
+};
 
 const RainEffect = () => {
     // Create 1000 rain drops
@@ -1542,7 +1564,7 @@ const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick:
 
 // -- Main Scene Component --
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake }) => {
 
 
 
@@ -1583,26 +1605,28 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 shadow-camera-bottom={-600}
             />
 
-            <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
-            <RiverRenderer terrain={terrain} mapType={mapType} />
-            <BorderLine onCanvasClick={onCanvasClick} />
+            <ShakeRig shake={shake}>
+                <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
+                <RiverRenderer terrain={terrain} mapType={mapType} />
+                <BorderLine onCanvasClick={onCanvasClick} />
 
-            {terrain.map(t => {
-                if (t.type === 'river') return null; // Skip old river segments
-                return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />;
-            })}
+                {terrain.map(t => {
+                    if (t.type === 'river') return null; // Skip old river segments
+                    return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} />;
+                })}
 
-            {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} />)}
+                {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} />)}
 
-            {projectiles.map(p => p.isMissile ? <Projectile3D key={p.id} proj={p} /> : null)}
-            <InstancedProjectiles projectiles={projectiles} />
+                {projectiles.map(p => p.isMissile ? <Projectile3D key={p.id} proj={p} /> : null)}
+                <InstancedProjectiles projectiles={projectiles} />
 
-            {particles.map(p => isSpecialParticle(p) ? <Particle3D key={p.id} p={p} /> : null)}
-            <InstancedParticles particles={particles} />
+                {particles.map(p => isSpecialParticle(p) ? <Particle3D key={p.id} p={p} /> : null)}
+                <InstancedParticles particles={particles} />
 
-            {flyovers.map(f => <Flyover3D key={f.id} fly={f} />)}
+                {flyovers.map(f => <Flyover3D key={f.id} fly={f} />)}
 
-            {missiles.map(m => <Missile3D key={m.id} m={m} />)}
+                {missiles.map(m => <Missile3D key={m.id} m={m} />)}
+            </ShakeRig>
 
             <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />
 

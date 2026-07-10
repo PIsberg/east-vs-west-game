@@ -48,6 +48,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const terraformRef = useRef<TerrainObject[]>([]);
   const missilesRef = useRef<Missile[]>([]);
   const flashOpacity = useRef(0);
+  const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   const cpuTimerRef = useRef(0);
@@ -358,6 +359,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (m.current.y >= m.target.y) {
         const isNuke = !!(m as any).isNuke;
         if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound();
+        shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : 8);
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
         const damage = isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage;
         const radius = isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius;
@@ -522,6 +524,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const lx = 80 + Math.random() * (CANVAS_WIDTH - 160);
       const ly = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
       flashOpacity.current = Math.max(flashOpacity.current, 0.35);
+      shakeRef.current = Math.max(shakeRef.current, 3);
       unitsRef.current.forEach(u => {
         if (Math.sqrt((u.position.x - lx) ** 2 + (u.position.y - ly) ** 2) < 55) {
           u.health -= 25;
@@ -588,6 +591,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (nearbyEnemy) {
           unit.health = 0; // Explode
           soundService.playMineExplosion();
+          shakeRef.current = Math.max(shakeRef.current, unit.type === UnitType.MINE_TANK ? 6 : 4);
           // Explosion Effect
           for (let k = 0; k < 12; k++) {
             particlesRef.current.push({
@@ -1252,6 +1256,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Area Damage (Explosion Radius)
         if (p.explosionRadius) {
+          shakeRef.current = Math.max(shakeRef.current, Math.min(5, p.explosionRadius * 0.06));
           // Artillery / Heavy Weapon Scorch Mark
           if (p.sourceType === UnitType.ARTILLERY || p.sourceType === UnitType.MISSILE_STRIKE) {
             particlesRef.current.push({
@@ -1566,6 +1571,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         targetingInfo={targetingInfo}
         weather={weatherRef.current}
         mapType={mapType}
+        shake={shakeRef}
       />
 
       {flashOpacity.current > 0 && (
