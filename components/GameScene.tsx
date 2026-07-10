@@ -447,9 +447,16 @@ const InfantryLegs = ({ walking, phase, color = '#333', transparent, opacity }: 
 };
 
 // Shared Assets
-const MAT_HEALTH_BG = new THREE.MeshBasicMaterial({ color: 'gray' });
-const MAT_HEALTH_FG = new THREE.MeshBasicMaterial({ color: '#22c55e' });
+const MAT_HEALTH_BG = new THREE.MeshBasicMaterial({ color: '#1c1917' });
+const MAT_HEALTH_HI = new THREE.MeshBasicMaterial({ color: '#22c55e' });
+const MAT_HEALTH_MID = new THREE.MeshBasicMaterial({ color: '#eab308' });
+const MAT_HEALTH_LOW = new THREE.MeshBasicMaterial({ color: '#ef4444' });
 const GEO_HEALTH_BAR = new THREE.BoxGeometry(1, 3, 1);
+const GEO_TEAM_RING = new THREE.RingGeometry(0.85, 1, 24);
+const MAT_RING_WEST = new THREE.MeshBasicMaterial({ color: '#3b82f6', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
+const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
+const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
+const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
 const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void }) => {
     const config = UNIT_CONFIG[unit.type] as any;
@@ -498,14 +505,40 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
     return (
         <ClickableGroup position={[position[0], position[1] + yOffset + bobY, position[2]]} rotation={rotation as any} onCanvasClick={onCanvasClick}>
             <group receiveShadow castShadow rotation={[0, 0, bobTilt]}>
-                {/* Health Bar (Floating) - Optimized via Scale */}
-                <mesh position={[0, 20, 0]} scale={[20, 1, 1]} geometry={GEO_HEALTH_BAR} material={MAT_HEALTH_BG} />
-                <mesh
-                    position={[-10 + 10 * (unit.health / unit.maxHealth), 20, 0.5]}
-                    scale={[Math.max(0.01, 20 * (unit.health / unit.maxHealth)), 1, 1]}
-                    geometry={GEO_HEALTH_BAR}
-                    material={MAT_HEALTH_FG}
-                />
+                {/* Health Bar — hidden at full health, color shifts as damage mounts */}
+                {unit.health < unit.maxHealth && (
+                    <group>
+                        <mesh position={[0, 20, 0]} scale={[20, 1, 1]} geometry={GEO_HEALTH_BAR} material={MAT_HEALTH_BG} />
+                        <mesh
+                            position={[-10 + 10 * (unit.health / unit.maxHealth), 20, 0.5]}
+                            scale={[Math.max(0.01, 20 * (unit.health / unit.maxHealth)), 1, 1]}
+                            geometry={GEO_HEALTH_BAR}
+                            material={unit.health / unit.maxHealth > 0.6 ? MAT_HEALTH_HI : unit.health / unit.maxHealth > 0.3 ? MAT_HEALTH_MID : MAT_HEALTH_LOW}
+                        />
+                    </group>
+                )}
+
+                {/* Team ring on the ground (skip hidden traps) */}
+                {unit.type !== UnitType.MINE_PERSONAL && unit.type !== UnitType.MINE_TANK && unit.type !== UnitType.NAPALM && (
+                    <mesh
+                        position={[0, -yOffset - bobY + 0.5, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={[unit.width * 0.75 + 6, unit.width * 0.75 + 6, 1]}
+                        geometry={GEO_TEAM_RING}
+                        material={isWest ? MAT_RING_WEST : MAT_RING_EAST}
+                    />
+                )}
+
+                {/* Soft shadow blob under aircraft */}
+                {config.isFlying && (
+                    <mesh
+                        position={[0, -yOffset - bobY - terrainH + 0.3, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={[unit.width * 0.5, unit.width * 0.5, 1]}
+                        geometry={GEO_AO_BLOB}
+                        material={MAT_AO_BLOB}
+                    />
+                )}
 
                 {/* Geometry based on Type */}
                 {
@@ -1550,6 +1583,18 @@ const TerrainItem = ({ item, onCanvasClick }: { item: TerrainObject, onCanvasCli
                     <cylinderGeometry args={[plateauRadius, radius, height, 32]} />
                     <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
                 </mesh>
+                {/* Worn plateau cap */}
+                <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[plateauRadius * 0.85, 24]} />
+                    <meshStandardMaterial color="#3f6212" roughness={1} />
+                </mesh>
+                {/* Rocky outcrops on the slope */}
+                {[0.9, 2.4, 4.1].map((a, i) => (
+                    <mesh key={i} position={[Math.cos(a) * radius * 0.75, -height * 0.2, Math.sin(a) * radius * 0.75]} castShadow>
+                        <dodecahedronGeometry args={[radius * 0.12, 0]} />
+                        <meshStandardMaterial color="#57534e" roughness={1} />
+                    </mesh>
+                ))}
             </ClickableGroup>
         );
     } else if (item.type === 'rock') {
