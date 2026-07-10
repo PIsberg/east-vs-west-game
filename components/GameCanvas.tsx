@@ -623,7 +623,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (unit.type === UnitType.MINE_PERSONAL || unit.type === UnitType.MINE_TANK) {
         const radius = unit.type === UnitType.MINE_PERSONAL ? 25 : 40;
         const damage = unit.type === UnitType.MINE_PERSONAL ? 50 : 120;
-        const nearbyEnemy = unitsRef.current.find(e => e.team !== unit.team && e.type !== UnitType.AIRBORNE && Math.sqrt((e.position.x - unit.position.x) ** 2 + (e.position.y - unit.position.y) ** 2) < radius);
+        const nearbyEnemy = unitsRef.current.find(e => e.team !== unit.team && e.type !== UnitType.AIRBORNE && e.type !== UnitType.ENGINEER && Math.sqrt((e.position.x - unit.position.x) ** 2 + (e.position.y - unit.position.y) ** 2) < radius);
 
         if (nearbyEnemy) {
           unit.health = 0; // Explode
@@ -1085,6 +1085,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               }
             });
             if (fired) { soundService.playFlameSound(); unit.attackCooldown = config.attackSpeed; }
+          } else if (unit.type === UnitType.ENGINEER) {
+            // Defuse the nearest enemy mine in detection range (mines don't trigger on engineers)
+            const mine = unitsRef.current.find(m =>
+              m.team !== unit.team &&
+              (m.type === UnitType.MINE_PERSONAL || m.type === UnitType.MINE_TANK) &&
+              Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2) < range
+            );
+            if (mine) {
+              mine.health = 0; // removed without detonating
+              soundService.playHitSound();
+              for (let dp = 0; dp < 6; dp++) {
+                particlesRef.current.push({
+                  id: generateId(),
+                  position: { x: mine.position.x + (Math.random() - 0.5) * 10, y: mine.position.y + (Math.random() - 0.5) * 10 },
+                  velocity: { x: (Math.random() - 0.5) * 1.2, y: -Math.random() * 1.2 },
+                  drag: 0.9,
+                  life: 22,
+                  color: '#4ade80',
+                  size: 3 + Math.random() * 2
+                });
+              }
+              unit.attackCooldown = config.attackSpeed;
+            }
           } else if (unit.type === UnitType.MEDIC) {
             // Heal nearest low-HP friendly instead of attacking
             const friends = spatialHash.current.query(unit.position.x, unit.position.y, range)
@@ -1419,7 +1442,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
       } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
-                 u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC) {
+                 u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER) {
         // Troops Scream & Blood
         soundService.playScreamSound();
         particlesRef.current.push({
@@ -1434,7 +1457,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Corpse / wreck left on the battlefield
       const cfg = UNIT_CONFIG[u.type] as any;
       const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
-        u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC;
+        u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER;
       const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC;
       if (isInfantryDeath || isVehicleDeath) {
         particlesRef.current.push({
@@ -1528,6 +1551,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // --- Support ---
         if (!myHasMedic && myInfCount >= 3) add(UnitType.MEDIC, 5);
+        const foeMines = foeUnits.filter(u => u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK).length;
+        if (foeMines >= 2) add(UnitType.ENGINEER, 5);
+        else if (foeMines >= 1) add(UnitType.ENGINEER, 2);
 
         // --- General composition ---
         add(UnitType.TANK, 3);

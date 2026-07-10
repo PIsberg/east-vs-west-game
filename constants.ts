@@ -238,6 +238,18 @@ export const UNIT_CONFIG = {
     colorWest: '#15803d',
     colorEast: '#b91c1c',
   },
+  [UnitType.ENGINEER]: {
+    cost: 55,
+    health: 28,
+    damage: 0,
+    speed: 0.5,
+    range: 80, // mine detection radius
+    attackSpeed: 80, // disarm time
+    width: 16,
+    height: 16,
+    colorWest: '#ca8a04',
+    colorEast: '#b45309',
+  },
   [UnitType.APC]: {
     cost: 95,
     health: 150,

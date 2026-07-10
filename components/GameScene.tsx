@@ -415,7 +415,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
 
     // Walk bob for infantry on the move
     const isInfantry = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO || unit.type === UnitType.SNIPER ||
-        unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE;
+        unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE ||
+        unit.type === UnitType.ENGINEER;
     const walkPhase = (unit.id.charCodeAt(0) * 13 + (unit.id.charCodeAt(1) || 0) * 7) % 100;
     const walking = isInfantry && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
     const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
@@ -989,6 +990,46 @@ const Unit3D = ({ unit, terrain, onCanvasClick }: { unit: Unit, terrain: Terrain
                         <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#1f2937" /></mesh>
                         {/* Healing glow */}
                         {unit.attackCooldown > 30 && <pointLight position={[0, 12, 0]} color="#4ade80" distance={25} intensity={2} />}
+                    </group>
+                )}
+
+                {/* ENGINEER — soldier with hard hat and mine-detector wand */}
+                {unit.type === UnitType.ENGINEER && (
+                    <group>
+                        {/* Head with hard hat */}
+                        <mesh position={[0, 16, 0]} castShadow>
+                            <sphereGeometry args={[3.5, 16, 16]} />
+                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
+                            <mesh position={[0, 1.5, 0]}>
+                                <cylinderGeometry args={[4.2, 4.2, 2]} />
+                                <meshStandardMaterial color="#facc15" transparent={transparent} opacity={opacity} />
+                            </mesh>
+                        </mesh>
+                        {/* Body (hi-vis vest) */}
+                        <mesh position={[0, 9, 0]} castShadow>
+                            <boxGeometry args={[6, 10, 4]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                        </mesh>
+                        {/* Arms — one holds the detector forward */}
+                        <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color={color} transparent={transparent} opacity={opacity} /></mesh>
+                        <mesh position={[4, 10, 1]} rotation={[-0.6, 0, -0.2]}>
+                            <boxGeometry args={[2.5, 9, 2.5]} />
+                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                            {/* Detector pole + sweeping disc */}
+                            <mesh position={[0, -6, 3]} rotation={[Math.PI / 2.6, 0, 0]}>
+                                <cylinderGeometry args={[0.4, 0.4, 12]} />
+                                <meshStandardMaterial color="#78716c" />
+                                <mesh position={[0, 7, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                                    <cylinderGeometry args={[3, 3, 0.8]} />
+                                    <meshStandardMaterial color="#57534e" />
+                                </mesh>
+                            </mesh>
+                        </mesh>
+                        {/* Legs */}
+                        <mesh position={[-2, 2, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        <mesh position={[2, 2, -1]} rotation={[0.2, 0, 0]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="#333" /></mesh>
+                        {/* Defusing glow */}
+                        {unit.attackCooldown > (config.attackSpeed - 12) && <pointLight position={[4, 6, 6]} color="#4ade80" distance={30} intensity={3} />}
                     </group>
                 )}
 

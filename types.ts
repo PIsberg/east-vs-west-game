@@ -22,6 +22,7 @@ export enum UnitType {
   TESLA = 'TESLA',
   FLAMETHROWER = 'FLAMETHROWER',
   MEDIC = 'MEDIC',
+  ENGINEER = 'ENGINEER',
   APC = 'APC',
   BUNKER = 'BUNKER',
   GUNSHIP = 'GUNSHIP',

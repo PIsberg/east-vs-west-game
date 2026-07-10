@@ -36,7 +36,8 @@ The first team to reach **100 Points** wins.
 | **Squad** | Basic grunts. Cheap & swarmable. | Splash damage, Snipers. |
 | **Sniper** | **Long Range** specialist. High damage, slow reload. 30% Miss chance. | Swarms, Close combat. |
 | **Rambo** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
-| **P. Mine** | Hidden trap. Explodes on contact. | Detectors (None yet), Luck. |
+| **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
+| **Engineer** | Detects & defuses enemy mines. Unarmed. | Everything that shoots. |
 
 ### Vehicles
 | Unit | Role | Weakness |

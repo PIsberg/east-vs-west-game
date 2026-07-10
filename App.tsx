@@ -259,6 +259,7 @@ const App: React.FC = () => {
       [UnitType.TESLA]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.FLAMETHROWER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MEDIC]: [<Heart size={8} key="h" />],
+      [UnitType.ENGINEER]: [<PersonalMineIcon size={8} key="m" />, <TankMineIcon size={8} key="t" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
@@ -298,6 +299,7 @@ const App: React.FC = () => {
           { type: UnitType.RAMBO, label: "RAMBO", icon: <BandanaIcon size={16} />, special: true },
           { type: UnitType.FLAMETHROWER, label: "FLAMER", icon: <Flame size={16} /> },
           { type: UnitType.MEDIC, label: "MEDIC", icon: <Heart size={16} /> },
+          { type: UnitType.ENGINEER, label: "ENGINEER", icon: <ShieldAlert size={16} /> },
           { type: UnitType.MINE_PERSONAL, label: "P.MINE", icon: <PersonalMineIcon size={14} /> },
         ])}
         {renderGroup("Vehicles", [
