@@ -523,7 +523,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
-            <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Engineers repair them.</li>
+            <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>

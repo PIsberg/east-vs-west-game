@@ -1869,6 +1869,30 @@ const Blinker = ({ position, size = 0.8, period = 900 }: { position: [number, nu
     );
 };
 
+// Bobbing wrench over a broken bridge: "send an engineer here"
+const RepairMarker = () => {
+    const ref = useRef<THREE.Group>(null!);
+    useFrame(() => {
+        if (ref.current) {
+            ref.current.position.y = 28 + Math.sin(Date.now() * 0.004) * 4;
+            ref.current.rotation.y = Date.now() * 0.002;
+        }
+    });
+    return (
+        <group ref={ref} position={[0, 28, 0]}>
+            {/* Wrench: open ring head + angled handle */}
+            <mesh rotation={[0, 0, Math.PI / 4]}>
+                <torusGeometry args={[3, 1.1, 6, 12, Math.PI * 1.5]} />
+                <meshBasicMaterial color="#fbbf24" toneMapped={false} />
+            </mesh>
+            <mesh position={[3.2, -3.2, 0]} rotation={[0, 0, Math.PI / 4]}>
+                <boxGeometry args={[2, 9, 2]} />
+                <meshBasicMaterial color="#fbbf24" toneMapped={false} />
+            </mesh>
+        </group>
+    );
+};
+
 const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObject, itemState?: TerrainObject['state'], itemHealth?: number, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
     // River handled by RiverRenderer now
     // if (item.type === 'river') { ... } 
@@ -1889,6 +1913,7 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                         <boxGeometry args={[width * 0.42, 1, height]} />
                         <meshStandardMaterial color="#292524" roughness={1} />
                     </mesh>
+                    <RepairMarker />
                 </group>
             );
         }

@@ -865,6 +865,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       particlesRef.current.push({ id: generateId(), position: { x: lx, y: ly }, life: 12, color: '#e0f2fe', size: 3, isBolt: true });
     }
 
+    // Bridges self-repair very slowly (~1 min to reopen) so a bridge-less
+    // stalemate can never lock the game; engineers do the same job in seconds.
+    if (tickCountRef.current % 10 === 0) {
+      terrainRef.current.forEach(b => {
+        if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) return;
+        b.health = Math.min(BRIDGE_HP, (b.health ?? 0) + 0.5);
+        if (b.state === 'broken' && b.health >= BRIDGE_HP * 0.5) b.state = 'normal';
+      });
+    }
+
     // Terrain Logic (Burning & Destruction)
     terrainRef.current.forEach(t => {
       if (t.type === 'tree') {
@@ -1069,18 +1079,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
 
-          // ENGINEER: walk to the nearest job (enemy mine or damaged bridge) in a wide radius
+          // ENGINEER: walk to the nearest job — mines within 260px, broken
+          // bridges from anywhere on the map (repair is his headline job)
           if (!movingToHill && unit.type === UnitType.ENGINEER && isSearchTick(unit)) {
-            let jobX: number | null = null, jobY = 0, jobDist = 260;
+            let jobX: number | null = null, jobY = 0, jobDist = Infinity;
             for (const m of unitsRef.current) {
               if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
               const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
-              if (d < jobDist) { jobDist = d; jobX = m.position.x; jobY = m.position.y; }
+              if (d < 260 && d < jobDist) { jobDist = d; jobX = m.position.x; jobY = m.position.y; }
             }
             for (const b of terrainRef.current) {
               if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
+              // Fully broken bridges attract engineers map-wide; partial damage only nearby
+              const cap = b.state === 'broken' ? 4000 : 300;
               const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
-              if (d < jobDist) { jobDist = d; jobX = b.x; jobY = b.y; }
+              if (d < cap && d < jobDist) { jobDist = d; jobX = b.x; jobY = b.y; }
             }
             if (jobX !== null && jobDist > 45) {
               const a = Math.atan2(jobY - unit.position.y, jobX - unit.position.x);

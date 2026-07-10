@@ -71,7 +71,7 @@ The first team to reach **100 Points** wins.
 - **Hills**: Units on hills get **+30% Range** and **-20% Reload Time**. Key for artillery.
 - **Cover (Trees/Rocks)**: Infantry will automatically seek cover. Reduces incoming damage by **60%**.
 - **River**: Slows down infantry. Vehicles MUST use bridges to cross.
-- **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until an Engineer repairs the bridge (infantry can wade, slowly).
+- **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 
 ---
