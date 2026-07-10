@@ -41,6 +41,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
 
+  // Responsive 16:9 viewport — R3F resizes the canvas, clicks stay correct via raycasting
+  const [viewSize, setViewSize] = useState({ w: 800, h: 450 });
+  useEffect(() => {
+    const compute = () => {
+      const availW = window.innerWidth - 270;  // side unit-button columns
+      const availH = window.innerHeight - 230; // header + info panel
+      let w = Math.min(availW, availH * (800 / 450));
+      w = Math.max(640, Math.min(1440, w));
+      setViewSize({ w: Math.round(w), h: Math.round(w * (450 / 800)) });
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, []);
+
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
   const terrainRef = useRef<TerrainObject[]>([]);
@@ -1621,7 +1636,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [tick]);
 
   return (
-    <div className="w-[800px] h-[450px] rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900 overflow-hidden relative">
+    <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900 overflow-hidden relative">
       <GameScene
         units={unitsRef.current}
         projectiles={projectilesRef.current}
