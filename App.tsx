@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
-import { Team, GameState, UnitType, MapType } from './types';
-import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
+import { Team, GameState, UnitType, MapType, GameMode } from './types';
+import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
 import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 import { soundService } from './services/audio';
@@ -136,6 +136,7 @@ const App: React.FC = () => {
   const [gameSpeed, setGameSpeed] = useState<1 | 2>(1);
   const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
   const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>('off');
+  const [gameMode, setGameMode] = useState<GameMode>('points');
   const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
@@ -398,6 +399,13 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Win Mode</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
+                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                </div>
+              </div>
+              <div>
                 <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">CPU Opponent</p>
                 <div className="flex gap-2">
                   {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
@@ -418,7 +426,7 @@ const App: React.FC = () => {
       )}
 
       <div className="w-full max-w-4xl flex justify-between items-center mb-3 bg-stone-800 p-3 rounded-lg shadow-lg border border-stone-600">
-        <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">Score: {gameState.score[Team.WEST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
           <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
           <div className="flex items-center gap-4">
@@ -438,11 +446,11 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">Score: {gameState.score[Team.EAST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
+        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeam={cpuTeam} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">

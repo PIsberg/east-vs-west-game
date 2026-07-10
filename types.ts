@@ -136,7 +136,13 @@ export interface GameState {
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
   captureOwner?: Team | null;
+  baseHP?: {
+    [Team.WEST]: number;
+    [Team.EAST]: number;
+  };
 }
+
+export type GameMode = 'points' | 'basehp';
 
 export interface CapturePoint {
   x: number;

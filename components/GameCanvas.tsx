@@ -11,9 +11,10 @@ import {
   MAX_SCALE,
   HILL_RANGE_BONUS,
   HILL_RELOAD_BONUS,
-  WIN_SCORE
+  WIN_SCORE,
+  BASE_HP
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -40,6 +41,7 @@ interface GameCanvasProps {
   mapType: MapType;
   paused: boolean;
   gameSpeed: 1 | 2;
+  gameMode: GameMode;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -53,6 +55,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   mapType,
   paused,
   gameSpeed,
+  gameMode,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -98,6 +101,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.EAST]: { built: 0, lost: 0 },
   });
   const matchStartRef = useRef(Date.now());
+  const baseHPRef = useRef({ [Team.WEST]: BASE_HP, [Team.EAST]: BASE_HP });
+  const gameModeRef = useRef<GameMode>(gameMode);
+  useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
 
   useEffect(() => { cpuRef.current = { team: cpuTeam, difficulty: cpuDifficulty }; }, [cpuTeam, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
@@ -1298,7 +1304,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       unit.attackCooldown = Math.max(0, unit.attackCooldown - 1);
 
       if ((unit.team === Team.WEST && unit.position.x > CANVAS_WIDTH) || (unit.team === Team.EAST && unit.position.x < 0)) {
-        scoreRef.current[unit.team] += unit.type === UnitType.TANK ? 3 : 1;
+        const breakthroughValue = unit.type === UnitType.TANK ? 3 : 1;
+        if (gameModeRef.current === 'basehp') {
+          const defender = unit.team === Team.WEST ? Team.EAST : Team.WEST;
+          baseHPRef.current[defender] = Math.max(0, baseHPRef.current[defender] - breakthroughValue);
+          if (baseHPRef.current[defender] <= 0 && !gameOverRef.current) setGameOver(unit.team);
+        } else {
+          scoreRef.current[unit.team] += breakthroughValue;
+        }
 
         // Dollar Sign Animation
         particlesRef.current.push({
@@ -1311,8 +1324,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           text: '$'
         });
 
-        // Win Condition Check
-        if (scoreRef.current[unit.team] >= WIN_SCORE) {
+        // Win Condition Check (points mode)
+        if (gameModeRef.current === 'points' && scoreRef.current[unit.team] >= WIN_SCORE) {
           setGameOver(unit.team);
         }
 
@@ -1561,7 +1574,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Battlefield snapshot (computed every frame for adaptive timing)
       const myActive = unitsRef.current.filter(u => u.team === ME && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
       const foeActive = unitsRef.current.filter(u => u.team === FOE && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
-      const scoreDiff = scoreRef.current[ME] - scoreRef.current[FOE]; // + = CPU winning
+      const scoreDiff = gameModeRef.current === 'basehp'
+        ? baseHPRef.current[ME] - baseHPRef.current[FOE]  // + = CPU winning
+        : scoreRef.current[ME] - scoreRef.current[FOE];   // + = CPU winning
 
       // Adaptive spawn rate: faster when losing or outnumbered
       const isUnderPressure = myActive.length < foeActive.length - 2 || scoreDiff < -12;
@@ -1707,7 +1722,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, captureOwner: captureRef.current.owner });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, captureOwner: captureRef.current.owner, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
     }
   }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
@@ -1783,9 +1798,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               <div></div>
               <div className="font-bold text-blue-400 text-center uppercase">West</div>
               <div className="font-bold text-red-400 text-center uppercase">East</div>
-              <div className="text-stone-500 uppercase text-xs pt-0.5">Score</div>
-              <div className="text-center font-mono">{scoreRef.current[Team.WEST]}</div>
-              <div className="text-center font-mono">{scoreRef.current[Team.EAST]}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">{gameMode === 'basehp' ? 'Base HP' : 'Score'}</div>
+              <div className="text-center font-mono">{gameMode === 'basehp' ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST]}</div>
+              <div className="text-center font-mono">{gameMode === 'basehp' ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST]}</div>
               <div className="text-stone-500 uppercase text-xs pt-0.5">Units Built</div>
               <div className="text-center font-mono">{statsRef.current[Team.WEST].built}</div>
               <div className="text-center font-mono">{statsRef.current[Team.EAST].built}</div>
