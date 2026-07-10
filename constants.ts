@@ -11,6 +11,7 @@ export const FPS = 60;
 export const MILLISECONDS_PER_FRAME = 1000 / FPS;
 
 export const WIN_SCORE = 100;
+export const BASE_HP = 50; // Base HP mode: breakthroughs damage the defender's base instead of scoring
 
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
@@ -41,7 +42,7 @@ export const UNIT_CONFIG = {
   [UnitType.ARTILLERY]: {
     cost: 80,
     health: 45,
-    damage: 30,
+    damage: 38,
     explosionRadius: 65,
     speed: 0.2,
     deployDistance: 80,
@@ -80,7 +81,7 @@ export const UNIT_CONFIG = {
   [UnitType.SNIPER]: {
     cost: 90,
     health: 20,
-    damage: 80,
+    damage: 95,
     speed: 0.35,
     range: 350,
     attackSpeed: 180,
@@ -91,8 +92,8 @@ export const UNIT_CONFIG = {
   },
   [UnitType.AIRBORNE]: {
     cost: 70,
-    health: 20,
-    damage: 14,
+    health: 28,
+    damage: 16,
     speed: 0.6,
     range: 160,
     attackSpeed: 48,
@@ -166,7 +167,7 @@ export const UNIT_CONFIG = {
   [UnitType.DRONE]: {
     cost: 45,
     health: 25,
-    damage: 25,
+    damage: 35,
     speed: 2.2,
     range: 30,
     attackSpeed: 45,
@@ -177,7 +178,7 @@ export const UNIT_CONFIG = {
     isFlying: true
   },
   [UnitType.ANTI_AIR]: {
-    cost: 65,
+    cost: 80,
     health: 55,
     damage: 60,
     speed: 0.5,
@@ -214,9 +215,9 @@ export const UNIT_CONFIG = {
     colorEast: '#65a30d',
   },
   [UnitType.FLAMETHROWER]: {
-    cost: 65,
+    cost: 70,
     health: 32,
-    damage: 10,
+    damage: 8,
     speed: 0.42,
     range: 88,
     attackSpeed: 10,
@@ -238,10 +239,22 @@ export const UNIT_CONFIG = {
     colorWest: '#15803d',
     colorEast: '#b91c1c',
   },
+  [UnitType.ENGINEER]: {
+    cost: 55,
+    health: 28,
+    damage: 0,
+    speed: 0.5,
+    range: 80, // mine detection radius
+    attackSpeed: 80, // disarm time
+    width: 16,
+    height: 16,
+    colorWest: '#ca8a04',
+    colorEast: '#b45309',
+  },
   [UnitType.APC]: {
     cost: 95,
     health: 150,
-    damage: 18,
+    damage: 24,
     speed: 0.52,
     range: 165,
     attackSpeed: 52,
@@ -275,11 +288,89 @@ export const UNIT_CONFIG = {
     colorWest: '#1e293b',
     colorEast: '#1e293b',
   },
+  [UnitType.MORTAR]: {
+    cost: 75,
+    health: 24,
+    damage: 26,
+    explosionRadius: 40,
+    speed: 0.4,
+    range: 320,
+    attackSpeed: 240,
+    width: 16,
+    height: 16,
+    colorWest: '#365314',
+    colorEast: '#7f1d1d',
+  },
+  [UnitType.JEEP]: {
+    cost: 60,
+    health: 70,
+    damage: 8,
+    speed: 1.15,
+    range: 150,
+    attackSpeed: 14,
+    width: 32,
+    height: 20,
+    colorWest: '#1d4ed8',
+    colorEast: '#b91c1c',
+  },
+  [UnitType.TRANSPORT]: {
+    cost: 70,
+    health: 160,
+    damage: 0,
+    speed: 0.95,
+    range: 0,
+    attackSpeed: 0,
+    capacity: 6,
+    width: 38,
+    height: 24,
+    colorWest: '#1e3a8a',
+    colorEast: '#7f1d1d',
+  },
+  [UnitType.SATELLITE]: {
+    cost: 350,
+    health: 0,
+    damage: 3.5, // per tick while the beam is active
+    radius: 48,
+    speed: 0,
+    range: 0,
+    attackSpeed: 0,
+    width: 0,
+    height: 0,
+    colorWest: '#7dd3fc',
+    colorEast: '#7dd3fc',
+  },
+  [UnitType.CRUISE]: {
+    cost: 200,
+    health: 0,
+    damage: 300,
+    radius: 90,
+    speed: 0,
+    range: 0,
+    attackSpeed: 0,
+    width: 0,
+    height: 0,
+    colorWest: '#334155',
+    colorEast: '#334155',
+  },
+  [UnitType.FIGHTER]: {
+    cost: 140,
+    health: 70,
+    damage: 30,
+    speed: 2.6,
+    range: 200,
+    attackSpeed: 30,
+    width: 40,
+    height: 18,
+    colorWest: '#0e7490',
+    colorEast: '#be123c',
+    isFlying: true,
+  },
 };
 
 export const PROJECTILE_SPEED = 6;
 export const MONEY_PER_TICK = 0.15;
-export const INITIAL_MONEY = 2000;
+// 2000 bought a ~20-unit opening all-in whose winner snowballed the match
+export const INITIAL_MONEY = 1200;
 
 export const HILL_RANGE_BONUS = 1.3;
 export const HILL_RELOAD_BONUS = 0.8;

@@ -22,9 +22,16 @@ export enum UnitType {
   TESLA = 'TESLA',
   FLAMETHROWER = 'FLAMETHROWER',
   MEDIC = 'MEDIC',
+  ENGINEER = 'ENGINEER',
   APC = 'APC',
   BUNKER = 'BUNKER',
   GUNSHIP = 'GUNSHIP',
+  MORTAR = 'MORTAR',
+  JEEP = 'JEEP',
+  FIGHTER = 'FIGHTER',
+  SATELLITE = 'SATELLITE',
+  CRUISE = 'CRUISE',
+  TRANSPORT = 'TRANSPORT',
 }
 
 export enum MapType {
@@ -87,6 +94,8 @@ export interface Unit {
   kills?: number;
   veterancy?: number; // 0=none 1=★ 2=★★ 3=★★★
   lastAttackerId?: string;
+  passengers?: Unit[]; // Transport cargo (units removed from the field while riding)
+  boarded?: boolean;   // True while riding in a transport
 }
 
 export interface Projectile {
@@ -116,6 +125,11 @@ export interface Particle {
   drag?: number;      // For friction/slowdown
   targetPos?: Vector2D; // For Lightning beams
   isGroundDecal?: boolean;
+  isBolt?: boolean; // Vertical sky-to-ground lightning bolt
+  isCorpse?: boolean; // Fallen infantry body / burnt vehicle wreck
+  isShockwave?: boolean; // Expanding ground ring; size = max radius, life counts 18..0
+  alt?: number;    // Explicit render altitude (world Y); overrides the legacy life-based height
+  altVel?: number; // Altitude change per tick (rising smoke, falling snow)
   text?: string; // For floating text (e.g. Dollar Sign)
 }
 
@@ -132,6 +146,23 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+  captureOwner?: Team | null;
+  baseHP?: {
+    [Team.WEST]: number;
+    [Team.EAST]: number;
+  };
+}
+
+export type GameMode = 'points' | 'basehp';
+
+export type Stance = 'advance' | 'hold' | 'retreat';
+
+export interface CapturePoint {
+  x: number;
+  y: number;
+  radius: number;
+  owner: Team | null;
+  progress: number; // -max..+max, positive = West capturing
 }
 
 export interface Flyover {
@@ -156,4 +187,26 @@ export interface Missile {
   target: Vector2D;
   current: Vector2D;
   velocity: Vector2D;
+  isCruise?: boolean;      // sea-launched: enters from the bottom edge, flies low
+  customDamage?: number;
+  customRadius?: number;
+}
+
+export interface SupplyCrate {
+  id: string;
+  x: number;
+  y: number;
+  alt: number; // descending under a parachute while > 0
+  type: 'cash' | 'squad' | 'medkit';
+  life: number; // ticks remaining once landed before it despawns
+}
+
+export interface LaserStrike {
+  id: string;
+  team: Team;
+  x: number;
+  y: number;
+  life: number;    // ticks remaining
+  maxLife: number; // designator phase = first DESIGNATE_TICKS of maxLife
+  radius: number;
 }

@@ -14,13 +14,16 @@ The first team to reach **100 Points** wins.
 
 ### Resources
 - **Money** generates automatically over time.
-- **Refunds**: Units that successfully reach the enemy edge refund their full deployment cost.
+- **Supply Drops**: Every ~30s a crate parachutes onto the midfield — the first team to reach it claims **cash ($150)**, a **veteran squad**, or a **field medkit** (heals your whole army). Crate stripe color shows the prize.
+- **Refunds**: Units that successfully reach the enemy edge refund 50% of their deployment cost.
 
 ### 🕹️ Controls
 
 #### Mouse
 - **Click Unit Buttons** (Left/Right side) to spawn units.
 - **Click Terrain**: Inspect terrain or targeting (for airstrikes).
+- **Click an Enemy Unit**: Your army focus-fires it for 6 seconds.
+- **Orders** (per side): Advance / Hold / Fall Back stances.
 
 #### Keyboard Shortcuts
 - **West Team (Left)**: `1` - `0`, `-`, `=`
@@ -36,11 +39,15 @@ The first team to reach **100 Points** wins.
 | **Squad** | Basic grunts. Cheap & swarmable. | Splash damage, Snipers. |
 | **Sniper** | **Long Range** specialist. High damage, slow reload. 30% Miss chance. | Swarms, Close combat. |
 | **Rambo** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
-| **P. Mine** | Hidden trap. Explodes on contact. | Detectors (None yet), Luck. |
+| **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
+| **Engineer** | Detects & defuses enemy mines, repairs bridges. Unarmed. | Everything that shoots. |
+| **Mortar** | Indirect splash fire at long range. Stops to shoot. | Rushes, Snipers. |
 
 ### Vehicles
 | Unit | Role | Weakness |
 | :--- | :--- | :--- |
+| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
+| **Truck** | **Troop transport**. Scoops up 6 foot soldiers in your half, delivers them to the front. Unarmed; survivors bail out if it dies. | Everything. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
 | **Artillery** | **Siege Unit**. Massive range & Splash damage. Stationary when firing. | Fast units, Air attacks. |
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |
@@ -49,11 +56,14 @@ The first team to reach **100 Points** wins.
 ### Air Support
 | Unit | Role | Note |
 | :--- | :--- | :--- |
-| **Helicopter** | **Flying Gunship**. Hovers at range. Attacks Ground & Air. | Anti-Air (AA). |
+| **Helicopter** | **Flying Gunship**. Hovers at range. Attacks Ground & Air. | Anti-Air (AA), Fighters. |
+| **Fighter** | **Air superiority jet**. Hunts enemy aircraft, strafes ground. | Anti-Air (AA). |
 | **Drone** | **Kamikaze**. Flying bomb. Targets specific units. | Anti-Air (AA). |
 | **Airstrike** | **Napalm Run**. Burns a wide area over time. | Cooldown/Money. |
 | **Paratroopers** | **Deep Strike**. Drop squad behind enemy lines. | Vulnerable while falling. |
 | **Missile** | **Precision Strike**. High damage to single point. | - |
+| **Cruise Missile** | Sea-launched from beyond the map edge. Flies in low, big warhead. | Cost. |
+| **Satellite Laser** | Orbital beam: red designator, then a sustained burn that melts a zone. | Cost, telegraphed. |
 | **Nuke** | **Mass Destruction**. Huge area damage. Friendly Fire Enabled! | Use with caution! |
 
 ---
@@ -63,6 +73,7 @@ The first team to reach **100 Points** wins.
 - **Hills**: Units on hills get **+30% Range** and **-20% Reload Time**. Key for artillery.
 - **Cover (Trees/Rocks)**: Infantry will automatically seek cover. Reduces incoming damage by **60%**.
 - **River**: Slows down infantry. Vehicles MUST use bridges to cross.
+- **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 
 ---

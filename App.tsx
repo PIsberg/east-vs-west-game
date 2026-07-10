@@ -1,9 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
-import { Team, GameState, UnitType, MapType } from './types';
-import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2 } from 'lucide-react';
-import { getBattleCommentary } from './services/ai';
+import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
+import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -110,15 +109,32 @@ const SniperIcon = ({ size = 20 }: { size?: number }) => (
   </svg>
 );
 
+const MortarIcon = ({ size = 20 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M8 18L18 6" strokeWidth="3" /> {/* Tube */}
+    <path d="M5 20h8" /> {/* Baseplate */}
+    <path d="M9 17l-3 4" /> {/* Bipod */}
+    <circle cx="19" cy="5" r="1.5" /> {/* Round leaving tube */}
+  </svg>
+);
+
 const TeslaIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
   </svg>
 );
 
+// Hidden harness params: ?spectate (CPU vs CPU), &map=URBAN, &speed=4, &mode=basehp
+const URL_PARAMS = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+const SPECTATE = URL_PARAMS.has('spectate');
+const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
+const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
+
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
-  const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[]>([]);
+  const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
+  const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
+  const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
     units: [], projectiles: [], particles: [],
     score: { [Team.WEST]: 0, [Team.EAST]: 0 },
@@ -126,13 +142,21 @@ const App: React.FC = () => {
     weather: 'clear'
   });
   const [weather, setWeather] = useState<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
-  const [commentary, setCommentary] = useState<string>("");
-  const [loadingCommentary, setLoadingCommentary] = useState(false);
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(!SPECTATE);
   const [splashFading, setSplashFading] = useState(false);
-  const [cpuEnabled, setCpuEnabled] = useState(false);
-  const [mapType, setMapType] = useState<MapType>(MapType.COUNTRYSIDE);
+  const [paused, setPaused] = useState(false);
+  const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
+  const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
+  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(SPECTATE ? 'normal' : 'off');
+  const [gameMode, setGameMode] = useState<GameMode>(URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : 'points');
+  const [mapType, setMapType] = useState<MapType>(
+    Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType : MapType.COUNTRYSIDE
+  );
+
+  const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
+  const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
+  const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const handleStartClick = () => {
     soundService.playIntroJingle();
@@ -143,13 +167,14 @@ const App: React.FC = () => {
   const resetGame = () => {
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
-    setCommentary(""); setSpawnQueue([]); setTargetingInfo(null); setWeather('clear');
+    setSpawnQueue([]); setTargetingInfo(null); setWeather('clear'); setPaused(false);
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
+    if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
@@ -157,18 +182,21 @@ const App: React.FC = () => {
   const processSpawn = (team: Team, type: UnitType, absolutePos?: { x: number, y: number }) => {
     const cost = UNIT_CONFIG[type].cost;
     const squadId = Math.random().toString(36).substr(2, 5);
+    const lane = laneChoice[team] === 'random' ? undefined : laneChoice[team] as 'top' | 'mid' | 'bot';
     if (type === UnitType.SOLDIER) {
       const squad = Array.from({ length: 3 }, (_, i) => ({
-        team, type, squadId,
+        team, type, squadId, lane,
         cost: i === 0 ? cost : 0, // Assign full cost to the first unit
         offset: { x: (i % 2 === 0 ? -8 : 8) + (Math.random() * 4 - 2), y: (Math.floor(i / 2) * 15 - 10) + (Math.random() * 4 - 2) }
       }));
       setSpawnQueue(prev => [...prev, ...squad]);
-    } else setSpawnQueue(prev => [...prev, { team, type, cost, absolutePos, squadId: type === UnitType.AIRBORNE ? squadId : undefined }]);
+    } else setSpawnQueue(prev => [...prev, { team, type, cost, absolutePos, lane, squadId: type === UnitType.AIRBORNE ? squadId : undefined }]);
     // Removed local money deduction; GameCanvas handles it via moneyRef
   };
 
-  const handleCanvasClick = (x: number, y: number) => {
+  // Stable identity (recreated only when targeting/lane state changes) so the
+  // memoized scene components downstream can skip re-renders.
+  const handleCanvasClick = useCallback((x: number, y: number) => {
     if (targetingInfo) {
       // In 3D, any click returned by onCanvasClick is a valid ground position (x, z).
       // We accept it directly to allow spawning anywhere on the map.
@@ -186,7 +214,8 @@ const App: React.FC = () => {
       processSpawn(targetingInfo.team, targetingInfo.type, { x, y });
       setTargetingInfo(null);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetingInfo, laneChoice]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -254,66 +283,124 @@ const App: React.FC = () => {
       [UnitType.TESLA]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.FLAMETHROWER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MEDIC]: [<Heart size={8} key="h" />],
+      [UnitType.ENGINEER]: [<PersonalMineIcon size={8} key="m" />, <TankMineIcon size={8} key="t" />],
+      [UnitType.MORTAR]: [<User size={8} key="u" />, <CircleDashed size={8} key="c" />],
+      [UnitType.JEEP]: [<User size={8} key="u" />],
+      [UnitType.FIGHTER]: [<Plane size={8} key="p" />, <Radio size={8} key="r" />],
+      [UnitType.SATELLITE]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
+      [UnitType.CRUISE]: [<Shield size={8} key="s" />, <Building2 size={8} key="b" />],
+      [UnitType.TRANSPORT]: [<User size={8} key="u" />, <FastForward size={8} key="f" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
     };
 
-    const renderGroup = (title: string, units: any[]) => (
-      <div className="flex flex-col gap-1">
-        <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">{title}</div>
-        {units.map(({ type, label, icon, special }) => (
-          <button
-            key={type}
-            className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white p-1.5 rounded-lg shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible`}
-            onClick={() => handleSpawnRequest(team, type)}
-            disabled={money < UNIT_CONFIG[type].cost}
-          >
-            {icon}
-            <span className="font-bold text-[7px] uppercase leading-none mt-0.5">{label}</span>
-            <span className="text-[9px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
+    const renderGroup = (title: string, units: { type: UnitType, label: string, icon: React.ReactNode, special?: boolean }[]) => (
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5">{title}</div>
+        <div className="grid grid-cols-2 gap-0.5">
+          {units.map(({ type, label, icon, special }) => (
+            <button
+              key={type}
+              title={label}
+              className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
+              onClick={() => handleSpawnRequest(team, type)}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
+            >
+              <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
+              <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
+              <span className="text-[8px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
 
-            {/* Tooltip Popup */}
-            <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
-              <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
-              <div className="flex gap-2 text-stone-300">
-                {UNIT_COUNTERS[type as UnitType]}
+              {/* Tooltip Popup */}
+              <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
+                <div className="text-[9px] font-bold text-white uppercase whitespace-nowrap">{label} — ${UNIT_CONFIG[type].cost}</div>
+                <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
+                <div className="flex gap-2 text-stone-300">
+                  {UNIT_COUNTERS[type as UnitType]}
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </div>
     );
 
+    const laneOptions: { key: 'random' | 'top' | 'mid' | 'bot', label: string }[] = [
+      { key: 'random', label: '⤨' }, { key: 'top', label: '▲' }, { key: 'mid', label: '●' }, { key: 'bot', label: '▼' },
+    ];
+    const stanceOptions: { key: Stance, label: string, title: string, activeColor: string }[] = [
+      { key: 'advance', label: '⏩', title: 'Advance — push toward the enemy edge', activeColor: 'border-green-400 bg-green-900/70 text-green-300' },
+      { key: 'hold', label: '⏸', title: 'Hold — stop and defend current ground', activeColor: 'border-amber-400 bg-amber-900/70 text-amber-300' },
+      { key: 'retreat', label: '⏪', title: 'Fall back — withdraw toward your edge', activeColor: 'border-red-400 bg-red-900/70 text-red-300' },
+    ];
+
     return (
-      <div className={`flex flex-col gap-3 ${isWest ? "mr-4" : "ml-4"}`}>
+      <div className={`flex flex-col gap-1.5 ${isWest ? "mr-2" : "ml-2"}`}>
+        {/* Stance orders */}
+        <div className="flex flex-col gap-1">
+          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
+          <div className="flex gap-0.5 justify-center">
+            {stanceOptions.map(o => (
+              <button
+                key={o.key}
+                title={o.title}
+                onClick={() => setStances(prev => ({ ...prev, [team]: o.key }))}
+                disabled={cpuTeam === team}
+                className={`w-6 h-6 text-[11px] leading-none rounded border transition-colors disabled:opacity-30 ${stances[team] === o.key ? o.activeColor : 'border-stone-700 text-stone-500 hover:text-white'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Spawn lane selector */}
+        <div className="flex flex-col gap-1">
+          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Lane</div>
+          <div className="flex gap-0.5 justify-center">
+            {laneOptions.map(o => (
+              <button
+                key={o.key}
+                title={o.key === 'random' ? 'Random lane' : `${o.key} lane`}
+                onClick={() => setLaneChoice(prev => ({ ...prev, [team]: o.key }))}
+                className={`w-5 h-5 text-[10px] leading-none rounded border transition-colors ${laneChoice[team] === o.key ? 'border-amber-400 bg-amber-900/70 text-amber-300' : 'border-stone-700 text-stone-500 hover:text-white'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {renderGroup("Infantry", [
           { type: UnitType.SOLDIER, label: "SQUAD", icon: <SquadIcon size={16} /> },
           { type: UnitType.SNIPER, label: "SNIPER", icon: <SniperIcon size={16} /> },
           { type: UnitType.RAMBO, label: "RAMBO", icon: <BandanaIcon size={16} />, special: true },
           { type: UnitType.FLAMETHROWER, label: "FLAMER", icon: <Flame size={16} /> },
           { type: UnitType.MEDIC, label: "MEDIC", icon: <Heart size={16} /> },
+          { type: UnitType.ENGINEER, label: "ENGINEER", icon: <ShieldAlert size={16} /> },
+          { type: UnitType.MORTAR, label: "MORTAR", icon: <MortarIcon size={16} /> },
           { type: UnitType.MINE_PERSONAL, label: "P.MINE", icon: <PersonalMineIcon size={14} /> },
         ])}
         {renderGroup("Vehicles", [
+          { type: UnitType.JEEP, label: "JEEP", icon: <Car size={16} /> },
+          { type: UnitType.TRANSPORT, label: "TRUCK", icon: <Bus size={16} /> },
           { type: UnitType.TANK, label: "TANK", icon: <TankIcon size={16} /> },
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },
           { type: UnitType.ARTILLERY, label: "ARTY", icon: <ArtilleryIcon size={16} /> },
           { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
+          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
-          { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> }
+          { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },
+          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> }
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
           { type: UnitType.AIRSTRIKE, label: "NAPALM", icon: <Flame size={16} /> },
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
+          { type: UnitType.CRUISE, label: "CRUISE", icon: <Rocket size={16} /> },
           { type: UnitType.GUNSHIP, label: "GUNSHIP", icon: <Plane size={16} />, special: true },
+          { type: UnitType.SATELLITE, label: "SAT LASER", icon: <Satellite size={16} />, special: true },
           { type: UnitType.NUKE, label: "NUKE", icon: <Skull size={16} />, special: true },
-        ])}
-        {renderGroup("Defense", [
-          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
         ])}
       </div>
     );
@@ -356,6 +443,32 @@ const App: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            {/* Side & CPU Opponent Selection */}
+            <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 border border-stone-600 mb-1 flex gap-6 items-center">
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Play As</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlayerSide(Team.WEST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-blue-400 transition-all ${playerSide === Team.WEST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>West</button>
+                  <button onClick={() => setPlayerSide(Team.EAST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-red-400 transition-all ${playerSide === Team.EAST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>East</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Win Mode</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
+                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                </div>
+              </div>
+              <div>
+                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">CPU Opponent</p>
+                <div className="flex gap-2">
+                  {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
+                    <button key={l} onClick={() => setCpuLevel(l)} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
             <button
               className="px-10 py-3 bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black text-lg uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all"
               onClick={handleStartClick}
@@ -368,24 +481,31 @@ const App: React.FC = () => {
       )}
 
       <div className="w-full max-w-4xl flex justify-between items-center mb-3 bg-stone-800 p-3 rounded-lg shadow-lg border border-stone-600">
-        <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">Score: {gameState.score[Team.WEST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
           <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
           <div className="flex items-center gap-4">
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
-            <button onClick={() => setCpuEnabled(v => !v)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuEnabled ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuEnabled ? 'ON' : 'OFF'}</button>
+            <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
+            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
+            <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
             {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
             {gameState.weather === 'clear' && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
+            {gameState.captureOwner && (
+              <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
+                <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
+              </div>
+            )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">Score: {gameState.score[Team.EAST]}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
+        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuEnabled={cpuEnabled} mapType={mapType} /></div>
+        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} /></div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
@@ -399,7 +519,11 @@ const App: React.FC = () => {
             <li><strong className="text-white">Resources:</strong> Money generates automatically over time.</li>
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
-            <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund their <span className="text-green-400">Full Cost</span>.</li>
+            <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
+            <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
+            <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
+            <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
+            <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>
 
@@ -425,14 +549,8 @@ const App: React.FC = () => {
             <li><strong className="text-white">Nuke:</strong> <span className="text-red-500 font-bold">WARNING:</span> Friendly Fire! Enemy Side Target Only.</li>
             <li><strong className="text-white">Airborne:</strong> Drops paratroopers behind lines.</li>
             <li><strong className="text-white">Mines:</strong> Hidden defense. Explodes on contact.</li>
+            <li><strong className="text-white">Supply Drops:</strong> Crates parachute onto the midfield — <span className="text-amber-400">first unit there claims</span> cash, a veteran squad, or a field medkit.</li>
           </ul>
-
-          <div className="pt-1 border-t border-stone-700">
-            <button onClick={async () => { setLoadingCommentary(true); const t = await getBattleCommentary(gameState.score[Team.WEST], gameState.score[Team.EAST], gameState.units.filter(u => u.team === Team.WEST).length, gameState.units.filter(u => u.team === Team.EAST).length); setCommentary(t); setLoadingCommentary(false); }} disabled={loadingCommentary} className="w-full py-1 bg-stone-700 hover:bg-stone-600 rounded border border-stone-600 uppercase font-black flex items-center justify-center gap-2 text-[10px]">
-              <Bot size={12} /> {loadingCommentary ? "ANALYZING BATTLEFIELD..." : "REQUEST AI SITREP"}
-            </button>
-            {commentary && <p className="mt-1 italic text-amber-200 text-center leading-tight">"{commentary}"</p>}
-          </div>
         </div>
 
       </div>
