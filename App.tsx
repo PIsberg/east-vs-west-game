@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
-import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff } from 'lucide-react';
+import { Sword, Shield, Bot, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite } from 'lucide-react';
 import { getBattleCommentary } from './services/ai';
 import { soundService } from './services/audio';
 
@@ -177,7 +177,7 @@ const App: React.FC = () => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
@@ -290,6 +290,8 @@ const App: React.FC = () => {
       [UnitType.MORTAR]: [<User size={8} key="u" />, <CircleDashed size={8} key="c" />],
       [UnitType.JEEP]: [<User size={8} key="u" />],
       [UnitType.FIGHTER]: [<Plane size={8} key="p" />, <Radio size={8} key="r" />],
+      [UnitType.SATELLITE]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
+      [UnitType.CRUISE]: [<Shield size={8} key="s" />, <Building2 size={8} key="b" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
@@ -396,7 +398,9 @@ const App: React.FC = () => {
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
           { type: UnitType.AIRSTRIKE, label: "NAPALM", icon: <Flame size={16} /> },
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
+          { type: UnitType.CRUISE, label: "CRUISE", icon: <Rocket size={16} /> },
           { type: UnitType.GUNSHIP, label: "GUNSHIP", icon: <Plane size={16} />, special: true },
+          { type: UnitType.SATELLITE, label: "SAT LASER", icon: <Satellite size={16} />, special: true },
           { type: UnitType.NUKE, label: "NUKE", icon: <Skull size={16} />, special: true },
         ])}
       </div>

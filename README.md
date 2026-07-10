@@ -60,6 +60,8 @@ The first team to reach **100 Points** wins.
 | **Airstrike** | **Napalm Run**. Burns a wide area over time. | Cooldown/Money. |
 | **Paratroopers** | **Deep Strike**. Drop squad behind enemy lines. | Vulnerable while falling. |
 | **Missile** | **Precision Strike**. High damage to single point. | - |
+| **Cruise Missile** | Sea-launched from beyond the map edge. Flies in low, big warhead. | Cost. |
+| **Satellite Laser** | Orbital beam: red designator, then a sustained burn that melts a zone. | Cost, telegraphed. |
 | **Nuke** | **Mass Destruction**. Huge area damage. Friendly Fire Enabled! | Use with caution! |
 
 ---

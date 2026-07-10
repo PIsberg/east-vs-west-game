@@ -14,7 +14,7 @@ import {
   WIN_SCORE,
   BASE_HP
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -85,6 +85,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const flyoversRef = useRef<Flyover[]>([]);
   const terraformRef = useRef<TerrainObject[]>([]);
   const missilesRef = useRef<Missile[]>([]);
+  const lasersRef = useRef<LaserStrike[]>([]);
+  const LASER_DESIGNATE = 55; // red targeting beam before the real one fires
+  const LASER_LIFE = 235;     // designate + ~3s burn
   const flashOpacity = useRef(0);
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
@@ -308,6 +311,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }) => {
     const config = UNIT_CONFIG[type] as any;
+
+    // Satellite laser: no delivery vehicle — a designator, then a beam from orbit
+    if (type === UnitType.SATELLITE && options?.absolutePos) {
+      lasersRef.current.push({
+        id: generateId(), team,
+        x: options.absolutePos.x, y: options.absolutePos.y,
+        life: LASER_LIFE, maxLife: LASER_LIFE,
+        radius: (UNIT_CONFIG[UnitType.SATELLITE] as any).radius,
+      });
+      soundService.playZapSound();
+      return;
+    }
+
+    // Cruise missile: launched from a ship somewhere off the bottom edge
+    if (type === UnitType.CRUISE && options?.absolutePos) {
+      const cfg = UNIT_CONFIG[UnitType.CRUISE] as any;
+      const startX = options.absolutePos.x + (Math.random() - 0.5) * 220;
+      const startY = CANVAS_HEIGHT + 160;
+      const flightTicks = 95;
+      missilesRef.current.push({
+        id: generateId(), team,
+        target: { ...options.absolutePos },
+        current: { x: startX, y: startY },
+        velocity: { x: (options.absolutePos.x - startX) / flightTicks, y: (options.absolutePos.y - startY) / flightTicks },
+        isCruise: true,
+        customDamage: cfg.damage,
+        customRadius: cfg.radius,
+      });
+      soundService.playRocketSound();
+      return;
+    }
 
     if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE || type === UnitType.GUNSHIP) && options?.absolutePos) {
       const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
@@ -543,13 +577,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     for (let i = missilesRef.current.length - 1; i >= 0; i--) {
       const m = missilesRef.current[i];
       m.current.x += m.velocity.x; m.current.y += m.velocity.y;
-      if (m.current.y >= m.target.y) {
+
+      // Cruise missiles fly low and leave an exhaust trail
+      if (m.isCruise && tickCountRef.current % 3 === 0) {
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: m.current.x - m.velocity.x * 3, y: m.current.y - m.velocity.y * 3 },
+          velocity: { x: (Math.random() - 0.5) * 0.3, y: (Math.random() - 0.5) * 0.3 },
+          drag: 0.97,
+          life: 30 + Math.random() * 20,
+          color: Math.random() > 0.5 ? '#d6d3d1' : '#a8a29e',
+          size: 3 + Math.random() * 3,
+          alt: 20 + Math.random() * 4,
+          altVel: 0.15
+        });
+      }
+
+      const arrived = m.isCruise ? m.current.y <= m.target.y : m.current.y >= m.target.y;
+      if (arrived) {
         const isNuke = !!(m as any).isNuke;
         if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound();
-        shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : 8);
+        shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : m.isCruise ? 14 : 8);
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
-        const damage = isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage;
-        const radius = isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius;
+        const damage = m.customDamage ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage);
+        const radius = m.customRadius ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius);
 
         if (isNuke) {
           flashOpacity.current = 1.0;
@@ -617,7 +668,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           position: { x: m.target.x, y: m.target.y },
           life: isNuke ? 3600 : 900,
           color: '#1c1917',
-          size: isNuke ? 170 : 42,
+          size: isNuke ? 170 : m.isCruise ? 72 : 42,
           isGroundDecal: true
         });
         // Bridges in the blast take structural damage (nuke capped to its epicenter)
@@ -646,6 +697,62 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
         missilesRef.current.splice(i, 1);
+      }
+    }
+
+    // Satellite laser strikes: designator phase, then a sustained burn
+    for (let i = lasersRef.current.length - 1; i >= 0; i--) {
+      const L = lasersRef.current[i];
+      L.life--;
+      const active = L.maxLife - L.life > LASER_DESIGNATE;
+      if (active) {
+        const dmg = (UNIT_CONFIG[UnitType.SATELLITE] as any).damage;
+        shakeRef.current = Math.max(shakeRef.current, 1.2);
+        spatialHash.current.queryCallback(L.x, L.y, L.radius, u => {
+          if (u.team === L.team) return;
+          if (Math.sqrt((u.position.x - L.x) ** 2 + (u.position.y - L.y) ** 2) < L.radius) {
+            u.health -= dmg;
+            u.lastHitTime = Date.now();
+          }
+        });
+        // Embers boiling off the impact zone
+        if (tickCountRef.current % 4 === 0) {
+          const a = Math.random() * Math.PI * 2;
+          const d = Math.random() * L.radius * 0.8;
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: L.x + Math.cos(a) * d, y: L.y + Math.sin(a) * d },
+            velocity: { x: (Math.random() - 0.5) * 0.8, y: (Math.random() - 0.5) * 0.8 },
+            drag: 0.94,
+            life: 24 + Math.random() * 16,
+            color: Math.random() > 0.4 ? '#e0f2fe' : '#7dd3fc',
+            size: 3 + Math.random() * 4,
+            alt: 2, altVel: 0.9 + Math.random() * 0.8
+          });
+        }
+        // Ignite vegetation under the beam
+        if (tickCountRef.current % 20 === 0) {
+          terrainRef.current.forEach(t => {
+            if (t.type === 'tree' && t.state !== 'burnt' && t.state !== 'broken' &&
+              Math.sqrt((t.x - L.x) ** 2 + (t.y - L.y) ** 2) < L.radius) {
+              t.state = 'burning';
+              t.health = 300;
+            }
+          });
+          soundService.playZapSound();
+        }
+      }
+      if (L.life <= 0) {
+        // Glassed scorch ring left behind
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: L.x, y: L.y },
+          life: 1200,
+          color: '#0c0a09',
+          size: L.radius * 1.15,
+          isGroundDecal: true
+        });
+        lasersRef.current.splice(i, 1);
       }
     }
 
@@ -1935,6 +2042,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           specialSpawned = true;
         }
 
+        // Cruise missile at a big enemy cluster
+        if (!specialSpawned && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special) {
+          const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
+          const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
+          spawnUnit(ME, UnitType.CRUISE, { absolutePos: { x: cx, y: cy } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.CRUISE] as any).cost;
+          specialSpawned = true;
+        }
+
+        // Satellite laser on the foe's densest forward position when flush with cash
+        if (!specialSpawned && can(UnitType.SATELLITE) && money > 600 && foeUnits.length >= 10 && Math.random() < 0.08 * DIFF.special) {
+          const fwd = foeUnits.reduce((a, b) => (ME === Team.EAST ? a.position.x > b.position.x : a.position.x < b.position.x) ? a : b);
+          spawnUnit(ME, UnitType.SATELLITE, { absolutePos: { x: fwd.position.x, y: fwd.position.y } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.SATELLITE] as any).cost;
+          specialSpawned = true;
+        }
+
         // Airborne drop behind foe lines when they push deep
         const foePushedDeep = FOE === Team.WEST ? foeFrontX > 450 : foeFrontX < 350;
         if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.2 * DIFF.special) {
@@ -1972,7 +2096,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Fallback if nothing prioritised: pick random affordable non-special
             if (pool.length === 0) {
               const noAiTypes = new Set([UnitType.AIRSTRIKE, UnitType.NUKE, UnitType.GUNSHIP, UnitType.NAPALM,
-                                         UnitType.MISSILE_STRIKE, UnitType.AIRBORNE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK]);
+                                         UnitType.MISSILE_STRIKE, UnitType.AIRBORNE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK,
+                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
                 return cost > 0 && cost <= money && !noAiTypes.has(t);
@@ -2080,6 +2205,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         terrain={terrainRef.current}
         flyovers={flyoversRef.current}
         missiles={missilesRef.current}
+        lasers={lasersRef.current}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}

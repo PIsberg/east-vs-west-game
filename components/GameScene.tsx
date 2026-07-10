@@ -4,7 +4,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint } from '../types';
+import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 
@@ -15,6 +15,7 @@ interface GameSceneProps {
     terrain: TerrainObject[];
     flyovers: any[]; // Using any for now to match the internal logic refs
     missiles: any[];
+    lasers?: LaserStrike[];
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -2267,7 +2268,86 @@ const Flyover3D = ({ fly }: { fly: any }) => {
     );
 };
 
+// Orbital laser: red designator line, then a blinding column from the sky
+const SatelliteLaser3D = ({ laser }: { laser: LaserStrike }) => {
+    const DESIGNATE = 55;
+    const active = laser.maxLife - laser.life > DESIGNATE;
+    const endFade = Math.min(1, laser.life / 25); // wind-down
+    if (!active) {
+        // Thin pulsing designator
+        const pulse = 0.5 + 0.5 * Math.sin(Date.now() * 0.03);
+        return (
+            <group position={[laser.x, 0, laser.y]}>
+                <mesh position={[0, 250, 0]}>
+                    <cylinderGeometry args={[0.7, 0.7, 500, 6]} />
+                    <meshBasicMaterial color="#ef4444" transparent opacity={0.5 + 0.4 * pulse} toneMapped={false} />
+                </mesh>
+                <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[laser.radius - 2, laser.radius, 32]} />
+                    <meshBasicMaterial color="#ef4444" transparent opacity={0.4 + 0.5 * pulse} toneMapped={false} depthWrite={false} />
+                </mesh>
+            </group>
+        );
+    }
+    const wobble = 1 + 0.12 * Math.sin(Date.now() * 0.02);
+    return (
+        <group position={[laser.x, 0, laser.y]}>
+            {/* Core beam */}
+            <mesh position={[0, 250, 0]}>
+                <cylinderGeometry args={[3.2 * wobble, 4.2 * wobble, 500, 10]} />
+                <meshBasicMaterial color="#ffffff" transparent opacity={0.95 * endFade} toneMapped={false} />
+            </mesh>
+            {/* Outer glow sheath */}
+            <mesh position={[0, 250, 0]}>
+                <cylinderGeometry args={[8 * wobble, 10 * wobble, 500, 10]} />
+                <meshBasicMaterial color="#7dd3fc" transparent opacity={0.3 * endFade} toneMapped={false} depthWrite={false} />
+            </mesh>
+            {/* Impact flare */}
+            <mesh position={[0, 3, 0]} scale={wobble}>
+                <sphereGeometry args={[laser.radius * 0.35, 12, 10]} />
+                <meshBasicMaterial color="#e0f2fe" transparent opacity={0.85 * endFade} toneMapped={false} />
+            </mesh>
+            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[laser.radius * 0.7, laser.radius, 32]} />
+                <meshBasicMaterial color="#bae6fd" transparent opacity={0.5 * endFade} toneMapped={false} depthWrite={false} />
+            </mesh>
+            <pointLight position={[0, 25, 0]} color="#bae6fd" intensity={6 * endFade} distance={160} />
+        </group>
+    );
+};
+
 const Missile3D = ({ m }: { m: any }) => {
+    // Sea-launched cruise missile: flies low and level toward the target
+    if (m.isCruise) {
+        const angle = Math.atan2(m.velocity.y, m.velocity.x);
+        const bob = Math.sin(Date.now() * 0.02) * 0.8;
+        return (
+            <group position={[m.current.x, 22 + bob, m.current.y]} rotation={[0, -angle, 0]}>
+                <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+                    <cylinderGeometry args={[2.2, 2.2, 20, 10]} />
+                    <meshStandardMaterial color="#64748b" />
+                </mesh>
+                <mesh position={[11.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                    <coneGeometry args={[2.2, 4, 10]} />
+                    <meshStandardMaterial color="#475569" />
+                </mesh>
+                {/* Stub wings + tail */}
+                <mesh position={[-3, 0, 0]}>
+                    <boxGeometry args={[5, 0.5, 12]} />
+                    <meshStandardMaterial color="#475569" />
+                </mesh>
+                <mesh position={[-9, 1.5, 0]}>
+                    <boxGeometry args={[3, 3.5, 0.5]} />
+                    <meshStandardMaterial color="#475569" />
+                </mesh>
+                {/* Exhaust glow */}
+                <mesh position={[-11.5, 0, 0]}>
+                    <sphereGeometry args={[1.5, 6, 6]} />
+                    <meshBasicMaterial color="#fb923c" toneMapped={false} />
+                </mesh>
+            </group>
+        );
+    }
     // Interpolate height for missile dive
     const startZ = 35;
     const totalDist = Math.max(1, m.target.y - startZ);
@@ -2495,7 +2575,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
 
 
 
@@ -2580,6 +2660,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {flyovers.map(f => <Flyover3D key={f.id} fly={f} />)}
 
                 {missiles.map(m => <Missile3D key={m.id} m={m} />)}
+
+                {lasers?.map(l => <SatelliteLaser3D key={l.id} laser={l} />)}
             </ShakeRig>
 
             <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />

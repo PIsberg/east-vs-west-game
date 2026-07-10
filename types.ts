@@ -29,6 +29,8 @@ export enum UnitType {
   MORTAR = 'MORTAR',
   JEEP = 'JEEP',
   FIGHTER = 'FIGHTER',
+  SATELLITE = 'SATELLITE',
+  CRUISE = 'CRUISE',
 }
 
 export enum MapType {
@@ -182,4 +184,17 @@ export interface Missile {
   target: Vector2D;
   current: Vector2D;
   velocity: Vector2D;
+  isCruise?: boolean;      // sea-launched: enters from the bottom edge, flies low
+  customDamage?: number;
+  customRadius?: number;
+}
+
+export interface LaserStrike {
+  id: string;
+  team: Team;
+  x: number;
+  y: number;
+  life: number;    // ticks remaining
+  maxLife: number; // designator phase = first DESIGNATE_TICKS of maxLife
+  radius: number;
 }
