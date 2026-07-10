@@ -1102,7 +1102,38 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
 // updated imperatively in useFrame. Special cases (beams, text, decals, missiles)
 // stay as individual components — they are rare.
 
-const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal);
+const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt);
+
+// Jagged vertical lightning bolt from the sky to a strike point
+const LightningBolt = ({ p }: { p: Particle }) => {
+    // Random jag offsets, stable for this bolt's lifetime
+    const segments = useMemo(() => {
+        const segs: { x: number, z: number, y: number, h: number }[] = [];
+        const SEG_COUNT = 6;
+        const TOP = 380;
+        let ox = 0, oz = 0;
+        for (let i = 0; i < SEG_COUNT; i++) {
+            const h = TOP / SEG_COUNT;
+            segs.push({ x: ox, z: oz, y: TOP - h * (i + 0.5), h: h + 6 });
+            ox += (Math.random() - 0.5) * 26;
+            oz += (Math.random() - 0.5) * 16;
+        }
+        return segs;
+    }, []);
+
+    const flicker = p.life % 4 < 2 ? 1 : 0.4;
+    return (
+        <group position={[p.position.x, 0, p.position.y]}>
+            {segments.map((s, i) => (
+                <mesh key={i} position={[s.x, s.y, s.z]}>
+                    <cylinderGeometry args={[1.4, 1.4, s.h, 5]} />
+                    <meshBasicMaterial color={p.color} toneMapped={false} transparent opacity={flicker * Math.min(1, p.life / 6)} />
+                </mesh>
+            ))}
+            <pointLight position={[0, 40, 0]} color="#bae6fd" intensity={8 * flicker} distance={220} />
+        </group>
+    );
+};
 
 const MAX_PARTICLE_INSTANCES = 2048;
 const INST_PARTICLE_GEO = new THREE.BoxGeometry(1, 1, 1);
@@ -1185,6 +1216,9 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
 };
 
 const Particle3D = ({ p }: { p: Particle }) => {
+    // Sky-to-ground lightning bolt
+    if (p.isBolt) return <LightningBolt p={p} />;
+
     // Lightning / Beam Logic
     if (p.targetPos) {
         const dx = p.targetPos.x - p.position.x;

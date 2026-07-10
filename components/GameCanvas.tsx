@@ -534,6 +534,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       for (let k = 0; k < 10; k++) {
         particlesRef.current.push({ id: generateId(), position: { x: lx + (Math.random() - 0.5) * 30, y: ly + (Math.random() - 0.5) * 20 }, life: 10, color: '#fde68a', size: 5 + Math.random() * 4 });
       }
+      // Visible sky-to-ground bolt
+      particlesRef.current.push({ id: generateId(), position: { x: lx, y: ly }, life: 12, color: '#e0f2fe', size: 3, isBolt: true });
     }
 
     // Terrain Logic (Burning & Destruction)
