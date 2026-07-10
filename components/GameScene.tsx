@@ -2342,33 +2342,56 @@ const SatelliteLaser3D = ({ laser }: { laser: LaserStrike }) => {
 };
 
 const Missile3D = ({ m }: { m: any }) => {
-    // Sea-launched cruise missile: flies low and level toward the target
+    // Sea-launched cruise missile: a BIG one — flies low and level toward the target
     if (m.isCruise) {
         const angle = Math.atan2(m.velocity.y, m.velocity.x);
-        const bob = Math.sin(Date.now() * 0.02) * 0.8;
+        const bob = Math.sin(Date.now() * 0.02) * 1.2;
         return (
-            <group position={[m.current.x, 22 + bob, m.current.y]} rotation={[0, -angle, 0]}>
+            <group position={[m.current.x, 24 + bob, m.current.y]} rotation={[0, -angle, 0]}>
+                {/* Fat fuselage with red warhead band */}
                 <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
-                    <cylinderGeometry args={[2.2, 2.2, 20, 10]} />
+                    <cylinderGeometry args={[4, 4, 36, 12]} />
                     <meshStandardMaterial color="#64748b" />
                 </mesh>
-                <mesh position={[11.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                    <coneGeometry args={[2.2, 4, 10]} />
+                <mesh position={[13, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                    <cylinderGeometry args={[4.1, 4.1, 3, 12]} />
+                    <meshStandardMaterial color="#b91c1c" />
+                </mesh>
+                <mesh position={[21, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                    <coneGeometry args={[4, 8, 12]} />
                     <meshStandardMaterial color="#475569" />
                 </mesh>
-                {/* Stub wings + tail */}
-                <mesh position={[-3, 0, 0]}>
-                    <boxGeometry args={[5, 0.5, 12]} />
+                {/* Air intake under the belly */}
+                <mesh position={[-6, -4, 0]}>
+                    <boxGeometry args={[8, 2.5, 3.5]} />
+                    <meshStandardMaterial color="#334155" />
+                </mesh>
+                {/* Big stub wings + cruciform tail */}
+                <mesh position={[-4, 0, 0]}>
+                    <boxGeometry args={[9, 0.8, 24]} />
                     <meshStandardMaterial color="#475569" />
                 </mesh>
-                <mesh position={[-9, 1.5, 0]}>
-                    <boxGeometry args={[3, 3.5, 0.5]} />
+                <mesh position={[-15, 2.5, 0]}>
+                    <boxGeometry args={[5, 7, 0.8]} />
                     <meshStandardMaterial color="#475569" />
                 </mesh>
-                {/* Exhaust glow */}
-                <mesh position={[-11.5, 0, 0]}>
-                    <sphereGeometry args={[1.5, 6, 6]} />
+                <mesh position={[-15, 0, 0]}>
+                    <boxGeometry args={[5, 0.8, 12]} />
+                    <meshStandardMaterial color="#475569" />
+                </mesh>
+                {/* Exhaust plume */}
+                <mesh position={[-20, 0, 0]}>
+                    <sphereGeometry args={[2.8, 8, 8]} />
                     <meshBasicMaterial color="#fb923c" toneMapped={false} />
+                </mesh>
+                <mesh position={[-24, 0, 0]} scale={[2, 0.8, 0.8]}>
+                    <sphereGeometry args={[1.8, 6, 6]} />
+                    <meshBasicMaterial color="#fde68a" toneMapped={false} transparent opacity={0.7} />
+                </mesh>
+                {/* Shadow blob racing along the ground below */}
+                <mesh position={[0, -23 - bob, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[9, 12]} />
+                    <meshBasicMaterial color="black" transparent opacity={0.25} depthWrite={false} />
                 </mesh>
             </group>
         );

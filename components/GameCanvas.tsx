@@ -578,18 +578,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const m = missilesRef.current[i];
       m.current.x += m.velocity.x; m.current.y += m.velocity.y;
 
-      // Cruise missiles fly low and leave an exhaust trail
-      if (m.isCruise && tickCountRef.current % 3 === 0) {
+      // Cruise missiles fly low and leave a heavy exhaust trail
+      if (m.isCruise && tickCountRef.current % 2 === 0) {
         particlesRef.current.push({
           id: generateId(),
-          position: { x: m.current.x - m.velocity.x * 3, y: m.current.y - m.velocity.y * 3 },
-          velocity: { x: (Math.random() - 0.5) * 0.3, y: (Math.random() - 0.5) * 0.3 },
+          position: { x: m.current.x - m.velocity.x * 4, y: m.current.y - m.velocity.y * 4 },
+          velocity: { x: (Math.random() - 0.5) * 0.4, y: (Math.random() - 0.5) * 0.4 },
           drag: 0.97,
-          life: 30 + Math.random() * 20,
+          life: 40 + Math.random() * 30,
           color: Math.random() > 0.5 ? '#d6d3d1' : '#a8a29e',
-          size: 3 + Math.random() * 3,
-          alt: 20 + Math.random() * 4,
-          altVel: 0.15
+          size: 5 + Math.random() * 5,
+          alt: 22 + Math.random() * 5,
+          altVel: 0.2
         });
       }
 
