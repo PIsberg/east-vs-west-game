@@ -75,6 +75,8 @@ Weather cycle (rain/snow/fog/storm with combat penalties + lightning strikes), m
 
 Regular particles and projectiles render through two `InstancedMesh`es updated imperatively in `useFrame` (`InstancedParticles`/`InstancedProjectiles` in `GameScene.tsx`); only rare special particles (beams, bolts, text, decals, corpses, missiles) are individual React components. Keep new high-count effects in the instanced path or flag them via `isSpecialParticle`.
 
+Other performance rules: static scene components (`TerrainItem`, `GroundPlane`, `BorderLine`, `Backdrop`, `GroundScatter`, `RiverRenderer`) are `React.memo`ized — keep their props referentially stable (terrain objects mutate in place, so state/health are passed as explicit props for the memo compare). Avoid `pointLight` per entity — use emissive `toneMapped={false}` materials and let bloom sell the glow (only lightning, missiles-in-flight and the capture point keep lights). In the engine, never `splice` inside `forEach` (iterate backwards), use the spatial hash for proximity queries, and throttle O(terrain) searches with `isSearchTick(unit)`.
+
 ### Map system
 
 `MapType` in `types.ts` defines four maps: `COUNTRYSIDE`, `URBAN`, `DESERT`, `ARCHIPELAGO`. The map is chosen in `App.tsx` pre-game. Terrain layout per map is generated procedurally in `GameCanvas.tsx` (branching on `mapType`), and `GameScene.tsx` branches on `mapType` for visuals (ground/accent colors, river vs. channel rendering). A new map needs: enum value, terrain generation branch in `GameCanvas`, visual branch in `GameScene`, and a menu entry in `App.tsx`.

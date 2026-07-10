@@ -290,7 +290,7 @@ const AnimatedWater = ({ geo, color, foam }: { geo: THREE.BufferGeometry, color:
     );
 };
 
-const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType: MapType }) => {
+const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject[], mapType: MapType }) => {
     const riverPoints = useMemo(() => terrain.filter(t => t.type === 'river'), [terrain]);
 
     // Group segments by channel — segments whose X is within 150px of a group's first segment
@@ -355,7 +355,7 @@ const RiverRenderer = ({ terrain, mapType }: { terrain: TerrainObject[], mapType
             ))}
         </group>
     );
-};
+});
 
 
 // Placeholder to force view terrain height at a given X, Z (Game Y)
@@ -405,13 +405,15 @@ const ClickableGroup = ({ onCanvasClick, children, ...props }: any) => {
 // -- Reusable Geometries & Materials --
 const GEO_FLASH_CORE = new THREE.ConeGeometry(0.6, 3, 8);
 const GEO_FLASH_OUTER = new THREE.ConeGeometry(1, 4.5, 8, 1, true);
-const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: 'yellow', transparent: true, opacity: 0.9 });
+const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: 'yellow', transparent: true, opacity: 0.9, toneMapped: false });
 // Note: Outer material depends on color prop, so we might need to keep it dynamic or cache by color.
 // But mostly it's yellow/orange.
 
 const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: string }) => {
     // Memoize outer material if color changes infrequent
-    const outerMat = useMemo(() => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide }), [color]);
+    // No pointLight: dynamic lights are expensive per-fragment; bloom on the
+    // toneMapped-off cones sells the flash instead.
+    const outerMat = useMemo(() => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide, toneMapped: false }), [color]);
 
     return (
         <group scale={[size, size, size]}>
@@ -419,7 +421,6 @@ const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: st
             <mesh position={[1.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_CORE} material={MAT_FLASH_CORE} />
             {/* Outer */}
             <mesh position={[2, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_OUTER} material={outerMat} />
-            <pointLight distance={15} intensity={3} color={color} />
         </group>
     );
 };
@@ -1214,8 +1215,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             </mesh>
                         </mesh>
                         <InfantryLegs walking={walking} phase={walkPhase} />
-                        {/* Flame glow when attacking */}
-                        {unit.attackCooldown > 4 && <pointLight position={[5, 8, 4]} color="#f97316" distance={30} intensity={4} />}
+                        {/* Flame burst when attacking (emissive, blooms) */}
+                        {unit.attackCooldown > 4 && (
+                            <mesh position={[5, 8, 6]} scale={1 + 0.4 * Math.sin(Date.now() * 0.05)}>
+                                <sphereGeometry args={[2.2, 6, 6]} />
+                                <meshBasicMaterial color="#f97316" toneMapped={false} transparent opacity={0.85} />
+                            </mesh>
+                        )}
                     </group>
                 )}
 
@@ -1248,8 +1254,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             <mesh position={[0, -5, 1.5]}><boxGeometry args={[4, 3, 3]} /><meshStandardMaterial color="#dc2626" /></mesh>
                         </mesh>
                         <InfantryLegs walking={walking} phase={walkPhase} color="#1f2937" />
-                        {/* Healing glow */}
-                        {unit.attackCooldown > 30 && <pointLight position={[0, 12, 0]} color="#4ade80" distance={25} intensity={2} />}
+                        {/* Healing glow (emissive) */}
+                        {unit.attackCooldown > 30 && (
+                            <mesh position={[0, 22, 0]}>
+                                <sphereGeometry args={[1.4, 6, 6]} />
+                                <meshBasicMaterial color="#4ade80" toneMapped={false} />
+                            </mesh>
+                        )}
                     </group>
                 )}
 
@@ -1286,8 +1297,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                             </mesh>
                         </mesh>
                         <InfantryLegs walking={walking} phase={walkPhase} />
-                        {/* Defusing glow */}
-                        {unit.attackCooldown > (config.attackSpeed - 12) && <pointLight position={[4, 6, 6]} color="#4ade80" distance={30} intensity={3} />}
+                        {/* Defusing glow (emissive) */}
+                        {unit.attackCooldown > (config.attackSpeed - 12) && (
+                            <mesh position={[4, 4, 8]}>
+                                <sphereGeometry args={[1.4, 6, 6]} />
+                                <meshBasicMaterial color="#4ade80" toneMapped={false} />
+                            </mesh>
+                        )}
                     </group>
                 )}
 
@@ -1444,8 +1460,11 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
                     <boxGeometry args={[4, 8, 1]} />
                     <meshStandardMaterial color="#94a3b8" />
                 </mesh>
-                {/* Engine Glow */}
-                <pointLight position={[-5, 0, 0]} color="orange" distance={40} intensity={3} />
+                {/* Engine Glow (emissive + bloom instead of a point light) */}
+                <mesh position={[-7, 0, 0]}>
+                    <sphereGeometry args={[1.6, 6, 6]} />
+                    <meshBasicMaterial color="#fb923c" toneMapped={false} />
+                </mesh>
             </group>
         );
     }
@@ -1632,7 +1651,6 @@ const Particle3D = ({ p }: { p: Particle }) => {
             <mesh position={[midX, 20, midY]} rotation={[0, angle, 0]}>
                 <boxGeometry args={[dist, p.size, p.size]} />
                 <meshBasicMaterial color={p.color} toneMapped={false} />
-                <pointLight distance={50} intensity={2} color={p.color} />
             </mesh>
         );
     }
@@ -1691,7 +1709,22 @@ const Particle3D = ({ p }: { p: Particle }) => {
     );
 };
 
-const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
+// Blinking indicator light driven by useFrame so it keeps animating inside
+// memoized parents that skip React re-renders.
+const Blinker = ({ position, size = 0.8, period = 900 }: { position: [number, number, number], size?: number, period?: number }) => {
+    const matRef = useRef<THREE.MeshBasicMaterial>(null!);
+    useFrame(() => {
+        if (matRef.current) matRef.current.color.set(Math.floor(Date.now() / period) % 2 === 0 ? '#ef4444' : '#450a0a');
+    });
+    return (
+        <mesh position={position}>
+            <sphereGeometry args={[size, 6, 6]} />
+            <meshBasicMaterial ref={matRef} color="#ef4444" toneMapped={false} />
+        </mesh>
+    );
+};
+
+const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObject, itemState?: TerrainObject['state'], itemHealth?: number, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
     // River handled by RiverRenderer now
     // if (item.type === 'river') { ... } 
 
@@ -1887,10 +1920,7 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
                             <cylinderGeometry args={[0.3, 0.5, 14]} />
                             <meshStandardMaterial color="#71717a" />
                         </mesh>
-                        <mesh position={[0, 14, 0]}>
-                            <sphereGeometry args={[0.8, 6, 6]} />
-                            <meshBasicMaterial color={Math.floor(Date.now() / 900) % 2 === 0 ? '#ef4444' : '#450a0a'} toneMapped={false} />
-                        </mesh>
+                        <Blinker position={[0, 14, 0]} />
                     </group>
                 )}
                 {/* Window grid — rooms light up amber at night */}
@@ -1913,7 +1943,6 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
                     }
                     return winds;
                 })()}
-                {item.state === 'burning' && <pointLight color="#f97316" intensity={3} distance={40} position={[0, h / 2, 0]} />}
             </ClickableGroup>
         );
     } else {
@@ -1933,11 +1962,12 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
             leavesColor = "#262626"; // Ash
         } else if (item.state === 'burning') {
             const flicker = Math.floor(Date.now() / 100) % 2 === 0;
-            leavesColor = flicker ? "#f97316" : "#fbbf24"; // Fire
+            leavesColor = flicker ? "#f97316" : "#fbbf24"; // Fire (bloom via emissive below)
         } else if (item.state === 'broken') {
             rot = [Math.PI / 2, 0, seed % 3]; // Fallen
             yOffset = -5;
         }
+        const burningEmissive = item.state === 'burning' ? leavesColor : '#000000';
 
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
@@ -1953,15 +1983,15 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
                         <group>
                             <mesh position={[0, 34 * scaleMod, 0]} castShadow>
                                 <coneGeometry args={[22 * scaleMod, 28 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                             <mesh position={[0, 50 * scaleMod, 0]} castShadow>
                                 <coneGeometry args={[16 * scaleMod, 24 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                             <mesh position={[0, 64 * scaleMod, 0]} castShadow>
                                 <coneGeometry args={[10 * scaleMod, 20 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                         </group>
                     )}
@@ -1969,31 +1999,41 @@ const TerrainItem = ({ item, onCanvasClick, mapType }: { item: TerrainObject, on
                         <group>
                             <mesh position={[0, 50 * scaleMod, 0]} castShadow>
                                 <dodecahedronGeometry args={[22 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                             <mesh position={[12 * scaleMod, 42 * scaleMod, 6 * scaleMod]} castShadow>
                                 <dodecahedronGeometry args={[14 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                             <mesh position={[-11 * scaleMod, 44 * scaleMod, -5 * scaleMod]} castShadow>
                                 <dodecahedronGeometry args={[13 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} />
+                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                             </mesh>
                         </group>
                     )}
                     {type === 2 && ( // Poplar
                         <mesh position={[0, 45 * scaleMod, 0]} castShadow>
                             <cylinderGeometry args={[8 * scaleMod, 12 * scaleMod, 60 * scaleMod]} />
-                            <meshStandardMaterial color={leavesColor} />
+                            <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
                         </mesh>
                     )}
 
-                    {item.state === 'burning' && <pointLight color="#f97316" intensity={2} distance={30} decay={2} position={[0, 30, 0]} />}
                 </group>
             </ClickableGroup>
         );
     }
 };
+
+// Terrain only changes on state/health transitions — memoize aggressively.
+// Burning trees keep their flicker by opting out while state === 'burning'.
+const TerrainItem = React.memo(TerrainItemInner, (prev, next) =>
+    prev.item === next.item &&
+    prev.mapType === next.mapType &&
+    prev.onCanvasClick === next.onCanvasClick &&
+    prev.itemState === next.itemState &&
+    prev.itemHealth === next.itemHealth &&
+    next.itemState !== 'burning'
+);
 
 const Flyover3D = ({ fly }: { fly: any }) => {
     const altitude = 120; // Plane flight height
@@ -2108,7 +2148,7 @@ const Missile3D = ({ m }: { m: any }) => {
 }
 
 // Border Line Component
-const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) => void }) => {
+const BorderLine = React.memo(({ onCanvasClick }: { onCanvasClick: (x: number, y: number) => void }) => {
     const dashes = [];
     const centerX = 400;
     // Z range extended for infinite look
@@ -2121,10 +2161,10 @@ const BorderLine = ({ onCanvasClick }: { onCanvasClick: (x: number, y: number) =
         );
     }
     return <group>{dashes}</group>;
-};
+});
 
 // Horizon backdrop beyond the playfield: mountains, mesas or a city skyline
-const Backdrop = ({ mapType }: { mapType: MapType }) => {
+const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
     const items = useMemo(() => {
         const rand = (i: number, s: number) => { const v = Math.sin(i * 91.7 + s * 47.3) * 43758.5453; return v - Math.floor(v); };
         return Array.from({ length: 14 }, (_, i) => ({
@@ -2178,7 +2218,7 @@ const Backdrop = ({ mapType }: { mapType: MapType }) => {
             ))}
         </group>
     );
-};
+});
 
 // Soft clouds drifting slowly across the sky
 const CLOUD_DEFS = Array.from({ length: 7 }, (_, i) => {
@@ -2210,7 +2250,7 @@ const Clouds = () => {
 };
 
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
-const GroundScatter = ({ mapType }: { mapType: MapType }) => {
+const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
     const ref = useRef<THREE.InstancedMesh>(null!);
     const COUNT = 140;
     const active = mapType === MapType.COUNTRYSIDE || mapType === MapType.DESERT;
@@ -2243,9 +2283,9 @@ const GroundScatter = ({ mapType }: { mapType: MapType }) => {
             <meshStandardMaterial color={color} roughness={1} />
         </instancedMesh>
     );
-};
+});
 
-const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
+const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
     const groundColor =
         mapType === MapType.URBAN       ? '#374151' :
         mapType === MapType.DESERT      ? '#92400e' :
@@ -2301,7 +2341,7 @@ const GroundPlane = ({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick:
             ))}
         </group>
     );
-};
+});
 
 // -- Main Scene Component --
 
@@ -2332,7 +2372,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'snow'  ? 0.5 : 0.6;
 
     return (
-        <Canvas shadows camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
+        <Canvas shadows dpr={[1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}
@@ -2352,7 +2392,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 intensity={1.5 * (0.18 + 0.82 * dayFactor)}
                 color={sunColor}
                 castShadow
-                shadow-mapSize={[2048, 2048]}
+                shadow-mapSize={[1024, 1024]}
                 shadow-camera-left={-600}
                 shadow-camera-right={600}
                 shadow-camera-top={600}
@@ -2382,7 +2422,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments
-                    return <TerrainItem key={t.id} item={t} onCanvasClick={onCanvasClick} mapType={mapType} />;
+                    return <TerrainItem key={t.id} item={t} itemState={t.state} itemHealth={t.health} onCanvasClick={onCanvasClick} mapType={mapType} />;
                 })}
 
                 {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} />)}

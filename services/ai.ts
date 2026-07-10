@@ -1,6 +1,4 @@
 
-import { GoogleGenAI } from "@google/genai";
-
 // NOTE: The API key is assumed to be available in process.env.API_KEY
 export const getBattleCommentary = async (
   scoreWest: number,
@@ -8,7 +6,9 @@ export const getBattleCommentary = async (
   unitsWest: number,
   unitsEast: number
 ): Promise<string> => {
-  // Initialize GoogleGenAI with the API key from environment variables
+  // Lazy-load the SDK: it (plus protobufjs) is heavy and only needed when the
+  // commentary button is clicked, so keep it out of the main bundle.
+  const { GoogleGenAI } = await import("@google/genai");
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
   try {

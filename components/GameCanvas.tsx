@@ -374,8 +374,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
   }, [spawnQueue, spawnUnit, clearSpawnQueue]);
 
+  const tickCountRef = useRef(0);
+
   const update = useCallback(() => {
     const time = Date.now();
+    tickCountRef.current++;
+    // Staggers O(terrain)/O(units) searches: each unit re-evaluates every 4th tick
+    const isSearchTick = (u: Unit) =>
+      ((tickCountRef.current + u.id.charCodeAt(0) + u.id.charCodeAt(u.id.length - 1)) & 3) === 0;
 
     // Explosive damage to bridges; collapse blocks crossings until repaired
     const damageBridges = (x: number, y: number, radius: number, dmg: number) => {
@@ -787,7 +793,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Napalm Damage Logic
         const burnRadius = 60;
         const burnDamage = 1.0; // Per tick
-        unitsRef.current.forEach(other => {
+        spatialHash.current.queryCallback(unit.position.x, unit.position.y, burnRadius, other => {
           if (other.team !== unit.team && other.type !== UnitType.AIRBORNE && other.type !== UnitType.NAPALM) {
             const dist = Math.sqrt((other.position.x - unit.position.x) ** 2 + (other.position.y - unit.position.y) ** 2);
             if (dist < burnRadius) {
@@ -802,7 +808,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (unit.type === UnitType.MINE_PERSONAL || unit.type === UnitType.MINE_TANK) {
         const radius = unit.type === UnitType.MINE_PERSONAL ? 25 : 40;
         const damage = unit.type === UnitType.MINE_PERSONAL ? 50 : 120;
-        const nearbyEnemy = unitsRef.current.find(e => e.team !== unit.team && e.type !== UnitType.AIRBORNE && e.type !== UnitType.ENGINEER && Math.sqrt((e.position.x - unit.position.x) ** 2 + (e.position.y - unit.position.y) ** 2) < radius);
+        const nearbyEnemy = spatialHash.current.query(unit.position.x, unit.position.y, radius)
+          .find(e => e.team !== unit.team && e.type !== UnitType.AIRBORNE && e.type !== UnitType.ENGINEER && Math.sqrt((e.position.x - unit.position.x) ** 2 + (e.position.y - unit.position.y) ** 2) < radius);
 
         if (nearbyEnemy) {
           unit.health = 0; // Explode
@@ -843,7 +850,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       const config = UNIT_CONFIG[unit.type] as any;
       const currentScale = getScaleAt(unit.position.y);
-      unit.isOnHill = terrainRef.current.some(t => t.type === 'hill' && Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < t.size * 0.7);
+      if (unit.isOnHill === undefined || isSearchTick(unit)) {
+        unit.isOnHill = terrainRef.current.some(t => t.type === 'hill' && Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < t.size * 0.7);
+      }
       const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY ||
         unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA;
 
@@ -926,7 +935,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const hasEnemies = spatialHash.current.query(unit.position.x, unit.position.y, 600).some(u => u.team !== unit.team);
 
           // MEDIC: seek most-injured ally rather than advancing
-          if (unit.type === UnitType.MEDIC) {
+          if (unit.type === UnitType.MEDIC && isSearchTick(unit)) {
             const injured = unitsRef.current.filter(a =>
               a.team === unit.team && a.id !== unit.id &&
               a.health < a.maxHealth * 0.85 && !(UNIT_CONFIG[a.type] as any).isFlying
@@ -943,7 +952,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           // ENGINEER: walk to the nearest job (enemy mine or damaged bridge) in a wide radius
-          if (!movingToHill && unit.type === UnitType.ENGINEER) {
+          if (!movingToHill && unit.type === UnitType.ENGINEER && isSearchTick(unit)) {
             let jobX: number | null = null, jobY = 0, jobDist = 260;
             for (const m of unitsRef.current) {
               if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
@@ -992,7 +1001,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           // Hill seeking — forward-biased (don't retreat to hills behind you)
-          if (!movingToHill && !unit.isOnHill && hasEnemies) {
+          if (!movingToHill && !unit.isOnHill && hasEnemies && isSearchTick(unit)) {
             const fwdBias = unit.team === Team.WEST ? unit.position.x - 20 : unit.position.x + 20;
             const hill = terrainRef.current.find(t => {
               if (t.type !== 'hill') return false;
@@ -1050,7 +1059,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 } else {
                   moveX = 0; moveY = 0;
                 }
-              } else {
+              } else if (isSearchTick(unit)) {
                 // Under fire: search wider radius and allow retreating to cover
                 const coverBackBias = isUnderFire ? 60 : 30;
                 const coverSearchRadius = isUnderFire ? 240 : 175;
@@ -1541,8 +1550,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // Projectiles Logic
-    projectilesRef.current.forEach((p, i) => {
+    // Projectiles Logic (backwards: loop splices)
+    for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
+      const p = projectilesRef.current[i];
       p.position.x += p.velocity.x;
       p.position.y += p.velocity.y;
       p.distanceTraveled += PROJECTILE_SPEED;
@@ -1658,10 +1668,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
       }
-    });
+    }
 
 
-    particlesRef.current.forEach((p, i) => {
+    // Backwards loop: splicing inside forEach skips elements and is O(n²)
+    for (let i = particlesRef.current.length - 1; i >= 0; i--) {
+      const p = particlesRef.current[i];
       if (p.velocity) {
         p.position.x += p.velocity.x;
         p.position.y += p.velocity.y;
@@ -1676,7 +1688,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (p.alt < 0) p.alt = 0;
       }
       if (--p.life <= 0) particlesRef.current.splice(i, 1);
-    });
+    }
 
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
@@ -2012,7 +2024,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const now = performance.now();
             const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
             lastFrameTimeRef.current = now;
-            ticks = Math.min(600, Math.max(1, Math.round((elapsed / 16.7) * speedRef.current.speed)));
+            ticks = Math.min(240, Math.max(1, Math.round((elapsed / 16.7) * speedRef.current.speed)));
           }
           for (let s = 0; s < ticks; s++) {
             updateRef.current();

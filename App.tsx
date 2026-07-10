@@ -188,7 +188,9 @@ const App: React.FC = () => {
     // Removed local money deduction; GameCanvas handles it via moneyRef
   };
 
-  const handleCanvasClick = (x: number, y: number) => {
+  // Stable identity (recreated only when targeting/lane state changes) so the
+  // memoized scene components downstream can skip re-renders.
+  const handleCanvasClick = useCallback((x: number, y: number) => {
     if (targetingInfo) {
       // In 3D, any click returned by onCanvasClick is a valid ground position (x, z).
       // We accept it directly to allow spawning anywhere on the map.
@@ -206,7 +208,8 @@ const App: React.FC = () => {
       processSpawn(targetingInfo.team, targetingInfo.type, { x, y });
       setTargetingInfo(null);
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetingInfo, laneChoice]);
 
   // Keyboard Shortcuts
   useEffect(() => {
