@@ -20,6 +20,7 @@ import { SpatialHash } from '../utils/spatialHash';
 import { useState } from 'react';
 
 export type CpuDifficulty = 'easy' | 'normal' | 'hard';
+export type SpawnLane = 'top' | 'mid' | 'bot';
 
 // interval: spawn-cadence multiplier · incomeBonus: extra money per tick · special: tactics-chance multiplier
 const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number }> = {
@@ -30,7 +31,7 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
 
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
-  spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[];
+  spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }[];
   clearSpawnQueue: () => void;
   onCanvasClick: (x: number, y: number) => void;
   targetingInfo: { team: Team, type: UnitType } | null;
@@ -248,7 +249,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return MIN_SCALE + t * (MAX_SCALE - MIN_SCALE);
   };
 
-  const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }) => {
+  const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }) => {
     const config = UNIT_CONFIG[type] as any;
 
     if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE || type === UnitType.GUNSHIP) && options?.absolutePos) {
@@ -271,7 +272,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     let xPos = team === Team.WEST ? 30 : CANVAS_WIDTH - 30;
-    let yPos = HORIZON_Y + 50 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 100);
+    // Lane-biased spawn Y: top/mid/bot thirds of the playable band, else anywhere
+    const playTop = HORIZON_Y + 50;
+    const playH = CANVAS_HEIGHT - HORIZON_Y - 100;
+    let yPos =
+      options?.lane === 'top' ? playTop + Math.random() * (playH / 3) :
+      options?.lane === 'mid' ? playTop + playH / 3 + Math.random() * (playH / 3) :
+      options?.lane === 'bot' ? playTop + (2 * playH) / 3 + Math.random() * (playH / 3) :
+      playTop + Math.random() * playH;
 
     if (options?.absolutePos) { xPos = options.absolutePos.x; yPos = options.absolutePos.y; }
     else if (options?.offset) { xPos += options.offset.x; yPos += options.offset.y; }
@@ -297,7 +305,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     if (spawnQueue.length > 0) {
       spawnQueue.forEach(req => {
-        spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId });
+        spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
         if (req.cost) {
           moneyRef.current[req.team] = Math.max(0, moneyRef.current[req.team] - req.cost);
         }

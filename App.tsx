@@ -118,7 +118,8 @@ const TeslaIcon = ({ size = 20 }: { size?: number }) => (
 
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
-  const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string }[]>([]);
+  const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
+  const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
   const [gameState, setGameState] = useState<GameState>({
     units: [], projectiles: [], particles: [],
     score: { [Team.WEST]: 0, [Team.EAST]: 0 },
@@ -162,14 +163,15 @@ const App: React.FC = () => {
   const processSpawn = (team: Team, type: UnitType, absolutePos?: { x: number, y: number }) => {
     const cost = UNIT_CONFIG[type].cost;
     const squadId = Math.random().toString(36).substr(2, 5);
+    const lane = laneChoice[team] === 'random' ? undefined : laneChoice[team] as 'top' | 'mid' | 'bot';
     if (type === UnitType.SOLDIER) {
       const squad = Array.from({ length: 3 }, (_, i) => ({
-        team, type, squadId,
+        team, type, squadId, lane,
         cost: i === 0 ? cost : 0, // Assign full cost to the first unit
         offset: { x: (i % 2 === 0 ? -8 : 8) + (Math.random() * 4 - 2), y: (Math.floor(i / 2) * 15 - 10) + (Math.random() * 4 - 2) }
       }));
       setSpawnQueue(prev => [...prev, ...squad]);
-    } else setSpawnQueue(prev => [...prev, { team, type, cost, absolutePos, squadId: type === UnitType.AIRBORNE ? squadId : undefined }]);
+    } else setSpawnQueue(prev => [...prev, { team, type, cost, absolutePos, lane, squadId: type === UnitType.AIRBORNE ? squadId : undefined }]);
     // Removed local money deduction; GameCanvas handles it via moneyRef
   };
 
@@ -291,8 +293,28 @@ const App: React.FC = () => {
       </div>
     );
 
+    const laneOptions: { key: 'random' | 'top' | 'mid' | 'bot', label: string }[] = [
+      { key: 'random', label: '⤨' }, { key: 'top', label: '▲' }, { key: 'mid', label: '●' }, { key: 'bot', label: '▼' },
+    ];
+
     return (
       <div className={`flex flex-col gap-3 ${isWest ? "mr-4" : "ml-4"}`}>
+        {/* Spawn lane selector */}
+        <div className="flex flex-col gap-1">
+          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Lane</div>
+          <div className="flex gap-0.5 justify-center">
+            {laneOptions.map(o => (
+              <button
+                key={o.key}
+                title={o.key === 'random' ? 'Random lane' : `${o.key} lane`}
+                onClick={() => setLaneChoice(prev => ({ ...prev, [team]: o.key }))}
+                className={`w-5 h-5 text-[10px] leading-none rounded border transition-colors ${laneChoice[team] === o.key ? 'border-amber-400 bg-amber-900/70 text-amber-300' : 'border-stone-700 text-stone-500 hover:text-white'}`}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {renderGroup("Infantry", [
           { type: UnitType.SOLDIER, label: "SQUAD", icon: <SquadIcon size={16} /> },
           { type: UnitType.SNIPER, label: "SNIPER", icon: <SniperIcon size={16} /> },
