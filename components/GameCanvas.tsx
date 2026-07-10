@@ -68,7 +68,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const [viewSize, setViewSize] = useState({ w: 800, h: 450 });
   useEffect(() => {
     const compute = () => {
-      const availW = window.innerWidth - 270;  // side unit-button columns
+      const availW = window.innerWidth - 220;  // side unit-button columns (2-col compact grid)
       const availH = window.innerHeight - 230; // header + info panel
       let w = Math.min(availW, availH * (800 / 450));
       w = Math.max(640, Math.min(1440, w));

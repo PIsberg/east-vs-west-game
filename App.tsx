@@ -284,28 +284,32 @@ const App: React.FC = () => {
     };
 
     const renderGroup = (title: string, units: { type: UnitType, label: string, icon: React.ReactNode, special?: boolean }[]) => (
-      <div className="flex flex-col gap-1">
-        <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">{title}</div>
-        {units.map(({ type, label, icon, special }) => (
-          <button
-            key={type}
-            className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white p-1.5 rounded-lg shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible`}
-            onClick={() => handleSpawnRequest(team, type)}
-            disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
-          >
-            {icon}
-            <span className="font-bold text-[7px] uppercase leading-none mt-0.5">{label}</span>
-            <span className="text-[9px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5">{title}</div>
+        <div className="grid grid-cols-2 gap-0.5">
+          {units.map(({ type, label, icon, special }) => (
+            <button
+              key={type}
+              title={label}
+              className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
+              onClick={() => handleSpawnRequest(team, type)}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
+            >
+              <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
+              <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
+              <span className="text-[8px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
 
-            {/* Tooltip Popup */}
-            <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
-              <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
-              <div className="flex gap-2 text-stone-300">
-                {UNIT_COUNTERS[type as UnitType]}
+              {/* Tooltip Popup */}
+              <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
+                <div className="text-[9px] font-bold text-white uppercase whitespace-nowrap">{label} — ${UNIT_CONFIG[type].cost}</div>
+                <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
+                <div className="flex gap-2 text-stone-300">
+                  {UNIT_COUNTERS[type as UnitType]}
+                </div>
               </div>
-            </div>
-          </button>
-        ))}
+            </button>
+          ))}
+        </div>
       </div>
     );
 
@@ -319,7 +323,7 @@ const App: React.FC = () => {
     ];
 
     return (
-      <div className={`flex flex-col gap-3 ${isWest ? "mr-4" : "ml-4"}`}>
+      <div className={`flex flex-col gap-1.5 ${isWest ? "mr-2" : "ml-2"}`}>
         {/* Stance orders */}
         <div className="flex flex-col gap-1">
           <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
@@ -370,7 +374,8 @@ const App: React.FC = () => {
           { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
-          { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> }
+          { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },
+          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> }
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
@@ -378,9 +383,6 @@ const App: React.FC = () => {
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
           { type: UnitType.GUNSHIP, label: "GUNSHIP", icon: <Plane size={16} />, special: true },
           { type: UnitType.NUKE, label: "NUKE", icon: <Skull size={16} />, special: true },
-        ])}
-        {renderGroup("Defense", [
-          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
         ])}
       </div>
     );
