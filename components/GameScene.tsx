@@ -29,12 +29,14 @@ interface GameSceneProps {
     focusIds?: string[];
 }
 
-// Day/night cycle: full cycle every 4 minutes, starting at noon.
-// 1 = noon, 0 = deep night. Shared by scene lighting and building windows.
+// Day cycle WITHOUT the night: brightness breathes between full noon (1) and
+// a bright late afternoon (0.65) every 4 minutes. Real night made the
+// battlefield too dark to read, so the factor never drops below 0.65 —
+// night-only touches (building windows light up under 0.35) stay dormant.
 const DAY_CYCLE_MS = 240000;
 const getDayFactor = () => {
     const t = (Date.now() % DAY_CYCLE_MS) / DAY_CYCLE_MS;
-    return Math.max(0, Math.min(1, 0.5 + 0.65 * Math.sin(t * Math.PI * 2 + Math.PI / 2)));
+    return 0.825 + 0.175 * Math.sin(t * Math.PI * 2 + Math.PI / 2);
 };
 
 // Mid-map capture point: flag + capture-progress ring
