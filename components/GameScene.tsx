@@ -2973,7 +2973,16 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {crates?.map(c => <SupplyCrate3D key={c.id} crate={c} />)}
             </ShakeRig>
 
-            <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />
+            {/* Camera can tilt and swing across the front 180° arc, but never
+                orbit behind the battlefield — from the far side West/East would
+                appear mirrored and disorient the player. */}
+            <OrbitControls
+                target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]}
+                maxPolarAngle={Math.PI / 2.1}
+                minAzimuthAngle={-Math.PI / 2}
+                maxAzimuthAngle={Math.PI / 2}
+                onChange={(e) => { if (e) (window as any).__ewCamAz = (e.target as any).getAzimuthalAngle(); }}
+            />
 
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
