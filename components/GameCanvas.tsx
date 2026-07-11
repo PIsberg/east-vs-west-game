@@ -59,6 +59,102 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
   hard:   { interval: 0.62, incomeBonus: 0.15, special: 1.5, counterSmart: 1.0, commands: 1.2, stanceIQ: true },
 };
 
+// Tactical minimap: a Canvas-2D overview drawn straight from the engine refs at
+// ~7fps. Terrain (river, bridges, hills, buildings), smoke, the capture point and
+// every fielded unit as a team-colored dot; air units render as a small cross.
+const AIR_TYPES = new Set([UnitType.HELICOPTER, UnitType.FIGHTER, UnitType.DRONE, UnitType.GUNSHIP]);
+
+const MiniMap: React.FC<{
+  unitsRef: React.MutableRefObject<Unit[]>;
+  terrainRef: React.MutableRefObject<TerrainObject[]>;
+  smokesRef: React.MutableRefObject<SmokeZone[]>;
+  captureRef: React.MutableRefObject<CapturePoint>;
+  compact?: boolean;
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, compact }) => {
+  const cvRef = useRef<HTMLCanvasElement>(null);
+  const W = compact ? 104 : 150;
+  const H = compact ? 48 : 68;
+
+  useEffect(() => {
+    // Battle happens between the horizon and the bottom edge; map that band.
+    const Y0 = HORIZON_Y - 10;
+    const sx = W / CANVAS_WIDTH;
+    const sy = H / (CANVAS_HEIGHT - Y0);
+    const mx = (x: number) => x * sx;
+    const my = (y: number) => (y - Y0) * sy;
+
+    const draw = () => {
+      const ctx = cvRef.current?.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = 'rgba(28, 37, 26, 0.92)';
+      ctx.fillRect(0, 0, W, H);
+
+      for (const t of terrainRef.current) {
+        if (t.type === 'river') {
+          ctx.fillStyle = '#27546b';
+          ctx.fillRect(mx(t.x - (t.width ?? 40) / 2), my(t.y - (t.height ?? 22) / 2),
+            Math.max(1.5, (t.width ?? 40) * sx), Math.max(1.5, (t.height ?? 22) * sy));
+        } else if (t.type === 'hill') {
+          ctx.fillStyle = 'rgba(96, 88, 60, 0.5)';
+          ctx.beginPath();
+          ctx.arc(mx(t.x), my(t.y), Math.max(1.5, t.size * sx * 0.55), 0, Math.PI * 2);
+          ctx.fill();
+        } else if (t.type === 'building') {
+          ctx.fillStyle = 'rgba(120, 113, 108, 0.55)';
+          const s = Math.max(1.5, (t.width ?? t.size) * sx * 0.7);
+          ctx.fillRect(mx(t.x) - s / 2, my(t.y) - s / 2, s, s);
+        }
+      }
+      for (const t of terrainRef.current) {
+        if (t.type !== 'bridge') continue;
+        ctx.fillStyle = '#a8825f';
+        ctx.fillRect(mx(t.x - (t.width ?? 85) / 2), my(t.y - (t.height ?? 40) / 2),
+          Math.max(2, (t.width ?? 85) * sx), Math.max(2, (t.height ?? 40) * sy));
+      }
+      for (const s of smokesRef.current) {
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.3)';
+        ctx.beginPath();
+        ctx.arc(mx(s.x), my(s.y), Math.max(2, s.radius * sx), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const cap = captureRef.current;
+      ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? '#f87171' : '#fbbf24';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
+      ctx.stroke();
+
+      for (const u of unitsRef.current) {
+        if (u.boarded) continue;
+        const x = mx(u.position.x), y = my(u.position.y);
+        ctx.fillStyle = u.team === Team.WEST ? '#60a5fa' : '#f87171';
+        if (AIR_TYPES.has(u.type)) {
+          ctx.fillRect(x - 1.8, y - 0.6, 3.6, 1.2);
+          ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
+        } else {
+          ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+      }
+    };
+
+    draw();
+    const id = window.setInterval(draw, 150);
+    return () => window.clearInterval(id);
+  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef]);
+
+  return (
+    <canvas
+      ref={cvRef}
+      width={W}
+      height={H}
+      data-testid="minimap"
+      className="absolute top-2 right-2 z-30 rounded border border-stone-600/80 shadow-lg pointer-events-none opacity-90"
+    />
+  );
+};
+
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
   spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }[];
@@ -2886,6 +2982,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           </button>
         ))}
       </div>
+
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} compact={compact} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
