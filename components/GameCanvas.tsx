@@ -238,6 +238,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
+
+  // End-of-game audio: fanfare when a human side wins (or in spectate),
+  // a somber sting when the CPU takes it. Both stop the battle music.
+  useEffect(() => {
+    if (!gameOver) return;
+    const humanWon = !cpuRef.current.teams.includes(gameOver);
+    if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
+    else soundService.playDefeatSound();
+  }, [gameOver]);
   // Latest selection callback for use inside the stale tick closure (debug hook)
   const onSelectUnitsRef = useRef(onSelectUnits);
   useEffect(() => { onSelectUnitsRef.current = onSelectUnits; }, [onSelectUnits]);

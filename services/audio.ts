@@ -184,6 +184,38 @@ class SoundService {
     });
   }
 
+  // ── Victory fanfare — triumphant ascending bugle resolution ──────────────
+  public playVictorySound() {
+    if (!this.ctx || !this.canPlay('victory', 5000)) return;
+    this.ensureContext();
+    this.stopMusic();
+    const t = this.ctx.currentTime + 0.05;
+    const C5 = 523.25, E5 = 659.25, G5 = 784, C6 = 1046.5;
+    this.snare(t, 0.2); this.snare(t + 0.12, 0.22); this.kick(t + 0.24);
+    this.trumpet(C5, t + 0.26, 0.16, 0.36);
+    this.trumpet(E5, t + 0.44, 0.16, 0.36);
+    this.trumpet(G5, t + 0.62, 0.2, 0.4);
+    this.kick(t + 0.9); this.snare(t + 0.9, 0.3);
+    this.trumpet(C6, t + 0.92, 0.9, 0.46);
+    this.trumpet(G5, t + 0.92, 0.9, 0.3);
+    this.snare(t + 1.8, 0.22); this.kick(t + 1.9, 0.7);
+  }
+
+  // ── Defeat sting — slow descending minor lament ──────────────────────────
+  public playDefeatSound() {
+    if (!this.ctx || !this.canPlay('defeat', 5000)) return;
+    this.ensureContext();
+    this.stopMusic();
+    const t = this.ctx.currentTime + 0.05;
+    const C5 = 523.25, Ab4 = 415.3, F4 = 349.23, C4 = 261.63;
+    this.kick(t, 0.6);
+    this.trumpet(C5, t + 0.1, 0.5, 0.3);
+    this.trumpet(Ab4, t + 0.65, 0.5, 0.3);
+    this.trumpet(F4, t + 1.2, 0.55, 0.3);
+    this.kick(t + 1.85, 0.7);
+    this.trumpet(C4, t + 1.9, 1.4, 0.34);
+  }
+
   // ── Rally Horn — quick ascending bugle call ──────────────────────────────
   public playRallySound() {
     if (!this.ctx || !this.canPlay('rally', 2000)) return;
