@@ -24,6 +24,7 @@ The first team to reach **100 Points** wins.
 #### Mouse
 - **Click Unit Buttons** (Left/Right side) to spawn units.
 - **Click Terrain**: Inspect terrain or targeting (for airstrikes).
+- **Camera**: Drag to swing the view (locked to the front 180°), scroll/pinch to zoom — or use the **◀ ▶ + − ⌂ buttons** in the battlefield's corner (hold to keep moving, ⌂ resets the view).
 - **Click an Enemy Unit**: Your army focus-fires it for 6 seconds.
 - **Orders** (per side): Advance / Hold / Fall Back stances.
 - **Troop Control**: Click one of **your own units** to select it (squad-spawned infantry selects as a squad); **double-click to select every unit of that type**. An order panel appears: **⚔ Attack / ⛨ Hold / ⏪ Fall Back / Follow Team**. Per-unit orders override the team stance; a colored dot above each unit shows its personal order. Click open ground or press Esc to deselect.
