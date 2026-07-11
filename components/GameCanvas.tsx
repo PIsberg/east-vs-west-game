@@ -242,6 +242,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const onSelectUnitsRef = useRef(onSelectUnits);
   useEffect(() => { onSelectUnitsRef.current = onSelectUnits; }, [onSelectUnits]);
 
+  // On-screen camera buttons: GameScene hands us an imperative zoom/pan/reset
+  // API; holding a button repeats its action for smooth motion.
+  const camApiRef = useRef<{ zoom: (f: number) => void; pan: (dx: number) => void; reset: () => void } | null>(null);
+  const handleCameraApi = useCallback((api: { zoom: (f: number) => void; pan: (dx: number) => void; reset: () => void }) => { camApiRef.current = api; }, []);
+  const camHoldRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const camHoldStop = () => { if (camHoldRef.current) { clearInterval(camHoldRef.current); camHoldRef.current = null; } };
+  const camHoldStart = (fn: () => void, repeat = true) => {
+    fn();
+    camHoldStop();
+    if (repeat) camHoldRef.current = setInterval(fn, 40);
+  };
+
   // Debug Keys
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2799,6 +2811,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         crates={cratesRef.current}
         smokes={smokesRef.current}
         selectedIds={selectedIds}
+        onCameraApi={handleCameraApi}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}
@@ -2818,6 +2831,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           pointerEvents: 'none', zIndex: 100
         }} />
       )}
+
+      {/* Camera controls: tap or hold to scroll and zoom, ⌂ resets the view */}
+      <div className="absolute bottom-2 right-2 z-40 flex gap-1 select-none">
+        {([
+          { icon: '◀', title: 'Scroll left (hold)', act: () => camApiRef.current?.pan(-14), repeat: true },
+          { icon: '▶', title: 'Scroll right (hold)', act: () => camApiRef.current?.pan(14), repeat: true },
+          { icon: '+', title: 'Zoom in (hold)', act: () => camApiRef.current?.zoom(0.96), repeat: true },
+          { icon: '−', title: 'Zoom out (hold)', act: () => camApiRef.current?.zoom(1.045), repeat: true },
+          { icon: '⌂', title: 'Reset view', act: () => camApiRef.current?.reset(), repeat: false },
+        ] as const).map(b => (
+          <button
+            key={b.icon}
+            title={b.title}
+            onPointerDown={(e) => { e.stopPropagation(); camHoldStart(b.act, b.repeat); }}
+            onPointerUp={camHoldStop}
+            onPointerLeave={camHoldStop}
+            onPointerCancel={camHoldStop}
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-7 h-7 rounded border border-stone-600 bg-stone-900/80 text-stone-300 text-sm leading-none hover:text-white hover:border-stone-400 active:bg-stone-700 transition-colors touch-none"
+          >
+            {b.icon}
+          </button>
+        ))}
+      </div>
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">

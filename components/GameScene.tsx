@@ -19,6 +19,8 @@ interface GameSceneProps {
     crates?: SupplyCrate[];
     smokes?: SmokeZone[];
     selectedIds?: string[];
+    // Imperative camera controls for the on-screen zoom/scroll buttons
+    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void }) => void;
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -2881,9 +2883,47 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds, selectedIds }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
 
-
+    // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
+    // the camera's offset from the target (OrbitControls' min/maxDistance
+    // clamp it on update); pan slides target + camera along the screen-right
+    // axis projected on the ground plane, with the target kept on the map.
+    const controlsRef = useRef<any>(null);
+    useEffect(() => {
+        const api = {
+            zoom: (factor: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const cam = c.object;
+                cam.position.sub(c.target).multiplyScalar(factor).add(c.target);
+                c.update();
+            },
+            pan: (dx: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const cam = c.object;
+                const right = new THREE.Vector3();
+                cam.getWorldDirection(right);
+                right.cross(cam.up).setY(0).normalize().multiplyScalar(dx);
+                const before = c.target.clone();
+                c.target.add(right);
+                c.target.x = Math.max(40, Math.min(CANVAS_WIDTH - 40, c.target.x));
+                c.target.z = Math.max(40, Math.min(CANVAS_HEIGHT - 40, c.target.z));
+                cam.position.add(c.target.clone().sub(before)); // apply the clamped delta
+                c.update();
+            },
+            reset: () => { controlsRef.current?.reset(); },
+        };
+        // Snapshot the initial framing so reset() returns exactly here.
+        // OrbitControls mounts async inside the R3F canvas, so retry briefly.
+        const save = setInterval(() => {
+            if (controlsRef.current) { controlsRef.current.saveState(); clearInterval(save); }
+        }, 100);
+        onCameraApi?.(api);
+        (window as any).__ewCam = { ...api, state: () => { const c = controlsRef.current; return c ? { dist: c.object.position.distanceTo(c.target), tx: c.target.x, tz: c.target.z } : null; } };
+        return () => clearInterval(save);
+    }, [onCameraApi]);
 
     // Day/night factor blended on top of the weather palette.
     const dayFactor = getDayFactor();
@@ -2977,10 +3017,13 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 orbit behind the battlefield — from the far side West/East would
                 appear mirrored and disorient the player. */}
             <OrbitControls
+                ref={controlsRef}
                 target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]}
                 maxPolarAngle={Math.PI / 2.1}
                 minAzimuthAngle={-Math.PI / 2}
                 maxAzimuthAngle={Math.PI / 2}
+                minDistance={220}
+                maxDistance={1250}
                 onChange={(e) => { if (e) (window as any).__ewCamAz = (e.target as any).getAzimuthalAngle(); }}
             />
 
