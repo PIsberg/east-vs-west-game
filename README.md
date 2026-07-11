@@ -1,6 +1,8 @@
 # East vs West 3D
 
-A tug-of-war strategy game inspired by classic lane defense games. Command the West or East team, deploy units, and push to the enemy edge to claim victory! Available online here: https://pisberg.github.io/east-vs-west-game/
+A real-time tug-of-war strategy game inspired by the classic Commodore Amiga title **[North & South](https://en.wikipedia.org/wiki/North_%26_South_(video_game))** (Infogrames, 1989). Command the West or East team, deploy units, and push to the enemy edge to claim victory! Available online here: https://pisberg.github.io/east-vs-west-game/
+
+Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Four battlefields, two win modes (**100 Points** or **Base HP**).
 
 ![east-vs-west1-PXL_20260102_152535277](https://github.com/user-attachments/assets/7f40c567-b98a-412a-bc20-ab26f77321eb)
 
@@ -45,6 +47,8 @@ The first team to reach **100 Points** wins.
 | **Squad** | Basic grunts. Cheap & swarmable. | Splash damage, Snipers. |
 | **Sniper** | **Long Range** specialist. High damage, slow reload. 30% Miss chance. | Swarms, Close combat. |
 | **Rambo** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
+| **Flamer** | Short-range cone of fire that ignores cover. | Snipers, anything with range. |
+| **Medic** | Heals nearby wounded troops. Unarmed. | Everything that shoots. |
 | **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
 | **Engineer** | Detects & defuses enemy mines, repairs bridges. Unarmed. | Everything that shoots. |
 | **Mortar** | Indirect splash fire at long range. Stops to shoot. | Rushes, Snipers. |
@@ -55,9 +59,12 @@ The first team to reach **100 Points** wins.
 | **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
 | **Truck** | **Troop transport**. Scoops up 6 foot soldiers in your half, delivers them to the front. Unarmed; survivors bail out if it dies. | Everything. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
+| **Tesla** | Chain-lightning vehicle. Melts infantry, ignores vehicles entirely. | Tanks, Helicopters. |
+| **APC** | Armored fighting vehicle; disgorges 3 soldiers when destroyed. | Anti-tank fire. |
 | **Artillery** | **Siege Unit**. Massive range & Splash damage. Stationary when firing. | Fast units, Air attacks. |
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |
 | **T. Mine** | Anti-Tank trap. High damage massive explosion. | Infantry (trigger radius). |
+| **Bunker** | Static strongpoint placed anywhere on your half. | Artillery, being bypassed. |
 
 ### Air Support
 | Unit | Role | Note |
@@ -70,6 +77,7 @@ The first team to reach **100 Points** wins.
 | **Missile** | **Precision Strike**. High damage to single point. | - |
 | **Smoke** | **Concealment**. Blocks targeting into/out of the cloud (~13s). Counters snipers & artillery. | Close assaults, Air units. |
 | **Cruise Missile** | Sea-launched from beyond the map edge. Flies in low, big warhead. | Cost. |
+| **Gunship** | Heavy flyover: rakes the target zone with a burst-fire strafing run. | Anti-Air (AA). |
 | **Satellite Laser** | Orbital beam: red designator, then a sustained burn that melts a zone. | Cost, telegraphed. |
 | **Nuke** | **Mass Destruction**. Huge area damage. Friendly Fire Enabled! | Use with caution! |
 
@@ -84,6 +92,12 @@ The first team to reach **100 Points** wins.
 - **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 - **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
+
+---
+
+## 🕹️ Inspiration
+
+East vs West is a loving nod to **[North & South](https://en.wikipedia.org/wiki/North_%26_South_(video_game))** (Infogrames, 1989), the Amiga/Commodore-era classic based on the *Les Tuniques Bleues* comics: two armies tugging over one front line, battles you can pick up and play in seconds, and a tone that never takes the war too seriously. This project reimagines that spirit as a modern real-time 3D lane battle — with a procedural military march instead of a chiptune, and a nuke button the original never dared to ship.
 
 ---
 
