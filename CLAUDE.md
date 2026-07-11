@@ -68,7 +68,7 @@ Weather cycle (rain/snow/fog/storm with combat penalties + lightning strikes), m
 
 ### Mobile / compact layout
 
-`App.tsx` derives `compact` from `window.innerHeight < 520` (mobile landscape): slim header (no title, tight gaps), scrollable side unit panels (`max-h-[calc(100dvh-88px)]`), single-line command-bar buttons, and the field manual hidden behind a header **Manual** toggle (`showManual`, defaults on for desktop). `GameCanvas`'s viewport compute takes a `compact` prop (smaller chrome allowances, drops the 640px canvas floor to 300). Portrait mobile (`innerWidth < 700 && portrait`) shows a full-screen rotate prompt. Keep new HUD chrome inside these budgets or the canvas shrinks.
+`App.tsx` derives `compact` from `window.innerHeight < 520` (mobile landscape): slim header (no title, tight gaps), scrollable side unit panels, single-line command-bar buttons, a compact splash menu, and the field manual hidden behind a header **Manual** toggle (`showManual`, defaults on for desktop). Portrait mobile (`innerWidth < 700 && portrait`) shows a full-screen rotate prompt. Canvas sizing is measured, not estimated: `App.tsx` holds refs on the header, both side panels and the command bar, computes the exact space between them (a `ResizeObserver` + resize/orientation listeners re-run it) and passes `viewW`/`viewH` to `GameCanvas`, which uses them verbatim (its internal window-based compute is only a fallback when those props are absent). The battlefield therefore fills the gap between the toolbars on any screen — height-limited on phones, width-limited on desktop. With the manual open on desktop the page simply scrolls; the play area keeps the viewport.
 
 ### Rendering performance
 
