@@ -2167,15 +2167,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           scoreRef.current[unit.team] += breakthroughValue;
         }
 
-        // Dollar Sign Animation
+        // Breakthrough feedback: the points it scored + the 50% refund
         particlesRef.current.push({
           id: generateId(),
           position: { x: unit.position.x, y: unit.position.y },
-          velocity: { x: 0, y: 0.5 }, // Float up
-          life: 90,
-          color: '#22c55e', // Green for money
-          size: 8, // Scale for 3D text
-          text: '$'
+          velocity: { x: 0, y: 0.55 },
+          life: 100,
+          color: '#fbbf24',
+          size: 9,
+          text: gameModeRef.current === 'basehp' ? `-${breakthroughValue} HP` : `+${breakthroughValue}${breakthroughValue > 1 ? ' ★' : ''}`,
+        });
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: unit.position.x, y: unit.position.y + 14 },
+          velocity: { x: 0, y: 0.45 },
+          life: 80,
+          color: '#22c55e',
+          size: 6,
+          text: `+$${Math.floor(UNIT_CONFIG[unit.type].cost * 0.5)}`,
         });
 
         // Win Condition Check (points mode)
@@ -2369,6 +2378,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (reward > 0) {
         const killerTeam = u.team === Team.WEST ? Team.EAST : Team.WEST;
         moneyRef.current[killerTeam] += reward;
+        // Bounty popup at the kill site — only for meaningful rewards so
+        // massed squad deaths don't wallpaper the field with text
+        if (reward >= 15) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: u.position.x, y: u.position.y },
+            velocity: { x: 0, y: 0.5 },
+            life: 60,
+            color: '#4ade80',
+            size: 5,
+            text: `+$${reward}`,
+          });
+        }
       }
 
       if (u.type === UnitType.APC) {
