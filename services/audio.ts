@@ -150,6 +150,23 @@ class SoundService {
   }
 
   // ── Rocket / AA missile ──────────────────────────────────────────────────
+  // Mortar launch — hollow tube "thoonk", much lighter than the artillery boom
+  public playMortarThunk() {
+    if (!this.ctx || !this.canPlay('mortar', 200)) return;
+    this.ensureContext();
+    const buf = this.noise(0.12, (i, n) => Math.pow(1 - i / n, 2.2));
+    if (buf) this.playNoise(buf, 'bandpass', 420, 150, 0.3, 0.12);
+    this.playOsc('sine', 180, 55, 0.3, 0.16);
+  }
+
+  // Drone burst — light high-pitched energy zip
+  public playDroneZip() {
+    if (!this.ctx || !this.canPlay('drone', 90)) return;
+    this.ensureContext();
+    this.playOsc('square', 1900, 700, 0.05, 0.08);
+    this.playOsc('sine', 2400, 1100, 0.04, 0.06);
+  }
+
   public playRocketSound() {
     if (!this.ctx || !this.canPlay('rocket', 130)) return;
     this.ensureContext();

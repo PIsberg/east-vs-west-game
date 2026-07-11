@@ -2257,9 +2257,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER) soundService.playHeavyShot();
-              else if (unit.type === UnitType.ARTILLERY || unit.type === UnitType.MORTAR) soundService.playArtilleryFire();
+              else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
+              else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
               else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
               else if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) soundService.playRocketSound();
+              else if (unit.type === UnitType.DRONE) soundService.playDroneZip();
               else soundService.playRifleShot();
             }
           }
