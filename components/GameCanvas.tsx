@@ -1291,6 +1291,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           else if (fly.type === UnitType.AIRBORNE) {
             const config = UNIT_CONFIG[UnitType.AIRBORNE];
             for (let j = 0; j < 3; j++) unitsRef.current.push({ id: generateId(), team: fly.team, type: UnitType.AIRBORNE, position: { x: fly.targetPos.x + (j - 1) * 25, y: fly.targetPos.y }, state: UnitState.MOVING, health: config.health, maxHealth: config.health, attackCooldown: 0, targetId: null, width: config.width, height: config.height, spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY });
+            // Dropped troops bypass spawnUnit — keep built/spawned telemetry honest
+            statsRef.current[fly.team].built += 3;
+            const ats = typeStatsRef.current[fly.team];
+            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + 3;
           }
         }
       }
