@@ -79,6 +79,7 @@ interface GameCanvasProps {
   clearOrderQueue: () => void;
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
+  compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -100,6 +101,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   clearOrderQueue,
   onSelectUnits,
   selectedIds,
+  compact,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -108,16 +110,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const [viewSize, setViewSize] = useState({ w: 800, h: 450 });
   useEffect(() => {
     const compute = () => {
-      const availW = window.innerWidth - 220;  // side unit-button columns (2-col compact grid)
-      const availH = window.innerHeight - 285; // header + command bar + info panel
+      // Chrome around the canvas: side unit-button columns horizontally,
+      // header + command bar (+ info panel on desktop) vertically. Compact
+      // (mobile landscape) trims all of it and drops the desktop size floor.
+      const availW = window.innerWidth - (compact ? 200 : 220);
+      const availH = window.innerHeight - (compact ? 126 : 285);
       let w = Math.min(availW, availH * (800 / 450));
-      w = Math.max(640, Math.min(1440, w));
+      w = Math.max(compact ? 300 : 640, Math.min(1440, w));
       setViewSize({ w: Math.round(w), h: Math.round(w * (450 / 800)) });
     };
     compute();
     window.addEventListener('resize', compute);
-    return () => window.removeEventListener('resize', compute);
-  }, []);
+    window.addEventListener('orientationchange', compute);
+    return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); };
+  }, [compact]);
 
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
