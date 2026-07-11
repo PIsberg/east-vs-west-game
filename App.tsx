@@ -552,11 +552,11 @@ const App: React.FC = () => {
             alt="East vs West"
             className="absolute inset-0 w-full h-full object-contain md:object-cover"
           />
-          <div className="relative z-10 flex flex-col items-center gap-4 select-none" onClick={e => e.stopPropagation()}>
+          <div className={`relative z-10 flex flex-col items-center select-none ${compact ? 'gap-1.5' : 'gap-4'}`} onClick={e => e.stopPropagation()}>
             {/* Map Selection */}
-            <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 border border-stone-600 mb-1">
-              <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Select Battlefield</p>
-              <div className="grid grid-cols-4 gap-2">
+            <div className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 mb-1 ${compact ? 'p-1.5' : 'p-3'}`}>
+              <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Select Battlefield</p>
+              <div className={`grid grid-cols-4 ${compact ? 'gap-1' : 'gap-2'}`}>
                 {([
                   { type: MapType.COUNTRYSIDE, label: 'Countryside', desc: 'Rivers & forests', color: 'text-green-400' },
                   { type: MapType.URBAN,       label: 'Urban',       desc: 'City walls & rubble', color: 'text-slate-300' },
@@ -566,34 +566,34 @@ const App: React.FC = () => {
                   <button
                     key={m.type}
                     onClick={() => setMapType(m.type)}
-                    className={`px-3 py-2 rounded border text-center transition-all ${mapType === m.type ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}
+                    className={`rounded border text-center transition-all ${compact ? 'px-1.5 py-1' : 'px-3 py-2'} ${mapType === m.type ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}
                   >
-                    <div className={`text-xs font-bold uppercase ${m.color}`}>{m.label}</div>
-                    <div className="text-stone-500 text-[9px] mt-0.5">{m.desc}</div>
+                    <div className={`font-bold uppercase ${compact ? 'text-[10px]' : 'text-xs'} ${m.color}`}>{m.label}</div>
+                    {!compact && <div className="text-stone-500 text-[9px] mt-0.5">{m.desc}</div>}
                   </button>
                 ))}
               </div>
             </div>
 
             {/* Side & CPU Opponent Selection */}
-            <div className="bg-black/70 backdrop-blur-sm rounded-lg p-3 border border-stone-600 mb-1 flex gap-6 items-center">
+            <div className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 mb-1 flex items-center ${compact ? 'p-1.5 gap-3' : 'p-3 gap-6'}`}>
               <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Play As</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setPlayerSide(Team.WEST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-blue-400 transition-all ${playerSide === Team.WEST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>West</button>
-                  <button onClick={() => setPlayerSide(Team.EAST)} className={`px-3 py-1.5 rounded border text-xs font-bold uppercase text-red-400 transition-all ${playerSide === Team.EAST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>East</button>
+                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Play As</p>
+                <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
+                  <button onClick={() => setPlayerSide(Team.WEST)} className={`rounded border font-bold uppercase text-blue-400 transition-all ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} ${playerSide === Team.WEST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>West</button>
+                  <button onClick={() => setPlayerSide(Team.EAST)} className={`rounded border font-bold uppercase text-red-400 transition-all ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} ${playerSide === Team.EAST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>East</button>
                 </div>
               </div>
               <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">Win Mode</p>
-                <div className="flex gap-2">
-                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
-                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Win Mode</p>
+                <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
+                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
+                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
                 </div>
               </div>
               <div>
-                <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">CPU Opponent</p>
-                <div className="flex gap-2">
+                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>CPU Opponent</p>
+                <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
                   {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
                     <button
                       key={l}
@@ -604,20 +604,20 @@ const App: React.FC = () => {
                         normal: 'Reads your composition, counter-picks and calls strikes',
                         hard: 'Fast and ruthless: perfect counters, economy & rally usage, and battlefield maneuvers',
                       }[l]}
-                      className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}
+                      className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}
                     >{l}</button>
                   ))}
                 </div>
               </div>
             </div>
             <button
-              className="px-10 py-3 bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black text-lg uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all"
+              className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
             >
               ▶ DEPLOY FORCES
             </button>
-            <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>
-            <span className="text-stone-500 text-[10px] tracking-wide max-w-md text-center">
+            {!compact && <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>}
+            <span className={`text-stone-500 tracking-wide text-center ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
             </span>
           </div>

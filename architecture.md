@@ -1,7 +1,9 @@
 # East vs West 3D - Architecture Documentation
 
 ## Overview
-**East vs West 3D** is a tug-of-war strategy game built with React and Three.js. The game features a hybrid architecture where game logic runs in a high-performance loop separate from the React render cycle, while 3D rendering is handled by `@react-three/fiber`.
+**East vs West 3D** is a tug-of-war strategy game built with React and Three.js, inspired by the Commodore Amiga classic *North & South* (Infogrames, 1989). The game features a hybrid architecture where game logic runs in a high-performance loop separate from the React render cycle, while 3D rendering is handled by `@react-three/fiber`.
+
+> Note: files live at the repository root (`App.tsx`, `components/`, `services/`, `utils/`) — there is no `/src` directory. Where this document disagrees with `CLAUDE.md`, trust `CLAUDE.md`.
 
 ## Technology Stack
 
