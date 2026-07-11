@@ -29,6 +29,7 @@ The first team to reach **100 Points** wins.
 - **Field Repairs**: Wounded units heal slowly near their own edge when out of combat — pull damaged veterans back with **Fall Back** instead of feeding kills to the enemy.
 - **Battle Feed**: Key events (big-unit kills, bridges, supply drops, capture point, nukes) scroll by in the lower-left corner.
 - **Sound & Music**: Toggle SFX mute and the procedural battle-march from the top bar; settings and your menu choices (map, side, CPU level, win mode) are remembered between visits.
+- **Mobile**: Play on your phone in **landscape** — the layout switches to a compact battle view (slim header, scrollable unit panels) and the field manual is tucked behind the **Manual** button in the top bar (toggleable on desktop too). Portrait shows a rotate prompt.
 
 #### Keyboard Shortcuts
 - **West Team (Left)**: `1` - `0`, `-`, `=`

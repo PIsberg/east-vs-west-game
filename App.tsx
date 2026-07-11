@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
-import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone } from 'lucide-react';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -180,6 +180,21 @@ const App: React.FC = () => {
 
   const [cmdHint, setCmdHint] = useState(false);
   const [troopHint, setTroopHint] = useState(false);
+
+  // Compact layout for mobile landscape (short viewports); portrait phones
+  // get a rotate prompt instead of a broken squeeze.
+  const [compact, setCompact] = useState(() => window.innerHeight < 520);
+  const [isPortraitMobile, setIsPortraitMobile] = useState(() => window.innerWidth < 700 && window.innerHeight > window.innerWidth);
+  const [showManual, setShowManual] = useState(() => window.innerHeight >= 520);
+  useEffect(() => {
+    const onResize = () => {
+      setCompact(window.innerHeight < 520);
+      setIsPortraitMobile(window.innerWidth < 700 && window.innerHeight > window.innerWidth);
+    };
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
+  }, []);
 
   const handleStartClick = () => {
     soundService.playIntroJingle();
@@ -387,7 +402,7 @@ const App: React.FC = () => {
     ];
 
     return (
-      <div className={`flex flex-col gap-1.5 ${isWest ? "mr-2" : "ml-2"}`}>
+      <div className={`flex flex-col gap-1.5 ${isWest ? (compact ? 'mr-1' : 'mr-2') : (compact ? 'ml-1' : 'ml-2')} ${compact ? 'max-h-[calc(100dvh-88px)] overflow-y-auto overscroll-contain' : ''}`}>
         {/* Stance orders */}
         <div className="flex flex-col gap-1">
           <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
@@ -468,7 +483,7 @@ const App: React.FC = () => {
     if (humanTeams.length === 0) return null;
     const now = Date.now();
     return (
-      <div className="flex justify-center gap-4 mt-2">
+      <div className={`flex justify-center ${compact ? 'gap-2 mt-1' : 'gap-4 mt-2'}`}>
         {humanTeams.map(team => {
           const isWest = team === Team.WEST;
           const money = gameState.money[team];
@@ -480,7 +495,7 @@ const App: React.FC = () => {
           const rallyCd = !!rally && now < rally.readyAt && !rallyActive;
           const cdLeft = rally ? Math.ceil((rally.readyAt - now) / 1000) : 0;
           return (
-            <div key={team} className={`flex items-center gap-2 bg-stone-800 rounded-lg px-3 py-1.5 border shadow-lg ${cmdHint ? 'border-amber-400 animate-pulse' : 'border-stone-600'}`}>
+            <div key={team} className={`flex items-center gap-2 bg-stone-800 rounded-lg border shadow-lg ${compact ? 'px-2 py-1' : 'px-3 py-1.5'} ${cmdHint ? 'border-amber-400 animate-pulse' : 'border-stone-600'}`}>
               <div className={`flex flex-col items-center leading-none ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
                 <span className="text-[9px] font-black uppercase tracking-widest">{isWest ? 'West' : 'East'}</span>
                 <span className="text-[8px] text-stone-500 uppercase tracking-wider mt-0.5">Command</span>
@@ -491,10 +506,10 @@ const App: React.FC = () => {
                 disabled={econMaxed || money < econCost}
                 className="flex items-center gap-2 px-3 py-1.5 rounded border border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400 transition-colors active:scale-95 disabled:opacity-30"
               >
-                <TrendingUp size={18} className="text-green-400" />
+                <TrendingUp size={compact ? 14 : 18} className="text-green-400" />
                 <span className="flex flex-col items-start leading-none">
-                  <span className="text-[10px] font-bold uppercase">Economy <span className="text-amber-400 tracking-tighter">{'●'.repeat(lvl)}{'○'.repeat(INCOME_UPGRADE_MAX - lvl)}</span></span>
-                  <span className="text-[9px] opacity-70 mt-0.5">{econMaxed ? 'Fully upgraded' : `$${econCost} · +25% income`}</span>
+                  <span className="text-[10px] font-bold uppercase">Economy <span className="text-amber-400 tracking-tighter">{'●'.repeat(lvl)}{'○'.repeat(INCOME_UPGRADE_MAX - lvl)}</span>{compact && !econMaxed ? ` $${econCost}` : ''}</span>
+                  {!compact && <span className="text-[9px] opacity-70 mt-0.5">{econMaxed ? 'Fully upgraded' : `$${econCost} · +25% income`}</span>}
                 </span>
               </button>
               <button
@@ -503,10 +518,10 @@ const App: React.FC = () => {
                 disabled={rallyActive || rallyCd || money < RALLY_COST}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded border transition-colors active:scale-95 disabled:opacity-40 ${rallyActive ? 'border-amber-400 bg-amber-900/70 text-amber-300 animate-pulse' : 'border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400'}`}
               >
-                <Megaphone size={18} className={rallyActive ? 'text-amber-300' : 'text-amber-500'} />
+                <Megaphone size={compact ? 14 : 18} className={rallyActive ? 'text-amber-300' : 'text-amber-500'} />
                 <span className="flex flex-col items-start leading-none">
-                  <span className="text-[10px] font-bold uppercase">{rallyActive ? 'Rallying!' : 'Rally Horn'}</span>
-                  <span className="text-[9px] opacity-70 mt-0.5">{rallyActive ? 'Units surging' : rallyCd ? `Ready in ${cdLeft}s` : `$${RALLY_COST} · 8s surge`}</span>
+                  <span className="text-[10px] font-bold uppercase">{rallyActive ? 'Rallying!' : compact ? (rallyCd ? `Rally ${cdLeft}s` : `Rally $${RALLY_COST}`) : 'Rally Horn'}</span>
+                  {!compact && <span className="text-[9px] opacity-70 mt-0.5">{rallyActive ? 'Units surging' : rallyCd ? `Ready in ${cdLeft}s` : `$${RALLY_COST} · 8s surge`}</span>}
                 </span>
               </button>
             </div>
@@ -517,11 +532,19 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center justify-center p-4 font-serif overflow-hidden">
+    <div className={`min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center font-serif overflow-hidden ${compact ? 'p-1 justify-start' : 'p-4 justify-center'}`}>
+      {/* Portrait phones: the battlefield needs landscape */}
+      {isPortraitMobile && (
+        <div className="fixed inset-0 z-[10000] bg-stone-950/95 flex flex-col items-center justify-center gap-3 text-center p-6">
+          <div className="text-5xl animate-pulse">📱↻</div>
+          <div className="text-amber-400 font-black uppercase tracking-widest">Rotate your device</div>
+          <div className="text-stone-400 text-sm max-w-xs">East vs West plays in landscape — turn your phone sideways for the full battlefield.</div>
+        </div>
+      )}
       {/* Splash Screen Overlay */}
       {showSplash && (
         <div
-          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-end pb-16 cursor-pointer transition-opacity duration-700 ${splashFading ? 'opacity-0' : 'opacity-100'}`}
+          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-end cursor-pointer transition-opacity duration-700 overflow-y-auto ${compact ? 'pb-3' : 'pb-16'} ${splashFading ? 'opacity-0' : 'opacity-100'}`}
           onClick={handleStartClick}
         >
           <img
@@ -601,22 +624,23 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <div className="w-full max-w-4xl flex justify-between items-center mb-3 bg-stone-800 p-3 rounded-lg shadow-lg border border-stone-600">
-        <div className="flex items-center gap-3 text-blue-400"><Shield className="w-6 h-6" /><div><h2 className="text-lg font-bold uppercase">West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+      <div className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
-          <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>
-          <div className="flex items-center gap-4">
+          {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
+          <div className={`flex items-center ${compact ? 'gap-1' : 'gap-4'}`}>
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
             <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
             <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
             <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
             <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
+            <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
             {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
-            {gameState.weather === 'clear' && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
+            {gameState.weather === 'clear' && !compact && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
             {gameState.captureOwner && (
               <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
                 <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
@@ -635,7 +659,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} />
+          }, [])} selectedIds={selection?.ids} compact={compact} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
@@ -681,7 +705,7 @@ const App: React.FC = () => {
         </div>
         {renderUnitButtons(Team.EAST)}
       </div>
-      <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
+      {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
 
         {/* Column 1: Core Mechanics */}
         <div className="space-y-2">
@@ -736,7 +760,7 @@ const App: React.FC = () => {
           </ul>
         </div>
 
-      </div>
+      </div>}
     </div>
   );
 };
