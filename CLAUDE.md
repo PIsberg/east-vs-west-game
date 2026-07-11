@@ -40,7 +40,7 @@ This split is intentional. Never move hot-path game data into React state.
 |------|------|
 | `App.tsx` | HUD layout, keyboard shortcuts, spawn request validation, map/side/mode selection, CPU level, lane selector, pause/speed |
 | `components/GameCanvas.tsx` | **Game engine** — `requestAnimationFrame` loop, all unit AI, combat, spawning, collision, per-map terrain generation, CPU opponent AI, capture point, stats |
-| `components/GameScene.tsx` | **Pure renderer** — maps game-state arrays to R3F/Three.js meshes; instanced particles/projectiles, bloom, day/night, camera shake, map-specific visuals |
+| `components/GameScene.tsx` | **Pure renderer** — maps game-state arrays to R3F/Three.js meshes; instanced particles/projectiles, bloom, a gentle noon↔late-afternoon light cycle (no night — it made the field unreadable; `getDayFactor` floors at 0.65), camera shake, map-specific visuals |
 | `components/ClickableGroup.tsx` | R3F click-target helper |
 | `services/audio.ts` | Web Audio API procedural sound effects + looping battle-march music (singleton `soundService`); master mute and music toggles persisted to localStorage (`ewv-muted`/`ewv-music`) |
 | `utils/spatialHash.ts` | Grid-based spatial hash for O(1) projectile→unit collision lookup |
