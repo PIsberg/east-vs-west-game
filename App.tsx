@@ -215,10 +215,16 @@ const App: React.FC = () => {
       const padY = compact ? 8 : 32;
       const headerMb = compact ? 4 : 12;              // header mb-1 / mb-3
       const cmdMt = cmdH > 0 ? (compact ? 4 : 8) : 0; // command bar mt-1 / mt-2
-      const availW = Math.max(280, window.innerWidth - westW - eastW - gapX - padX);
+      const availW = Math.min(1600, Math.max(280, window.innerWidth - westW - eastW - gapX - padX));
       const availH = Math.max(158, window.innerHeight - headerH - headerMb - cmdH - cmdMt - padY);
-      const w = Math.min(availW, availH * (800 / 450), 1440);
-      const next = { w: Math.round(w), h: Math.round(w * (450 / 800)) };
+      // Fill the box between the toolbars on BOTH axes when possible: the 3D
+      // camera adapts to any aspect, so only clamp to a sane range (16:10 up
+      // to ~21:9 cinematic) instead of forcing 16:9 and leaving dead space.
+      const AR_MIN = 1.6, AR_MAX = 2.4;
+      const ar = availW / availH;
+      const next = ar > AR_MAX ? { w: Math.round(availH * AR_MAX), h: Math.round(availH) }
+        : ar < AR_MIN ? { w: Math.round(availW), h: Math.round(availW / AR_MIN) }
+        : { w: Math.round(availW), h: Math.round(availH) };
       setViewSize(prev => (prev.w === next.w && prev.h === next.h) ? prev : next);
     };
     compute();
