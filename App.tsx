@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
@@ -196,6 +196,39 @@ const App: React.FC = () => {
     return () => { window.removeEventListener('resize', onResize); window.removeEventListener('orientationchange', onResize); };
   }, []);
 
+  // Fit the battlefield exactly between the toolbars: measure the real
+  // header, side unit panels and command bar instead of estimating, and
+  // resize whenever any of them changes shape.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const westPanelRef = useRef<HTMLDivElement>(null);
+  const eastPanelRef = useRef<HTMLDivElement>(null);
+  const cmdBarRef = useRef<HTMLDivElement>(null);
+  const [viewSize, setViewSize] = useState({ w: 800, h: 450 });
+  useEffect(() => {
+    const compute = () => {
+      const headerH = headerRef.current?.getBoundingClientRect().height ?? 60;
+      const cmdH = cmdBarRef.current?.getBoundingClientRect().height ?? 0;
+      const westW = westPanelRef.current?.getBoundingClientRect().width ?? 100;
+      const eastW = eastPanelRef.current?.getBoundingClientRect().width ?? 100;
+      const padX = compact ? 8 : 32;                  // page container horizontal padding
+      const gapX = compact ? 8 : 16;                  // side-panel margins toward the canvas
+      const padY = compact ? 8 : 32;
+      const headerMb = compact ? 4 : 12;              // header mb-1 / mb-3
+      const cmdMt = cmdH > 0 ? (compact ? 4 : 8) : 0; // command bar mt-1 / mt-2
+      const availW = Math.max(280, window.innerWidth - westW - eastW - gapX - padX);
+      const availH = Math.max(158, window.innerHeight - headerH - headerMb - cmdH - cmdMt - padY);
+      const w = Math.min(availW, availH * (800 / 450), 1440);
+      const next = { w: Math.round(w), h: Math.round(w * (450 / 800)) };
+      setViewSize(prev => (prev.w === next.w && prev.h === next.h) ? prev : next);
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    window.addEventListener('orientationchange', compute);
+    const ro = new ResizeObserver(compute);
+    [headerRef, westPanelRef, eastPanelRef, cmdBarRef].forEach(r => { if (r.current) ro.observe(r.current); });
+    return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); ro.disconnect(); };
+  }, [compact, cpuLevel, playerSide]);
+
   const handleStartClick = () => {
     soundService.playIntroJingle();
     // Battle music can only start from a user gesture (browser autoplay policy)
@@ -325,7 +358,7 @@ const App: React.FC = () => {
   // So [handleSpawnRequest] works.
 
 
-  const renderUnitButtons = (team: Team) => {
+  const renderUnitButtons = (team: Team, panelRef?: React.RefObject<HTMLDivElement | null>) => {
     const isWest = team === Team.WEST;
     const colorClass = isWest ? "blue" : "red";
     const money = gameState.money[team];
@@ -402,7 +435,7 @@ const App: React.FC = () => {
     ];
 
     return (
-      <div className={`flex flex-col gap-1.5 ${isWest ? (compact ? 'mr-1' : 'mr-2') : (compact ? 'ml-1' : 'ml-2')} ${compact ? 'max-h-[calc(100dvh-88px)] overflow-y-auto overscroll-contain' : ''}`}>
+      <div ref={panelRef} className={`flex flex-col gap-1.5 ${isWest ? (compact ? 'mr-1' : 'mr-2') : (compact ? 'ml-1' : 'ml-2')} overflow-y-auto overscroll-contain ${compact ? 'max-h-[calc(100dvh-88px)]' : 'max-h-[calc(100dvh-124px)]'}`}>
         {/* Stance orders */}
         <div className="flex flex-col gap-1">
           <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
@@ -483,7 +516,7 @@ const App: React.FC = () => {
     if (humanTeams.length === 0) return null;
     const now = Date.now();
     return (
-      <div className={`flex justify-center ${compact ? 'gap-2 mt-1' : 'gap-4 mt-2'}`}>
+      <div ref={cmdBarRef} className={`flex justify-center ${compact ? 'gap-2 mt-1' : 'gap-4 mt-2'}`}>
         {humanTeams.map(team => {
           const isWest = team === Team.WEST;
           const money = gameState.money[team];
@@ -624,7 +657,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <div className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
+      <div ref={headerRef} className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
         <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
           {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
@@ -651,7 +684,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
-        {renderUnitButtons(Team.WEST)}
+        {renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
           <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
@@ -659,7 +692,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} />
+          }, [])} selectedIds={selection?.ids} compact={compact} viewW={viewSize.w} viewH={viewSize.h} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
@@ -703,7 +736,7 @@ const App: React.FC = () => {
           </div>
           {renderCommandBar()}
         </div>
-        {renderUnitButtons(Team.EAST)}
+        {renderUnitButtons(Team.EAST, eastPanelRef)}
       </div>
       {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
 

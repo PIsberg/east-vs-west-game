@@ -80,6 +80,11 @@ interface GameCanvasProps {
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
   compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
+  // Measured canvas size from App's layout observer. When provided these win
+  // over the internal window-based estimate, making the battlefield fit the
+  // real space between header, side panels and command bar exactly.
+  viewW?: number;
+  viewH?: number;
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -102,6 +107,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onSelectUnits,
   selectedIds,
   compact,
+  viewW,
+  viewH,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -109,10 +116,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Responsive 16:9 viewport — R3F resizes the canvas, clicks stay correct via raycasting
   const [viewSize, setViewSize] = useState({ w: 800, h: 450 });
   useEffect(() => {
+    // App measures the real chrome (header/panels/command bar) and passes the
+    // exact fit; the window-based estimate below is only a fallback.
+    if (viewW && viewH) {
+      setViewSize(prev => (prev.w === viewW && prev.h === viewH) ? prev : { w: viewW, h: viewH });
+      return;
+    }
     const compute = () => {
-      // Chrome around the canvas: side unit-button columns horizontally,
-      // header + command bar (+ info panel on desktop) vertically. Compact
-      // (mobile landscape) trims all of it and drops the desktop size floor.
       const availW = window.innerWidth - (compact ? 200 : 220);
       const availH = window.innerHeight - (compact ? 126 : 285);
       let w = Math.min(availW, availH * (800 / 450));
@@ -123,7 +133,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     window.addEventListener('resize', compute);
     window.addEventListener('orientationchange', compute);
     return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); };
-  }, [compact]);
+  }, [compact, viewW, viewH]);
 
   const generateId = () => Math.random().toString(36).substr(2, 9);
 
