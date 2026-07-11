@@ -760,6 +760,18 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                     </mesh>
                                 ))}
                             </group>
+                            {/* Stray arc crackling down the coil, flickers in and out */}
+                            {Math.sin(Date.now() * 0.017) > 0.55 && (
+                                <mesh position={[3.5, 27, 3.5]} rotation={[0.5, Date.now() * 0.02 % (Math.PI * 2), 0.9]}>
+                                    <cylinderGeometry args={[0.25, 0.25, 14]} />
+                                    <meshBasicMaterial color="#bae6fd" toneMapped={false} transparent opacity={0.85} />
+                                </mesh>
+                            )}
+                            {/* Pulsing charge glow on the ground */}
+                            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={1 + 0.12 * Math.sin(Date.now() * 0.005)}>
+                                <ringGeometry args={[16, 19, 28]} />
+                                <meshBasicMaterial color="#0ea5e9" transparent opacity={0.16 + 0.1 * Math.sin(Date.now() * 0.005)} toneMapped={false} depthWrite={false} />
+                            </mesh>
                         </group>
                     )
                 }
@@ -797,6 +809,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <mesh position={[0, 16, -16]} castShadow>
                                 <boxGeometry args={[18, 5, 6]} />
                                 <meshStandardMaterial color="#3f3f2e" roughness={1} />
+                            </mesh>
+                            {/* Commander hatch + whip antenna */}
+                            <mesh position={[2, 25, -6]} castShadow>
+                                <cylinderGeometry args={[3, 3.4, 2.5, 10]} />
+                                <meshStandardMaterial color="#3a3a2c" roughness={0.9} />
+                            </mesh>
+                            <mesh position={[-12, 30, 7]} rotation={[0.12, 0, -0.1]}>
+                                <cylinderGeometry args={[0.22, 0.4, 16]} />
+                                <meshStandardMaterial color="#1c1917" />
                             </mesh>
                             <mesh position={[-8, 16, 14]} rotation={[Math.PI / 2, 0, 0]} castShadow>
                                 <cylinderGeometry args={[2.5, 2.5, 12]} />
@@ -1215,6 +1236,40 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <boxGeometry args={[34, 6, 30]} />
                             <meshStandardMaterial color="#374151" roughness={0.9} />
                         </mesh>
+                        {/* Roof lip */}
+                        <mesh position={[0, 14.5, 0]} castShadow>
+                            <boxGeometry args={[36, 1.5, 32]} />
+                            <meshStandardMaterial color="#4b5563" roughness={0.95} />
+                        </mesh>
+                        {/* Observation cupola */}
+                        <mesh position={[-6, 17, -6]} castShadow>
+                            <cylinderGeometry args={[4.5, 5, 4, 10]} />
+                            <meshStandardMaterial color="#374151" roughness={0.9} />
+                        </mesh>
+                        <mesh position={[-6, 19.5, -6]}>
+                            <sphereGeometry args={[4.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                            <meshStandardMaterial color="#2b3442" roughness={0.85} />
+                        </mesh>
+                        {/* Radio mast with blinking tip */}
+                        <mesh position={[-13, 22, 9]}>
+                            <cylinderGeometry args={[0.35, 0.5, 14]} />
+                            <meshStandardMaterial color="#1f2937" />
+                        </mesh>
+                        <mesh position={[-13, 29.5, 9]}>
+                            <sphereGeometry args={[0.9, 6, 6]} />
+                            <meshBasicMaterial color="#f87171" toneMapped={false} transparent opacity={0.35 + 0.65 * Math.abs(Math.sin(Date.now() * 0.004))} />
+                        </mesh>
+                        {/* Team flag on a corner pole */}
+                        <group position={[-13, 20, -12]}>
+                            <mesh>
+                                <cylinderGeometry args={[0.4, 0.4, 16]} />
+                                <meshStandardMaterial color="#57534e" />
+                            </mesh>
+                            <mesh position={[3.5, 5.5, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
+                                <boxGeometry args={[7, 4.5, 0.4]} />
+                                <meshStandardMaterial color={isWest ? '#3b82f6' : '#ef4444'} emissive={isWest ? '#3b82f6' : '#ef4444'} emissiveIntensity={0.25} side={THREE.DoubleSide} />
+                            </mesh>
+                        </group>
                         {/* Gun slit opening */}
                         <mesh position={[17, 11, 0]}>
                             <boxGeometry args={[2, 3, 16]} />
@@ -1225,12 +1280,18 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <cylinderGeometry args={[1.5, 1.5, 12]} />
                             <meshStandardMaterial color="#1f2937" />
                         </mesh>
-                        {/* Sandbags */}
-                        {[-12, 0, 12].map((z, i) => (
-                            <mesh key={i} position={[-20, 6, z]} castShadow>
-                                <sphereGeometry args={[5, 8, 6]} />
-                                <meshStandardMaterial color="#78350f" roughness={1} />
-                            </mesh>
+                        {/* Sandbag perimeter guarding the firing arc */}
+                        {([[22, -14], [24, -7], [25, 0], [24, 7], [22, 14], [14, -18], [14, 18]] as const).map(([sx, sz], i) => (
+                            <group key={i} position={[sx, 0, sz]} rotation={[0, (i * 37) % 7 * 0.15, 0]}>
+                                <mesh position={[0, 2.2, 0]} scale={[1, 0.55, 0.8]} castShadow>
+                                    <sphereGeometry args={[4.2, 8, 6]} />
+                                    <meshStandardMaterial color="#7c6142" roughness={1} />
+                                </mesh>
+                                <mesh position={[0.8, 5, 0]} scale={[0.85, 0.5, 0.7]} castShadow>
+                                    <sphereGeometry args={[4.2, 8, 6]} />
+                                    <meshStandardMaterial color="#6b5238" roughness={1} />
+                                </mesh>
+                            </group>
                         ))}
                         {unit.attackCooldown > (config.attackSpeed - 8) && (
                             <group position={[18, 11, 0]} rotation={[0, -Math.PI / 2, 0]}>
