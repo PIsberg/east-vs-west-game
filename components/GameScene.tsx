@@ -1,7 +1,8 @@
 
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
+import React, { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text, useGLTF, useAnimations } from '@react-three/drei';
+import { SkeletonUtils } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
@@ -461,6 +462,96 @@ const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparen
 const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
 const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
+// ── GLB unit models (Quaternius, CC0 — see README credits) ──────────────────
+// Loaded once via useGLTF; every unit gets a SkeletonUtils clone (required for
+// skinned meshes) with team-marked materials tinted toward its side's color.
+// Relative paths resolve against the page URL, which works both on the Vite
+// dev server and under the GitHub Pages base path.
+const MODEL_URL = {
+    soldier: 'models/soldier.glb',
+    tank: 'models/tank.glb',
+};
+useGLTF.preload(MODEL_URL.soldier);
+useGLTF.preload(MODEL_URL.tank);
+
+const TEAM_TINT_WEST = new THREE.Color('#60a5fa');
+const TEAM_TINT_EAST = new THREE.Color('#f87171');
+
+function useTintedClone(url: string, team: Team, tintMaterials: string[], tintStrength: number) {
+    const { scene } = useGLTF(url);
+    return useMemo(() => {
+        const root = SkeletonUtils.clone(scene);
+        const tint = team === Team.WEST ? TEAM_TINT_WEST : TEAM_TINT_EAST;
+        root.traverse((o: any) => {
+            if (o.isMesh || o.isSkinnedMesh) {
+                o.castShadow = true;
+                o.frustumCulled = false; // skinned bounds lag the armature
+                if (o.material) {
+                    o.material = o.material.clone();
+                    if (tintMaterials.includes(o.material.name)) {
+                        o.material.color = o.material.color.clone().lerp(tint, tintStrength);
+                    }
+                }
+            }
+        });
+        return root;
+    }, [scene, team, url]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+// Empirical model scales: skinned bind-pose bounding boxes are useless here
+// (the Quaternius armatures carry large transforms), so these were calibrated
+// visually against the world's tree/rock/unit sizes.
+// (probe-measured: soldier is human-scale 1.8 units tall; the tank armature
+// bakes a large scale and natively faces +X, so it gets no extra yaw)
+const SOLDIER_SCALE = 11;
+const TANK_SCALE = 2.7;
+
+// Animated rifleman: runs, aims and fires using the model's own clips.
+const SoldierModel = ({ unit }: { unit: Unit }) => {
+    const { animations } = useGLTF(MODEL_URL.soldier);
+    const obj = useTintedClone(MODEL_URL.soldier, unit.team, ['Swat'], 0.75);
+    const group = useRef<THREE.Group>(null!);
+    const { actions } = useAnimations(animations, group);
+    const clip = unit.state === UnitState.ATTACKING ? 'CharacterArmature|Idle_Gun_Shoot'
+        : unit.state === UnitState.MOVING ? 'CharacterArmature|Run'
+        : 'CharacterArmature|Idle_Gun';
+    useEffect(() => {
+        const a = actions[clip];
+        if (!a) return;
+        a.reset();
+        // Desync squads so they don't march in lockstep
+        a.time = ((unit.id.charCodeAt(0) + unit.id.charCodeAt(2)) % 10) / 10 * a.getClip().duration;
+        a.fadeIn(0.12).play();
+        return () => { a.fadeOut(0.12); };
+    }, [actions, clip, unit.id]);
+    return (
+        <group ref={group} rotation={[0, Math.PI / 2, 0]} scale={SOLDIER_SCALE}>
+            <primitive object={obj} />
+        </group>
+    );
+};
+
+// Tank with animated tracks while rolling.
+const TankModel = ({ unit }: { unit: Unit }) => {
+    const { animations } = useGLTF(MODEL_URL.tank);
+    const obj = useTintedClone(MODEL_URL.tank, unit.team, ['Main'], 0.45);
+    const group = useRef<THREE.Group>(null!);
+    const { actions } = useAnimations(animations, group);
+    useEffect(() => {
+        const a = actions['TankArmature|Tank_Forward'];
+        if (!a) return;
+        // Keep the clip PLAYING even when stationary (paused) — a stopped
+        // action reverts the skinned tracks to their coiled bind pose.
+        a.play();
+        a.paused = unit.state !== UnitState.MOVING;
+    }, [actions, unit.state]);
+    return (
+        <group ref={group} scale={TANK_SCALE}>
+            <primitive object={obj} />
+        </group>
+    );
+};
+
 const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void, onUnitClick?: (unit: Unit) => void, focused?: boolean, selected?: boolean }) => {
     const config = UNIT_CONFIG[unit.type] as any;
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
@@ -494,7 +585,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
         unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE ||
         unit.type === UnitType.ENGINEER || unit.type === UnitType.MORTAR;
     const walkPhase = (unit.id.charCodeAt(0) * 13 + (unit.id.charCodeAt(1) || 0) * 7) % 100;
-    const walking = isInfantry && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
+    // GLB soldiers animate their own run cycle — no procedural bob for them
+    const walking = isInfantry && unit.type !== UnitType.SOLDIER && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
     const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
     const bobTilt = walking ? Math.sin(Date.now() * 0.012 + walkPhase) * 0.05 : 0;
 
@@ -553,138 +645,30 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.SOLDIER && (
                         <group position={[0, 0, 0]}>
-                            {/* Head */}
-                            <mesh position={[0, 16, 0]} castShadow>
-                                <sphereGeometry args={[3.5, 16, 16]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} /> {/* Skin tone */}
-                                <mesh position={[0, 1, 0]}>
-                                    <cylinderGeometry args={[4, 3.8, 2]} />
-                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} /> {/* Helmet */}
-                                </mesh>
-                            </mesh>
-                            {/* Body */}
-                            <mesh position={[0, 9, 0]} castShadow>
-                                <boxGeometry args={[6, 10, 4]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Arms */}
-                            <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[4, 10, 2]} rotation={[-0.5, 0, -0.2]}> {/* Aiming arm */}
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Rifle held across, pointing forward (+X) */}
-                            <group position={[4, 11.5, 1]}>
-                                <mesh rotation={[0, 0, Math.PI / 2]}>
-                                    <boxGeometry args={[1.2, 10, 1.2]} />
-                                    <meshStandardMaterial color="#1c1917" />
-                                </mesh>
-                                <mesh position={[-3, -0.8, 0]}> {/* Stock */}
-                                    <boxGeometry args={[3, 2, 1]} />
-                                    <meshStandardMaterial color="#44403c" />
-                                </mesh>
-                                <mesh position={[1, -1.5, 0]}> {/* Magazine */}
-                                    <boxGeometry args={[1, 2.5, 1]} />
-                                    <meshStandardMaterial color="#292524" />
-                                </mesh>
-                                {unit.attackCooldown > (config.attackSpeed - 6) && (
-                                    <group position={[6, 0, 0]}>
-                                        <MuzzleFlash size={0.8} />
-                                    </group>
-                                )}
-                            </group>
-                            {/* Backpack (behind: model faces +X) */}
-                            <mesh position={[-4.2, 10, 0]} castShadow>
-                                <boxGeometry args={[2.2, 6, 4.5]} />
-                                <meshStandardMaterial color="#3f3f46" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <InfantryLegs walking={walking} phase={walkPhase} transparent={transparent} opacity={opacity} />
+                            <Suspense fallback={null}>
+                                <SoldierModel unit={unit} />
+                            </Suspense>
+                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                                <group position={[10, 12, 1]}>
+                                    <MuzzleFlash size={0.8} />
+                                </group>
+                            )}
                         </group>
                     )
                 }
                 {
                     unit.type === UnitType.TANK && (
                         <group>
-                            {/* Modern Main Battle Tank (Oriented along X-axis for default Right facing) */}
-                            {/* Hull */}
-                            <mesh position={[0, 8, 0]} castShadow receiveShadow>
-                                <boxGeometry args={[45, 12, 28]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Front glacis slope */}
-                            <mesh position={[23, 11, 0]} rotation={[0, 0, -0.55]} castShadow>
-                                <boxGeometry args={[10, 7, 26]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Rear exhaust stacks */}
-                            {[-6, 6].map(z => (
-                                <mesh key={z} position={[-22, 12, z]}>
-                                    <boxGeometry args={[3, 5, 4]} />
-                                    <meshStandardMaterial color="#1c1917" />
-                                </mesh>
-                            ))}
-                            {/* Tracks + side skirts */}
-                            <mesh position={[0, 6, -15]}>
-                                <boxGeometry args={[42, 12, 8]} />
-                                <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 6, 15]}>
-                                <boxGeometry args={[42, 12, 8]} />
-                                <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 12, -19.5]}>
-                                <boxGeometry args={[44, 5, 1.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 12, 19.5]}>
-                                <boxGeometry args={[44, 5, 1.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Road wheels */}
-                            {[-16, -8, 0, 8, 16].map(x => (
-                                <group key={x}>
-                                    <mesh position={[x, 5, -15]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                    <mesh position={[x, 5, 15]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                </group>
-                            ))}
-                            {/* Turret + Gun (recoils backward on firing) */}
                             <group position={[-recoil, 0, 0]}>
-                                <mesh position={[0, 18, 0]} castShadow>
-                                    <boxGeometry args={[25, 9, 20]} />
-                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                                </mesh>
-                                {/* Main Gun (Pointing Right +X) */}
-                                <mesh position={[20, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                                    <cylinderGeometry args={[2.5, 2.5, 30]} />
-                                    <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
-                                    <mesh position={[0, 15, 0]}> {/* Bore fume extractor */}
-                                        <cylinderGeometry args={[3.5, 3.5, 6]} />
-                                        <meshStandardMaterial color="#333" />
-                                    </mesh>
-                                </mesh>
-                                {/* Commander cupola + antenna */}
-                                <mesh position={[-5, 24, 5]} castShadow>
-                                    <cylinderGeometry args={[3.5, 4, 3.5, 10]} />
-                                    <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
-                                </mesh>
-                                <mesh position={[-9, 28, -6]}>
-                                    <cylinderGeometry args={[0.3, 0.3, 14]} />
-                                    <meshStandardMaterial color="#888" />
-                                </mesh>
+                                <Suspense fallback={null}>
+                                    <TankModel unit={unit} />
+                                </Suspense>
                             </group>
-
-                            {/* Muzzle Flash */}
+                            {/* Muzzle Flash at the barrel tip */}
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                <MuzzleFlash size={4} />
+                                <group position={[34, 15, 0]}>
+                                    <MuzzleFlash size={4} />
+                                </group>
                             )}
                         </group>
                     )

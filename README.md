@@ -95,6 +95,12 @@ The first team to reach **100 Points** wins.
 
 ---
 
+## 🙏 Asset Credits
+
+Soldier and tank 3D models by **[Quaternius](https://quaternius.com/)** (via [Poly Pizza](https://poly.pizza/u/Quaternius)) — licensed [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Thank you for the incredible free packs!
+
+---
+
 ## 🕹️ Inspiration
 
 East vs West is a loving nod to **[North & South](https://en.wikipedia.org/wiki/North_%26_South_(video_game))** (Infogrames, 1989), the Amiga/Commodore-era classic based on the *Les Tuniques Bleues* comics: two armies tugging over one front line, battles you can pick up and play in seconds, and a tone that never takes the war too seriously. This project reimagines that spirit as a modern real-time 3D lane battle — with a procedural military march instead of a chiptune, and a nuke button the original never dared to ship.
