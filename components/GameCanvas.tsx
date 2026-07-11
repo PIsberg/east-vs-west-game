@@ -3015,16 +3015,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               <div className="text-stone-500 uppercase text-xs pt-0.5">Units Lost</div>
               <div className="text-center font-mono">{statsRef.current[Team.WEST].lost}</div>
               <div className="text-center font-mono">{statsRef.current[Team.EAST].lost}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Economy Lvl</div>
+              <div className="text-center font-mono">{incomeLevelRef.current[Team.WEST]}</div>
+              <div className="text-center font-mono">{incomeLevelRef.current[Team.EAST]}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5" title="Unit type with the most kills">MVP Unit</div>
+              {[Team.WEST, Team.EAST].map(t => {
+                const kills = typeStatsRef.current[t].kills;
+                const mvp = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <div key={t} className="text-center font-mono text-xs pt-0.5">
+                    {mvp ? `${mvp[0].replace('_', ' ')} · ${mvp[1]}` : '—'}
+                  </div>
+                );
+              })}
               <div className="text-stone-500 uppercase text-xs pt-0.5">Duration</div>
               <div className="text-center font-mono col-span-2">{Math.floor((Date.now() - matchStartRef.current) / 60000)}m {Math.floor(((Date.now() - matchStartRef.current) % 60000) / 1000)}s</div>
             </div>
 
-            <button
-              onClick={() => window.location.reload()}
-              className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95 flex items-center gap-2"
-            >
-              Play Again
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { try { localStorage.setItem('ewv-rematch', '1'); } catch { /* ignore */ } window.location.reload(); }}
+                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+              >
+                ⚔ Rematch
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-8 py-3 bg-stone-700 hover:bg-stone-600 text-stone-200 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+              >
+                Menu
+              </button>
+            </div>
           </div>
         </div>
       )}

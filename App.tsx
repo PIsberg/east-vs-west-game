@@ -127,6 +127,14 @@ const TeslaIcon = ({ size = 20 }: { size?: number }) => (
 // Hidden harness params: ?spectate (CPU vs CPU), &map=URBAN, &speed=4, &mode=basehp
 const URL_PARAMS = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
 const SPECTATE = URL_PARAMS.has('spectate');
+// One-shot flag set by the victory screen's Rematch button: skip the splash
+// and drop straight into a fresh battle with the same settings.
+const REMATCH = (() => {
+  try {
+    if (localStorage.getItem('ewv-rematch')) { localStorage.removeItem('ewv-rematch'); return true; }
+  } catch { /* ignore */ }
+  return false;
+})();
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
@@ -151,7 +159,7 @@ const App: React.FC = () => {
   });
   const [weather, setWeather] = useState<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
-  const [showSplash, setShowSplash] = useState(!SPECTATE);
+  const [showSplash, setShowSplash] = useState(!SPECTATE && !REMATCH);
   const [splashFading, setSplashFading] = useState(false);
   const [paused, setPaused] = useState(false);
   const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
