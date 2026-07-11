@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { GameCanvas } from './components/GameCanvas';
-import { Team, GameState, UnitType, MapType, GameMode, Stance } from './types';
-import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP } from './constants';
-import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus } from 'lucide-react';
+import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
+import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -130,10 +130,18 @@ const SPECTATE = URL_PARAMS.has('spectate');
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
+// Last-used menu choices survive reloads (URL params still win)
+const SAVED_PREFS: { playerSide?: string, cpuLevel?: string, gameMode?: string, mapType?: string } = (() => {
+  try { return JSON.parse(localStorage.getItem('ewv-prefs') || '{}') || {}; } catch { return {}; }
+})();
+
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
+  const [commandQueue, setCommandQueue] = useState<{ team: Team, cmd: TeamCommand }[]>([]);
+  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order: Stance | null }[]>([]);
+  const [selection, setSelection] = useState<{ team: Team, ids: string[] } | null>(null);
   const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
     units: [], projectiles: [], particles: [],
@@ -147,34 +155,72 @@ const App: React.FC = () => {
   const [splashFading, setSplashFading] = useState(false);
   const [paused, setPaused] = useState(false);
   const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
-  const [playerSide, setPlayerSide] = useState<Team>(Team.WEST);
-  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(SPECTATE ? 'normal' : 'off');
-  const [gameMode, setGameMode] = useState<GameMode>(URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : 'points');
-  const [mapType, setMapType] = useState<MapType>(
-    Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType : MapType.COUNTRYSIDE
+  const [muted, setMuted] = useState(() => soundService.isMuted());
+  const [musicOn, setMusicOn] = useState(() => soundService.isMusicOn());
+  const [playerSide, setPlayerSide] = useState<Team>(SAVED_PREFS.playerSide === Team.EAST ? Team.EAST : Team.WEST);
+  const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(
+    SPECTATE ? 'normal' : (['off', 'easy', 'normal', 'hard'].includes(SAVED_PREFS.cpuLevel as string) ? SAVED_PREFS.cpuLevel as 'off' | 'easy' | 'normal' | 'hard' : 'off')
   );
+  const [gameMode, setGameMode] = useState<GameMode>(
+    URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
+  );
+  const [mapType, setMapType] = useState<MapType>(
+    Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType :
+    Object.values(MapType).includes(SAVED_PREFS.mapType as MapType) ? SAVED_PREFS.mapType as MapType : MapType.COUNTRYSIDE
+  );
+
+  // Remember menu choices for the next visit
+  useEffect(() => {
+    try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide, cpuLevel, gameMode, mapType })); } catch { /* ignore */ }
+  }, [playerSide, cpuLevel, gameMode, mapType]);
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
   const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
+  const [cmdHint, setCmdHint] = useState(false);
+  const [troopHint, setTroopHint] = useState(false);
+
   const handleStartClick = () => {
     soundService.playIntroJingle();
+    // Battle music can only start from a user gesture (browser autoplay policy)
+    if (soundService.isMusicOn()) setTimeout(() => soundService.startMusic(), 4200);
     setSplashFading(true);
     setTimeout(() => setShowSplash(false), 700);
+    // Draw the eye to the command bar for the opening seconds
+    setCmdHint(true);
+    setTimeout(() => setCmdHint(false), 15000);
+    // Teach troop control until the player has used it once (ever)
+    try {
+      if (!localStorage.getItem('ewv-hint-troopctl')) {
+        setTimeout(() => setTroopHint(true), 8000);
+        setTimeout(() => setTroopHint(false), 32000);
+      }
+    } catch { /* ignore */ }
+  };
+
+  const toggleMute = () => {
+    const m = !muted;
+    setMuted(m);
+    soundService.setMuted(m);
+  };
+  const toggleMusic = () => {
+    const on = !musicOn;
+    setMusicOn(on);
+    soundService.setMusicOn(on);
   };
 
   const resetGame = () => {
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
-    setSpawnQueue([]); setTargetingInfo(null); setWeather('clear'); setPaused(false);
+    setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setWeather('clear'); setPaused(false);
   };
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE, UnitType.SMOKE].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
@@ -197,6 +243,10 @@ const App: React.FC = () => {
   // Stable identity (recreated only when targeting/lane state changes) so the
   // memoized scene components downstream can skip re-renders.
   const handleCanvasClick = useCallback((x: number, y: number) => {
+    if (!targetingInfo) {
+      // Clicking open ground drops the current troop selection
+      setSelection(null);
+    }
     if (targetingInfo) {
       // In 3D, any click returned by onCanvasClick is a valid ground position (x, z).
       // We accept it directly to allow spawning anywhere on the map.
@@ -220,6 +270,7 @@ const App: React.FC = () => {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setSelection(null); return; }
       // Unit Order (Top to Bottom as rendered)
       const unitOrder = [
         UnitType.SOLDIER, UnitType.RAMBO, UnitType.MINE_PERSONAL, // Infantry
@@ -293,6 +344,7 @@ const App: React.FC = () => {
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.SMOKE]: [<SniperIcon size={8} key="s" />, <ArtilleryIcon size={8} key="a" />],
     };
 
     const renderGroup = (title: string, units: { type: UnitType, label: string, icon: React.ReactNode, special?: boolean }[]) => (
@@ -395,6 +447,7 @@ const App: React.FC = () => {
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
+          { type: UnitType.SMOKE, label: "SMOKE", icon: <Cloud size={16} /> },
           { type: UnitType.AIRSTRIKE, label: "NAPALM", icon: <Flame size={16} /> },
           { type: UnitType.MISSILE_STRIKE, label: "MISSILE", icon: <Crosshair size={16} /> },
           { type: UnitType.CRUISE, label: "CRUISE", icon: <Rocket size={16} /> },
@@ -407,6 +460,61 @@ const App: React.FC = () => {
   };
 
 
+
+  // Commander powers: one prominent group per human-controlled team, centered
+  // under the battlefield where they can't be missed.
+  const renderCommandBar = () => {
+    const humanTeams = SPECTATE ? [] : [Team.WEST, Team.EAST].filter(t => t !== cpuTeam);
+    if (humanTeams.length === 0) return null;
+    const now = Date.now();
+    return (
+      <div className="flex justify-center gap-4 mt-2">
+        {humanTeams.map(team => {
+          const isWest = team === Team.WEST;
+          const money = gameState.money[team];
+          const lvl = gameState.incomeLevel?.[team] ?? 0;
+          const econCost = INCOME_UPGRADE_BASE_COST * (lvl + 1);
+          const econMaxed = lvl >= INCOME_UPGRADE_MAX;
+          const rally = gameState.rally?.[team];
+          const rallyActive = !!rally && now < rally.until;
+          const rallyCd = !!rally && now < rally.readyAt && !rallyActive;
+          const cdLeft = rally ? Math.ceil((rally.readyAt - now) / 1000) : 0;
+          return (
+            <div key={team} className={`flex items-center gap-2 bg-stone-800 rounded-lg px-3 py-1.5 border shadow-lg ${cmdHint ? 'border-amber-400 animate-pulse' : 'border-stone-600'}`}>
+              <div className={`flex flex-col items-center leading-none ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
+                <span className="text-[9px] font-black uppercase tracking-widest">{isWest ? 'West' : 'East'}</span>
+                <span className="text-[8px] text-stone-500 uppercase tracking-wider mt-0.5">Command</span>
+              </div>
+              <button
+                title={econMaxed ? 'Economy fully upgraded' : `Invest $${econCost}: +25% income for the rest of the match`}
+                onClick={() => setCommandQueue(prev => [...prev, { team, cmd: 'income' }])}
+                disabled={econMaxed || money < econCost}
+                className="flex items-center gap-2 px-3 py-1.5 rounded border border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400 transition-colors active:scale-95 disabled:opacity-30"
+              >
+                <TrendingUp size={18} className="text-green-400" />
+                <span className="flex flex-col items-start leading-none">
+                  <span className="text-[10px] font-bold uppercase">Economy <span className="text-amber-400 tracking-tighter">{'●'.repeat(lvl)}{'○'.repeat(INCOME_UPGRADE_MAX - lvl)}</span></span>
+                  <span className="text-[9px] opacity-70 mt-0.5">{econMaxed ? 'Fully upgraded' : `$${econCost} · +25% income`}</span>
+                </span>
+              </button>
+              <button
+                title={rallyActive ? 'Rally active — your army is surging!' : rallyCd ? `Rally horn recharging (${cdLeft}s)` : `$${RALLY_COST}: +45% fire rate & +25% speed for 8s`}
+                onClick={() => setCommandQueue(prev => [...prev, { team, cmd: 'rally' }])}
+                disabled={rallyActive || rallyCd || money < RALLY_COST}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded border transition-colors active:scale-95 disabled:opacity-40 ${rallyActive ? 'border-amber-400 bg-amber-900/70 text-amber-300 animate-pulse' : 'border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400'}`}
+              >
+                <Megaphone size={18} className={rallyActive ? 'text-amber-300' : 'text-amber-500'} />
+                <span className="flex flex-col items-start leading-none">
+                  <span className="text-[10px] font-bold uppercase">{rallyActive ? 'Rallying!' : 'Rally Horn'}</span>
+                  <span className="text-[9px] opacity-70 mt-0.5">{rallyActive ? 'Units surging' : rallyCd ? `Ready in ${cdLeft}s` : `$${RALLY_COST} · 8s surge`}</span>
+                </span>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center justify-center p-4 font-serif overflow-hidden">
@@ -464,7 +572,17 @@ const App: React.FC = () => {
                 <p className="text-stone-400 text-[10px] uppercase tracking-widest text-center mb-2">CPU Opponent</p>
                 <div className="flex gap-2">
                   {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
-                    <button key={l} onClick={() => setCpuLevel(l)} className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>{l}</button>
+                    <button
+                      key={l}
+                      onClick={() => setCpuLevel(l)}
+                      title={{
+                        off: 'No computer opponent — two-player hotseat',
+                        easy: 'Slow to act, rarely counters your army, never uses commands',
+                        normal: 'Reads your composition, counter-picks and calls strikes',
+                        hard: 'Fast and ruthless: perfect counters, economy & rally usage, and battlefield maneuvers',
+                      }[l]}
+                      className={`px-2.5 py-1.5 rounded border text-xs font-bold uppercase transition-all ${cpuLevel === l ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}
+                    >{l}</button>
                   ))}
                 </div>
               </div>
@@ -476,6 +594,9 @@ const App: React.FC = () => {
               ▶ DEPLOY FORCES
             </button>
             <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>
+            <span className="text-stone-500 text-[10px] tracking-wide max-w-md text-center">
+              Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
+            </span>
           </div>
         </div>
       )}
@@ -488,6 +609,8 @@ const App: React.FC = () => {
             <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
             <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
             <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
+            <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
+            <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
@@ -505,7 +628,57 @@ const App: React.FC = () => {
       </div>
       <div className="relative flex items-center justify-center">
         {renderUnitButtons(Team.WEST)}
-        <div className="relative"><GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} /></div>
+        <div className="relative">
+          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+            setSelection(ids.length ? { team, ids } : null);
+            if (ids.length) {
+              setTroopHint(false); // they found it — never nag again
+              try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
+            }
+          }, [])} selectedIds={selection?.ids} />
+          {/* One-time tutorial toast for troop control */}
+          {troopHint && !selection && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
+              💡 <strong>Click one of your units</strong> to give it its own orders — Attack, Hold or Fall Back.<br />
+              <span className="text-amber-200/70"><strong>Double-click</strong> selects every unit of that type. Esc or a ground click deselects.</span>
+            </div>
+          )}
+          {/* Troop order panel — appears when you click one of your own units */}
+          {selection && (() => {
+            const liveIds = selection.ids.filter(id => gameState.units.some(u => u.id === id && u.health > 0));
+            if (liveIds.length === 0) return null;
+            const isWest = selection.team === Team.WEST;
+            const issue = (order: Stance | null) => setOrderQueue(prev => [...prev, { ids: liveIds, order }]);
+            const btn = 'px-2 py-1 rounded border text-[9px] font-bold uppercase tracking-tight transition-colors active:scale-95';
+            return (
+              <div className="absolute bottom-[70px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-stone-900/95 border border-stone-500 rounded-lg px-2.5 py-1.5 shadow-2xl">
+                <span className={`text-[10px] font-black uppercase mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
+                  {liveIds.length} unit{liveIds.length > 1 ? 's' : ''}
+                </span>
+                <button onClick={() => issue('advance')} title="Selected troops push toward the enemy edge" className={`${btn} border-green-600 text-green-400 hover:bg-green-900/60`}>⚔ Attack</button>
+                <button onClick={() => issue('hold')} title="Selected troops stop and defend (infantry can entrench)" className={`${btn} border-amber-600 text-amber-400 hover:bg-amber-900/60`}>⛨ Hold</button>
+                <button onClick={() => issue('retreat')} title="Selected troops withdraw toward your edge (they heal there)" className={`${btn} border-red-600 text-red-400 hover:bg-red-900/60`}>⏪ Fall Back</button>
+                <button onClick={() => issue(null)} title="Clear their orders — follow the team stance again" className={`${btn} border-stone-600 text-stone-400 hover:text-white`}>Follow Team</button>
+                <button onClick={() => setSelection(null)} title="Deselect (Esc)" className={`${btn} border-stone-700 text-stone-500 hover:text-white`}>✕</button>
+              </div>
+            );
+          })()}
+          {/* Battle event feed — newest at the bottom, entries fade out after ~8s */}
+          <div data-testid="event-feed" className="absolute bottom-2 left-2 z-40 pointer-events-none flex flex-col gap-0.5 max-w-[46%]">
+            {(gameState.events ?? []).slice(-5).map(ev => {
+              const age = Date.now() - ev.time;
+              if (age > 8000) return null;
+              const opacity = age > 6000 ? Math.max(0, 1 - (age - 6000) / 2000) : 1;
+              const color = ev.team === Team.WEST ? 'text-blue-300' : ev.team === Team.EAST ? 'text-red-300' : 'text-amber-300';
+              return (
+                <div key={ev.id} style={{ opacity }} className={`text-[9px] leading-tight font-bold ${color} bg-black/60 px-1.5 py-0.5 rounded shadow`}>
+                  {ev.text}
+                </div>
+              );
+            })}
+          </div>
+          {renderCommandBar()}
+        </div>
         {renderUnitButtons(Team.EAST)}
       </div>
       <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
@@ -514,14 +687,23 @@ const App: React.FC = () => {
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-amber-500 font-bold border-b border-stone-700 pb-1"><Target size={14} /><h3>MISSION OBJECTIVES</h3></div>
           <ul className="text-stone-400 space-y-1 list-disc pl-3">
-            <li><strong className="text-white">Victory:</strong> First team to <span className="text-amber-400">100 Points</span> wins.</li>
-            <li><strong className="text-white">Scoring:</strong> Units reaching enemy edge score points (Tank: 3, Others: 1).</li>
+            {gameMode === 'basehp' ? (
+              <li><strong className="text-white">Victory:</strong> Break through to damage the enemy base — first base to <span className="text-amber-400">0 HP</span> loses.</li>
+            ) : (
+              <li><strong className="text-white">Victory:</strong> First team to <span className="text-amber-400">100 Points</span> wins.</li>
+            )}
+            <li><strong className="text-white">Scoring:</strong> Units reaching enemy edge {gameMode === 'basehp' ? 'damage the base' : 'score points'} (Tank: 3, Others: 1).</li>
             <li><strong className="text-white">Resources:</strong> Money generates automatically over time.</li>
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
+            <li><strong className="text-white">Troop Control:</strong> <span className="text-amber-400">Click your own unit</span> to select it (squads select together), <span className="text-amber-400">double-click for all of that type</span>, then give Attack/Hold/Fall Back orders that override the team stance (colored dot shows the order; Esc deselects).</li>
+            <li><strong className="text-white">Entrench:</strong> Foot soldiers holding still under <span className="text-amber-400">Hold</span> orders dig in after ~6s: <span className="text-amber-400">-45% direct fire damage</span> until they move. Explosives ignore foxholes.</li>
+            <li><strong className="text-white">Economy:</strong> Invest in up to 3 income upgrades (<span className="text-amber-400">+25% each</span>) — units now vs. money later.</li>
+            <li><strong className="text-white">Rally Horn:</strong> ${RALLY_COST} for <span className="text-amber-400">+45% fire rate & +25% speed</span> for 8s — time it with your push.</li>
+            <li><strong className="text-white">Field Repairs:</strong> Wounded units <span className="text-green-400">heal slowly near your own edge</span> when out of combat — rotate them back instead of losing them.</li>
             <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
@@ -533,7 +715,7 @@ const App: React.FC = () => {
           <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-stone-400">
             <div><strong className="text-white">Squad:</strong> Cheap, general purpose.</div>
             <div><strong className="text-white">Tank:</strong> High HP, heavy damage.</div>
-            <div><strong className="text-white">MLRS:</strong> Long range, Light Splash.</div>
+            <div><strong className="text-white">Artillery:</strong> Long range splash. Stops to fire.</div>
             <div><strong className="text-white">Rambo:</strong> Rapid fire hero unit.</div>
             <div><strong className="text-white">AA Unit:</strong> <span className="text-red-400">Essential</span> vs Drones & Air.</div>
             <div><strong className="text-white">Drone:</strong> Flying Bomb. Immune to Ground Fire.</div>
@@ -549,6 +731,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Nuke:</strong> <span className="text-red-500 font-bold">WARNING:</span> Friendly Fire! Enemy Side Target Only.</li>
             <li><strong className="text-white">Airborne:</strong> Drops paratroopers behind lines.</li>
             <li><strong className="text-white">Mines:</strong> Hidden defense. Explodes on contact.</li>
+            <li><strong className="text-white">Smoke:</strong> Screens a zone for ~13s — snipers & artillery <span className="text-amber-400">can't target through it</span> (point-blank still works, air sees over it).</li>
             <li><strong className="text-white">Supply Drops:</strong> Crates parachute onto the midfield — <span className="text-amber-400">first unit there claims</span> cash, a veteran squad, or a field medkit.</li>
           </ul>
         </div>

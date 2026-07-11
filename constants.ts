@@ -114,6 +114,19 @@ export const UNIT_CONFIG = {
     colorWest: '#f97316',
     colorEast: '#f97316',
   },
+  [UnitType.SMOKE]: {
+    cost: 70,
+    health: 1,
+    damage: 0,
+    radius: 72,
+    speed: 0,
+    range: 0,
+    attackSpeed: 0,
+    width: 0,
+    height: 0,
+    colorWest: '#9ca3af',
+    colorEast: '#9ca3af',
+  },
   [UnitType.MISSILE_STRIKE]: {
     cost: 125,
     health: 40,
@@ -374,3 +387,18 @@ export const INITIAL_MONEY = 1200;
 
 export const HILL_RANGE_BONUS = 1.3;
 export const HILL_RELOAD_BONUS = 0.8;
+
+// Team commands
+export const INCOME_UPGRADE_BASE_COST = 250; // level N costs N * base
+export const INCOME_UPGRADE_BONUS = 0.25;    // +25% income per level
+export const INCOME_UPGRADE_MAX = 3;
+export const RALLY_COST = 150;
+export const RALLY_DURATION_MS = 8000;
+export const RALLY_COOLDOWN_MS = 50000;      // measured from activation
+export const RALLY_RELOAD_MULT = 1.45;       // cooldowns tick 45% faster
+export const RALLY_SPEED_MULT = 1.25;
+
+// Field repairs: units near their own edge patch up slowly when not under fire
+export const REPAIR_ZONE = 90;               // distance from own edge
+export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
+export const REPAIR_COMBAT_LOCKOUT_MS = 2500;

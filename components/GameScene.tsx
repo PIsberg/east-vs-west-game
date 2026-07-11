@@ -4,7 +4,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
-import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate } from '../types';
+import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
 
 
@@ -17,6 +17,8 @@ interface GameSceneProps {
     missiles: any[];
     lasers?: LaserStrike[];
     crates?: SupplyCrate[];
+    smokes?: SmokeZone[];
+    selectedIds?: string[];
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -457,7 +459,7 @@ const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparen
 const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
 const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
-const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void, onUnitClick?: (unit: Unit) => void, focused?: boolean }) => {
+const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void, onUnitClick?: (unit: Unit) => void, focused?: boolean, selected?: boolean }) => {
     const config = UNIT_CONFIG[unit.type] as any;
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
 
@@ -1621,6 +1623,48 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
                     </group>
                 )}
 
+                {/* Selection ring + per-unit order indicator */}
+                {selected && (
+                    <mesh
+                        position={[0, -yOffset - bobY + 0.6, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={unit.width * 0.9 + 8}
+                    >
+                        <ringGeometry args={[0.82, 1, 24]} />
+                        <meshBasicMaterial color="#a3e635" transparent opacity={0.9} toneMapped={false} depthWrite={false} />
+                    </mesh>
+                )}
+                {unit.orders && (
+                    <mesh position={[0, unit.height + 16, 0]}>
+                        <sphereGeometry args={[2, 6, 5]} />
+                        <meshBasicMaterial color={unit.orders === 'advance' ? '#22c55e' : unit.orders === 'hold' ? '#f59e0b' : '#ef4444'} toneMapped={false} />
+                    </mesh>
+                )}
+
+                {/* Foxhole: dug-in ground ring + sandbag parapet facing the enemy */}
+                {unit.isEntrenched && (
+                    <group position={[0, -yOffset - bobY, 0]}>
+                        <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <ringGeometry args={[unit.width * 0.55, unit.width * 0.55 + 4, 16]} />
+                            <meshBasicMaterial color="#44403c" transparent opacity={0.85} depthWrite={false} />
+                        </mesh>
+                        {[-0.55, 0, 0.55].map((a, i) => (
+                            <mesh
+                                key={i}
+                                position={[
+                                    Math.cos(a) * (unit.width * 0.55 + 4) * (unit.team === Team.WEST ? 1 : -1),
+                                    2.2,
+                                    Math.sin(a) * (unit.width * 0.55 + 4),
+                                ]}
+                                castShadow
+                            >
+                                <sphereGeometry args={[3, 6, 5]} />
+                                <meshStandardMaterial color="#7c6f43" roughness={1} />
+                            </mesh>
+                        ))}
+                    </group>
+                )}
+
                 {/* Veteran stars */}
                 {(unit.veterancy || 0) > 0 && (
                     <group position={[0, unit.height + 10, 0]}>
@@ -1635,6 +1679,47 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused }: { unit: 
 
             </group>
         </ClickableGroup >
+    );
+};
+
+// Smoke screen: a slowly-churning clump of soft grey billows. Deterministic
+// per-zone layout (seeded by id) so puffs don't jump between frames.
+const SmokeCloud3D = ({ smoke }: { smoke: SmokeZone }) => {
+    const puffs = useMemo(() => {
+        let seed = 0;
+        for (let i = 0; i < smoke.id.length; i++) seed = (seed * 31 + smoke.id.charCodeAt(i)) % 100000;
+        const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+        return Array.from({ length: 9 }, () => ({
+            a: rnd() * Math.PI * 2,
+            d: rnd() * smoke.radius * 0.75,
+            r: 13 + rnd() * 11,
+            h: 6 + rnd() * 14,
+            spin: 0.2 + rnd() * 0.5,
+            phase: rnd() * Math.PI * 2,
+            light: rnd() > 0.5,
+        }));
+    }, [smoke.id, smoke.radius]);
+    // Roll in over ~1.5s, thin out over the last ~2.5s
+    const age = smoke.maxLife - smoke.life;
+    const fade = Math.min(1, age / 90) * Math.min(1, smoke.life / 150);
+    if (fade <= 0) return null;
+    const t = Date.now() * 0.001;
+    return (
+        <group position={[smoke.x, 0, smoke.y]}>
+            {puffs.map((p, i) => {
+                const drift = p.a + t * 0.05 * p.spin;
+                return (
+                    <mesh
+                        key={i}
+                        position={[Math.cos(drift) * p.d, p.h + Math.sin(t * p.spin + p.phase) * 2, Math.sin(drift) * p.d]}
+                        scale={fade * (1 + 0.08 * Math.sin(t * 1.7 + p.phase))}
+                    >
+                        <sphereGeometry args={[p.r, 8, 6]} />
+                        <meshStandardMaterial color={p.light ? '#d6d3d1' : '#a8a29e'} transparent opacity={0.55 * fade} depthWrite={false} roughness={1} />
+                    </mesh>
+                );
+            })}
+        </group>
     );
 };
 
@@ -1672,7 +1757,7 @@ const Projectile3D = ({ proj }: { proj: Projectile }) => {
 // updated imperatively in useFrame. Special cases (beams, text, decals, missiles)
 // stay as individual components — they are rare.
 
-const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt || p.isCorpse || p.isShockwave);
+const isSpecialParticle = (p: Particle) => !!(p.targetPos || p.text || p.isGroundDecal || p.isBolt || p.isCorpse || p.isShockwave || p.isSkid);
 
 // Jagged vertical lightning bolt from the sky to a strike point
 const LightningBolt = ({ p }: { p: Particle }) => {
@@ -1865,6 +1950,22 @@ const Particle3D = ({ p }: { p: Particle }) => {
         );
     }
 
+    // Vehicle tread marks: two faint parallel strips aligned with travel.
+    // Deliberately near-invisible — they read as wear, not markings.
+    if (p.isSkid) {
+        const opacity = Math.min(0.14, p.life / 2800);
+        return (
+            <group position={[p.position.x, 0.15, p.position.y]} rotation={[0, -(p.rot ?? 0), 0]}>
+                {[-1, 1].map(s => (
+                    <mesh key={s} position={[0, 0, s * p.size * 0.34]} rotation={[-Math.PI / 2, 0, 0]}>
+                        <planeGeometry args={[p.size * 1.8, p.size * 0.22]} />
+                        <meshBasicMaterial color={p.color} transparent opacity={opacity} depthWrite={false} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+
     // Scorch Mark / Ground Decal — large ones get a raised earth rim (crater look)
     if (p.isGroundDecal) {
         const opacity = Math.min(0.85, p.life / 600);
@@ -1980,6 +2081,64 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                 <mesh position={[0, 2, height / 2 - 1]}>
                     <boxGeometry args={[width, 2, 1]} />
                     <meshStandardMaterial color="#4b5563" />
+                </mesh>
+            </group>
+        );
+    }
+
+    if (item.type === 'crate' || item.type === 'barrel') {
+        const s = item.size;
+        const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
+        const yaw = (seed % 628) / 100;
+
+        if (item.state === 'broken') {
+            return item.type === 'crate' ? (
+                // Splintered planks left where the crate stood
+                <group position={[item.x, 0.3, item.y]} rotation={[0, yaw, 0]}>
+                    {([[-s * 0.4, 0.25], [s * 0.3, -0.5], [0, 1.1]] as const).map(([ox, r], i) => (
+                        <mesh key={i} position={[ox, 0.2, (i - 1) * s * 0.3]} rotation={[0, r, 0]}>
+                            <boxGeometry args={[s * 1.4, 0.5, s * 0.32]} />
+                            <meshStandardMaterial color="#5c4326" roughness={1} />
+                        </mesh>
+                    ))}
+                </group>
+            ) : (
+                // Burst barrel: charred shell tipped over on a scorch ring
+                <group position={[item.x, 0.3, item.y]}>
+                    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.15, 0]}>
+                        <circleGeometry args={[s * 1.2, 12]} />
+                        <meshBasicMaterial color="#1c1917" transparent opacity={0.45} depthWrite={false} />
+                    </mesh>
+                    <mesh position={[s * 0.4, s * 0.35, 0]} rotation={[0.4, yaw, 1.3]}>
+                        <cylinderGeometry args={[s * 0.42, s * 0.42, s * 1.05, 8]} />
+                        <meshStandardMaterial color="#450a0a" roughness={1} />
+                    </mesh>
+                </group>
+            );
+        }
+
+        return item.type === 'crate' ? (
+            <group position={[item.x, 0, item.y]} rotation={[0, yaw, 0]}>
+                <mesh position={[0, s * 0.5, 0]} castShadow>
+                    <boxGeometry args={[s, s, s]} />
+                    <meshStandardMaterial color="#8a6a3b" roughness={0.95} />
+                </mesh>
+                {/* Lid plank */}
+                <mesh position={[0, s + 0.12, 0]}>
+                    <boxGeometry args={[s * 1.04, 0.25, s * 0.26]} />
+                    <meshStandardMaterial color="#6b4f2a" roughness={1} />
+                </mesh>
+            </group>
+        ) : (
+            <group position={[item.x, 0, item.y]}>
+                <mesh position={[0, s * 0.7, 0]} castShadow>
+                    <cylinderGeometry args={[s * 0.5, s * 0.5, s * 1.4, 10]} />
+                    <meshStandardMaterial color="#7f1d1d" roughness={0.7} />
+                </mesh>
+                {/* Band */}
+                <mesh position={[0, s * 0.7, 0]}>
+                    <cylinderGeometry args={[s * 0.52, s * 0.52, s * 0.16, 10]} />
+                    <meshStandardMaterial color="#450a0a" />
                 </mesh>
             </group>
         );
@@ -2720,7 +2879,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds, selectedIds }) => {
 
 
 
@@ -2794,7 +2953,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                     return <TerrainItem key={t.id} item={t} itemState={t.state} itemHealth={t.health} onCanvasClick={onCanvasClick} mapType={mapType} />;
                 })}
 
-                {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} />)}
+                {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} selected={selectedIds?.includes(u.id)} />)}
 
                 {projectiles.map(p => p.isMissile ? <Projectile3D key={p.id} proj={p} /> : null)}
                 <InstancedProjectiles projectiles={projectiles} />
@@ -2807,6 +2966,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {missiles.map(m => <Missile3D key={m.id} m={m} />)}
 
                 {lasers?.map(l => <SatelliteLaser3D key={l.id} laser={l} />)}
+                {smokes?.map(s => <SmokeCloud3D key={s.id} smoke={s} />)}
 
                 {crates?.map(c => <SupplyCrate3D key={c.id} crate={c} />)}
             </ShakeRig>

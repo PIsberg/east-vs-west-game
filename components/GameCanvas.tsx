@@ -12,9 +12,20 @@ import {
   HILL_RANGE_BONUS,
   HILL_RELOAD_BONUS,
   WIN_SCORE,
-  BASE_HP
+  BASE_HP,
+  INCOME_UPGRADE_BASE_COST,
+  INCOME_UPGRADE_BONUS,
+  INCOME_UPGRADE_MAX,
+  RALLY_COST,
+  RALLY_DURATION_MS,
+  RALLY_COOLDOWN_MS,
+  RALLY_RELOAD_MULT,
+  RALLY_SPEED_MULT,
+  REPAIR_ZONE,
+  REPAIR_PER_TICK,
+  REPAIR_COMBAT_LOCKOUT_MS
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
 import { GameScene } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -32,10 +43,20 @@ const TRANSPORTABLE = new Set([
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
-const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number }> = {
-  easy:   { interval: 1.7,  incomeBonus: 0,    special: 0.4 },
-  normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0 },
-  hard:   { interval: 0.68, incomeBonus: 0.12, special: 1.4 },
+// Foot units that can dig in while holding position
+const ENTRENCHABLE = new Set([
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
+]);
+
+// interval: spawn cadence · incomeBonus: economy edge · special: strike frequency
+// counterSmart: chance per cycle it reads your army and counter-picks
+// commands: how eagerly it buys economy upgrades / sounds the rally (0 = never)
+// stanceIQ: dynamically switches its army stance (regroup when weak, push when strong)
+const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number, counterSmart: number, commands: number, stanceIQ: boolean }> = {
+  easy:   { interval: 1.9,  incomeBonus: 0,    special: 0.3, counterSmart: 0.3, commands: 0,   stanceIQ: false },
+  normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0, counterSmart: 0.8, commands: 0.7, stanceIQ: false },
+  hard:   { interval: 0.62, incomeBonus: 0.15, special: 1.5, counterSmart: 1.0, commands: 1.2, stanceIQ: true },
 };
 
 interface GameCanvasProps {
@@ -51,6 +72,13 @@ interface GameCanvasProps {
   gameSpeed: number;
   gameMode: GameMode;
   stances: Record<Team, Stance>;
+  commandQueue: { team: Team, cmd: TeamCommand }[];
+  clearCommandQueue: () => void;
+  // Per-unit orders: null order = clear the override (follow team stance)
+  orderQueue: { ids: string[], order: Stance | null }[];
+  clearOrderQueue: () => void;
+  onSelectUnits?: (team: Team, ids: string[]) => void;
+  selectedIds?: string[];
 }
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
@@ -66,6 +94,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   gameSpeed,
   gameMode,
   stances,
+  commandQueue,
+  clearCommandQueue,
+  orderQueue,
+  clearOrderQueue,
+  onSelectUnits,
+  selectedIds,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -75,7 +109,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     const compute = () => {
       const availW = window.innerWidth - 220;  // side unit-button columns (2-col compact grid)
-      const availH = window.innerHeight - 230; // header + info panel
+      const availH = window.innerHeight - 285; // header + command bar + info panel
       let w = Math.min(availW, availH * (800 / 450));
       w = Math.max(640, Math.min(1440, w));
       setViewSize({ w: Math.round(w), h: Math.round(w * (450 / 800)) });
@@ -94,6 +128,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const lasersRef = useRef<LaserStrike[]>([]);
   const cratesRef = useRef<SupplyCrate[]>([]);
   const nextCrateTickRef = useRef(1500); // first drop ~25s in
+  const smokesRef = useRef<SmokeZone[]>([]);
+  const SMOKE_LIFE = 780; // ~13s of concealment
+  const ENTRENCH_TICKS = 360; // ~6s stationary under 'hold' orders to dig in
+  // Battle-event feed shown in the HUD; new array identity per emit so React sees the change
+  const eventsRef = useRef<GameEvent[]>([]);
+  const pushEvent = (kind: GameEvent['kind'], text: string, team?: Team) => {
+    eventsRef.current = [...eventsRef.current.slice(-7), { id: generateId(), time: Date.now(), kind, text, team }];
+  };
+  const teamName = (t: Team) => t === Team.WEST ? 'West' : 'East';
+  const unitLabel = (t: UnitType) =>
+    t === UnitType.ANTI_AIR ? 'Anti-Air' : t.charAt(0) + t.slice(1).toLowerCase().replace(/_/g, ' ');
   const LASER_DESIGNATE = 55; // red targeting beam before the real one fires
   const LASER_LIFE = 235;     // designate + ~3s burn
   const flashOpacity = useRef(0);
@@ -125,7 +170,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const gameModeRef = useRef<GameMode>(gameMode);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   const stancesRef = useRef<Record<Team, Stance>>(stances);
-  useEffect(() => { stancesRef.current = stances; }, [stances]);
+  useEffect(() => {
+    // The hard CPU steers its own stance — don't let UI state overwrite it
+    const next = { ...stances };
+    cpuRef.current.teams.forEach(t => { next[t] = stancesRef.current[t]; });
+    stancesRef.current = next;
+  }, [stances]);
+
+  // Double-click detection for own-unit selection (expand to all of a type)
+  const lastUnitClickRef = useRef<{ id: string, time: number }>({ id: '', time: 0 });
 
   // Focus fire: clicking an enemy unit makes your side prioritize it for a few seconds
   const focusRef = useRef<Record<Team, { targetId: string | null, until: number }>>({
@@ -139,14 +192,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (clicked.type === UnitType.MINE_PERSONAL || clicked.type === UnitType.MINE_TANK || clicked.type === UnitType.NAPALM) {
       onCanvasClick(clicked.position.x, clicked.position.y); return;
     }
+    // Clicking one of your own units selects it (whole squad for squad-spawned
+    // infantry). A quick second click on the same unit expands the selection
+    // to every unit of that type on your team.
+    if (!cpuTeams.includes(clicked.team)) {
+      const now = Date.now();
+      const last = lastUnitClickRef.current;
+      const isDouble = last.id === clicked.id && now - last.time < 400;
+      lastUnitClickRef.current = { id: clicked.id, time: now };
+
+      const selectable = (u: Unit) => u.team === clicked.team && u.health > 0 && !u.boarded &&
+        u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM;
+      const ids = isDouble
+        ? unitsRef.current.filter(u => selectable(u) && u.type === clicked.type).map(u => u.id)
+        : unitsRef.current.filter(u => selectable(u) && (u.id === clicked.id || (!!clicked.squadId && u.squadId === clicked.squadId))).map(u => u.id);
+      onSelectUnits?.(clicked.team, ids);
+      soundService.playSpawnSound(clicked.team === Team.EAST);
+      return;
+    }
     const focuser = clicked.team === Team.WEST ? Team.EAST : Team.WEST;
     if (cpuTeams.includes(focuser)) return; // can't give orders to the CPU's army
     focusRef.current[focuser] = { targetId: clicked.id, until: Date.now() + 6000 };
     soundService.playHitSound();
   };
+  // Latest click handler for the tick closure's test hook (headless runs
+  // can't raycast-click 3D unit meshes reliably)
+  const handleUnitClickRef = useRef(handleUnitClick);
+  handleUnitClickRef.current = handleUnitClick;
 
   useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
+  // Latest selection callback for use inside the stale tick closure (debug hook)
+  const onSelectUnitsRef = useRef(onSelectUnits);
+  useEffect(() => { onSelectUnitsRef.current = onSelectUnits; }, [onSelectUnits]);
 
   // Debug Keys
   useEffect(() => {
@@ -295,6 +373,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeHills(2, ch1x + seaWidth / 2 + 30, ch2x - seaWidth / 2 - 30, allR);
     }
 
+    // Battlefield props: a handful of supply crates & fuel barrels scattered
+    // over contested ground. Decorative until something breaks them — kept
+    // sparse on purpose so they don't clutter the map.
+    {
+      const riverSegs = t.filter(o => o.type === 'river');
+      let placed = 0;
+      for (let i = 0; i < 160 && placed < 8; i++) {
+        const x = 140 + Math.random() * (CANVAS_WIDTH - 280);
+        const y = HORIZON_Y + 25 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 50);
+        if (avoidCheck(x, y, 12, riverSegs, 55)) continue;
+        if (t.some(o => (o.type === 'crate' || o.type === 'barrel') && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < 70)) continue;
+        const isBarrel = Math.random() < 0.3;
+        t.push({ id: gid(), x, y, type: isBarrel ? 'barrel' : 'crate', size: 6 + Math.random() * 4, health: 1 });
+        // Crates often sit in pairs — reads as a dropped supply cache
+        if (!isBarrel && Math.random() < 0.4) {
+          t.push({ id: gid(), x: x + 9 + Math.random() * 4, y: y + (Math.random() - 0.5) * 8, type: 'crate', size: 5 + Math.random() * 3, health: 1 });
+        }
+        placed++;
+      }
+    }
+
     // Bridges are destructible: explosives damage them, engineers repair them
     t.forEach(o => { if (o.type === 'bridge') { o.health = BRIDGE_HP; o.state = 'normal'; } });
 
@@ -311,6 +410,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const scoreRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
   const moneyRef = useRef({ [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
+
+  // Team commands: economy upgrades (permanent income levels) and the rally
+  // horn (short team-wide surge on a long cooldown)
+  const incomeLevelRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
+  const rallyRef = useRef<Record<Team, RallyState>>({
+    [Team.WEST]: { until: 0, readyAt: 0 },
+    [Team.EAST]: { until: 0, readyAt: 0 },
+  });
+
+  // Execute a command if affordable/off-cooldown — shared by player & CPU
+  const runCommand = (team: Team, cmd: TeamCommand): boolean => {
+    if (cmd === 'income') {
+      const lvl = incomeLevelRef.current[team];
+      const cost = INCOME_UPGRADE_BASE_COST * (lvl + 1);
+      if (lvl >= INCOME_UPGRADE_MAX || moneyRef.current[team] < cost) return false;
+      moneyRef.current[team] -= cost;
+      incomeLevelRef.current[team] = lvl + 1;
+      pushEvent('command', `${teamName(team)} economy upgraded to level ${lvl + 1} (+${Math.round(INCOME_UPGRADE_BONUS * (lvl + 1) * 100)}% income)`, team);
+      soundService.playHealSound();
+      return true;
+    }
+    const r = rallyRef.current[team];
+    const now = Date.now();
+    if (now < r.readyAt || moneyRef.current[team] < RALLY_COST) return false;
+    moneyRef.current[team] -= RALLY_COST;
+    r.until = now + RALLY_DURATION_MS;
+    r.readyAt = now + RALLY_COOLDOWN_MS;
+    pushEvent('command', `${teamName(team)} sounds the rally horn — all units surge!`, team);
+    soundService.playRallySound();
+    return true;
+  };
 
   const getScaleAt = (y: number) => {
     const t = (y - HORIZON_Y) / (CANVAS_HEIGHT - HORIZON_Y);
@@ -351,6 +481,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
+    if (type === UnitType.SMOKE && options?.absolutePos) {
+      const cfg = UNIT_CONFIG[UnitType.SMOKE] as any;
+      smokesRef.current.push({
+        id: generateId(), team,
+        x: options.absolutePos.x, y: options.absolutePos.y,
+        life: SMOKE_LIFE, maxLife: SMOKE_LIFE, radius: cfg.radius,
+      });
+      typeStatsRef.current[team].spawned[UnitType.SMOKE] = (typeStatsRef.current[team].spawned[UnitType.SMOKE] || 0) + 1;
+      // Canister pop + initial burst of grey billows
+      soundService.playFlameSound();
+      for (let k = 0; k < 16; k++) {
+        const a = Math.random() * Math.PI * 2, d = Math.random() * cfg.radius * 0.7;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: options.absolutePos.x + Math.cos(a) * d, y: options.absolutePos.y + Math.sin(a) * d },
+          velocity: { x: (Math.random() - 0.5) * 0.6, y: (Math.random() - 0.5) * 0.6 },
+          drag: 0.96, life: 90 + Math.random() * 60,
+          color: Math.random() > 0.5 ? '#d6d3d1' : '#a8a29e',
+          size: 10 + Math.random() * 12, alt: 2 + Math.random() * 8, altVel: 0.25,
+        });
+      }
+      return;
+    }
+
     if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE || type === UnitType.GUNSHIP) && options?.absolutePos) {
       const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
       const isGunship = type === UnitType.GUNSHIP;
@@ -367,6 +521,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         shotTimer: 0,
       };
       flyoversRef.current.push(flyover);
+      if (type === UnitType.NUKE) pushEvent('strike', `☢ ${teamName(team)} nuclear strike inbound!`, team);
       return;
     }
 
@@ -405,6 +560,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, []);
 
   useEffect(() => {
+    if (commandQueue.length > 0) {
+      commandQueue.forEach(c => runCommand(c.team, c.cmd));
+      clearCommandQueue();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commandQueue, clearCommandQueue]);
+
+  // Per-unit order overrides from the selection panel
+  useEffect(() => {
+    if (orderQueue.length > 0) {
+      orderQueue.forEach(({ ids, order }) => {
+        const idSet = new Set(ids);
+        unitsRef.current.forEach(u => {
+          if (!idSet.has(u.id)) return;
+          if (order === null) delete u.orders;
+          else u.orders = order;
+        });
+      });
+      clearOrderQueue();
+    }
+  }, [orderQueue, clearOrderQueue]);
+
+  useEffect(() => {
     if (spawnQueue.length > 0) {
       spawnQueue.forEach(req => {
         spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
@@ -425,8 +603,51 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const isSearchTick = (u: Unit) =>
       ((tickCountRef.current + u.id.charCodeAt(0) + u.id.charCodeAt(u.id.length - 1)) & 3) === 0;
 
+    // Break a battlefield prop: crates splinter, barrels cook off with a small
+    // neutral blast (damages both teams, never chains into other barrels).
+    const breakProp = (p: TerrainObject) => {
+      if (p.state === 'broken') return;
+      p.state = 'broken';
+      p.health = 720; // debris lingers ~12s, then gets swept from the terrain list
+      if (p.type === 'barrel') {
+        soundService.playMineExplosion();
+        spatialHash.current.queryCallback(p.x, p.y, 28, u => {
+          if (Math.sqrt((u.position.x - p.x) ** 2 + (u.position.y - p.y) ** 2) < 28 && !(UNIT_CONFIG[u.type] as any).isFlying) {
+            u.health -= 16;
+            u.lastHitTime = Date.now();
+          }
+        });
+        for (let k = 0; k < 8; k++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: p.x + (Math.random() - 0.5) * 10, y: p.y + (Math.random() - 0.5) * 8 },
+            velocity: { x: (Math.random() - 0.5) * 1.4, y: (Math.random() - 0.5) * 1.4 },
+            drag: 0.9, life: 30, color: k % 2 === 0 ? '#f97316' : '#fbbf24',
+            size: 5 + Math.random() * 5, alt: 3 + Math.random() * 8, altVel: 0.7,
+          });
+        }
+        particlesRef.current.push({ id: generateId(), position: { x: p.x, y: p.y }, life: 700, color: '#1c1917', size: 14, isGroundDecal: true });
+      } else {
+        soundService.playCrackSound();
+        for (let k = 0; k < 6; k++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: p.x + (Math.random() - 0.5) * 8, y: p.y + (Math.random() - 0.5) * 6 },
+            velocity: { x: (Math.random() - 0.5) * 1.2, y: (Math.random() - 0.5) * 1.2 },
+            drag: 0.9, life: 24, color: k % 2 === 0 ? '#8a6a3b' : '#5c4326',
+            size: 2.5 + Math.random() * 2.5, alt: 3 + Math.random() * 6, altVel: 0.6,
+          });
+        }
+      }
+    };
+
     // Explosive damage to bridges; collapse blocks crossings until repaired
     const damageBridges = (x: number, y: number, radius: number, dmg: number) => {
+      // Props caught in any blast break too
+      terrainRef.current.forEach(p => {
+        if ((p.type !== 'crate' && p.type !== 'barrel') || p.state === 'broken') return;
+        if (Math.abs(p.x - x) < radius + p.size && Math.abs(p.y - y) < radius + p.size) breakProp(p);
+      });
       terrainRef.current.forEach(b => {
         if (b.type !== 'bridge' || b.state === 'broken') return;
         if (Math.abs(b.x - x) < radius + (b.width || 60) / 2 && Math.abs(b.y - y) < radius + (b.height || 40) / 2) {
@@ -434,6 +655,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (b.health <= 0) {
             b.state = 'broken';
             b.health = 0;
+            pushEvent('bridge', 'Bridge destroyed — vehicles blocked!');
             soundService.playLargeExplosion();
             shakeRef.current = Math.max(shakeRef.current, 7);
             for (let k = 0; k < 14; k++) {
@@ -453,11 +675,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
     };
+    // Smoke concealment: targeting into/out of a cloud is blocked beyond
+    // point-blank range. Air units fly above the smoke and are unaffected.
+    const inSmoke = (x: number, y: number) =>
+      smokesRef.current.some(s => (x - s.x) ** 2 + (y - s.y) ** 2 < s.radius * s.radius);
+    const smokeBlocked = (shooter: Unit, o: Unit) => {
+      if (smokesRef.current.length === 0) return false;
+      if ((UNIT_CONFIG[o.type] as any).isFlying || (UNIT_CONFIG[shooter.type] as any).isFlying) return false;
+      const d2 = (o.position.x - shooter.position.x) ** 2 + (o.position.y - shooter.position.y) ** 2;
+      if (d2 < 55 * 55) return false; // close enough to see through the haze
+      return inSmoke(o.position.x, o.position.y) || inSmoke(shooter.position.x, shooter.position.y);
+    };
+
     if (flashOpacity.current > 0) flashOpacity.current -= 0.02; // Flash decay
     // Spawn queue processed in useEffect now to avoid frame-loop race conditions
 
-    moneyRef.current[Team.WEST] += MONEY_PER_TICK;
-    moneyRef.current[Team.EAST] += MONEY_PER_TICK;
+    moneyRef.current[Team.WEST] += MONEY_PER_TICK * (1 + INCOME_UPGRADE_BONUS * incomeLevelRef.current[Team.WEST]);
+    moneyRef.current[Team.EAST] += MONEY_PER_TICK * (1 + INCOME_UPGRADE_BONUS * incomeLevelRef.current[Team.EAST]);
+
+    // Rally status computed once per tick, read in the unit loop
+    const rallyOn: Record<Team, boolean> = {
+      [Team.WEST]: Date.now() < rallyRef.current[Team.WEST].until,
+      [Team.EAST]: Date.now() < rallyRef.current[Team.EAST].until,
+    };
 
     // Underdog rubber-band, two signals:
     // 1. Score/base deficit (+1% income per point behind, cap +40%)
@@ -483,6 +723,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (scoreTrailing) moneyRef.current[scoreTrailing] += MONEY_PER_TICK * scoreBonus;
         if (armyTrailing) moneyRef.current[armyTrailing] += MONEY_PER_TICK * armyBonus;
       }
+      // 3. Economy-gap counterweight: income upgrades are a rich-get-richer
+      //    amplifier, so the side that is behind on upgrade levels gets part
+      //    of the difference back (keeps upgrades worthwhile but not a snowball)
+      const lvlGap = incomeLevelRef.current[Team.WEST] - incomeLevelRef.current[Team.EAST];
+      if (lvlGap !== 0) {
+        const behind = lvlGap > 0 ? Team.EAST : Team.WEST;
+        moneyRef.current[behind] += MONEY_PER_TICK * INCOME_UPGRADE_BONUS * 0.5 * Math.abs(lvlGap);
+      }
     }
 
     // Capture point: uncontested ground presence flips it; holder earns +50% income
@@ -499,8 +747,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + 1);
       else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
-      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; soundService.playSpawnSound(false); }
-      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; soundService.playSpawnSound(true); }
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', 'West holds the capture point (+50% income)', Team.WEST); soundService.playSpawnSound(false); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', 'East holds the capture point (+50% income)', Team.EAST); soundService.playSpawnSound(true); }
       if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * 0.5;
     }
 
@@ -568,7 +816,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 // Tanks & Artillery ignore cover (Heavy weapons)
                 // Others (Infantry) have damage reduced by cover
                 const ignoresCover = proj.sourceType === UnitType.TANK || proj.sourceType === UnitType.ARTILLERY || proj.sourceType === UnitType.DRONE || proj.sourceType === UnitType.AIRSTRIKE || proj.sourceType === UnitType.MISSILE_STRIKE || proj.sourceType === UnitType.NUKE;
-                const damage = (u.isInCover && !ignoresCover) ? proj.damage * 0.4 : proj.damage;
+                // Cover beats a foxhole; explosives (ignoresCover) dig everyone out
+                const damage = !ignoresCover && u.isInCover ? proj.damage * 0.4
+                  : !ignoresCover && u.isEntrenched ? proj.damage * 0.55
+                  : proj.damage;
                 u.health -= damage;
                 u.lastHitTime = Date.now();
                 if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
@@ -741,6 +992,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       const team = claimer.team;
       soundService.playSpawnSound(team === Team.EAST);
+      pushEvent('crate', `${teamName(team)} claims the supply drop (${c.type === 'cash' ? '+$150' : c.type === 'squad' ? 'veteran squad' : 'field medkit'})`, team);
       if (c.type === 'cash') {
         moneyRef.current[team] += 150;
         particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, velocity: { x: 0, y: 0.5 }, life: 90, color: '#22c55e', size: 8, text: '+$150' });
@@ -780,6 +1032,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         });
       }
       cratesRef.current.splice(i, 1);
+    }
+
+    // Smoke screens: tick down and keep the cloud churning with fresh wisps
+    for (let i = smokesRef.current.length - 1; i >= 0; i--) {
+      const s = smokesRef.current[i];
+      s.life--;
+      if (s.life <= 0) { smokesRef.current.splice(i, 1); continue; }
+      if (tickCountRef.current % 6 === 0) {
+        const a = Math.random() * Math.PI * 2, d = Math.random() * s.radius * 0.8;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: s.x + Math.cos(a) * d, y: s.y + Math.sin(a) * d },
+          velocity: { x: (Math.random() - 0.5) * 0.4, y: (Math.random() - 0.5) * 0.4 },
+          drag: 0.97, life: 70 + Math.random() * 50,
+          color: Math.random() > 0.5 ? '#d6d3d1' : '#a8a29e',
+          size: 8 + Math.random() * 10, alt: 2 + Math.random() * 10, altVel: 0.2,
+        });
+      }
     }
 
     // Satellite laser strikes: designator phase, then a sustained burn
@@ -953,8 +1223,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       terrainRef.current.forEach(b => {
         if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) return;
         b.health = Math.min(BRIDGE_HP, (b.health ?? 0) + 0.5);
-        if (b.state === 'broken' && b.health >= BRIDGE_HP * 0.5) b.state = 'normal';
+        if (b.state === 'broken' && b.health >= BRIDGE_HP * 0.5) {
+          b.state = 'normal';
+          pushEvent('bridge', 'Bridge reopened');
+        }
       });
+      // Broken prop debris fades from the field after ~12s (health is the timer)
+      for (let i = terrainRef.current.length - 1; i >= 0; i--) {
+        const p = terrainRef.current[i];
+        if ((p.type === 'crate' || p.type === 'barrel') && p.state === 'broken') {
+          p.health = (p.health ?? 0) - 10;
+          if (p.health <= 0) terrainRef.current.splice(i, 1);
+        }
+      }
     }
 
     // Terrain Logic (Burning & Destruction)
@@ -1075,7 +1356,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               p.state = UnitState.MOVING;
               p.position.x = unit.position.x - (unit.team === Team.WEST ? 1 : -1) * 14 + ((idx % 3) - 1) * 16;
               p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, unit.position.y + (Math.floor(idx / 3) - 0.5) * 26));
-              unitsRef.current.push(p);
+              // Same-tick board+unload: the original entry is still in the array
+              // (boarded entries are only filtered at end of tick) — pushing
+              // unconditionally used to duplicate the unit forever.
+              if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
             });
             unit.passengers = [];
             soundService.playSpawnSound(unit.team === Team.EAST);
@@ -1092,15 +1376,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA ||
         unit.type === UnitType.JEEP || unit.type === UnitType.TRANSPORT;
 
+      // Field repairs: wounded units patch up slowly near their own edge when
+      // they haven't been shot at recently — makes Fall Back worth ordering.
+      if (!isDescent && unit.health > 0 && unit.health < unit.maxHealth &&
+          (!unit.lastHitTime || Date.now() - unit.lastHitTime > REPAIR_COMBAT_LOCKOUT_MS)) {
+        const nearOwnEdge = unit.team === Team.WEST ? unit.position.x < REPAIR_ZONE : unit.position.x > CANVAS_WIDTH - REPAIR_ZONE;
+        if (nearOwnEdge) {
+          unit.health = Math.min(unit.maxHealth, unit.health + REPAIR_PER_TICK);
+          if ((tickCountRef.current + unit.id.charCodeAt(0)) % 90 === 0) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: unit.position.x + (Math.random() - 0.5) * 8, y: unit.position.y - 4 },
+              velocity: { x: 0, y: -0.5 }, drag: 0.95, life: 26, color: '#4ade80', size: 3,
+            });
+          }
+        }
+      }
+
+      // Entrenchment: foot units that sit still under 'hold' orders dig in
+      // after a few seconds (reduced direct fire until they move again).
+      if (ENTRENCHABLE.has(unit.type) && !unit.boarded && !isDescent && (unit.orders ?? stancesRef.current[unit.team]) === 'hold') {
+        unit.entrench = (unit.entrench || 0) + 1;
+        if (!unit.isEntrenched && unit.entrench >= ENTRENCH_TICKS) {
+          unit.isEntrenched = true;
+          // Dirt kicked up as the foxhole is finished
+          for (let k = 0; k < 6; k++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: unit.position.x + (Math.random() - 0.5) * 14, y: unit.position.y + (Math.random() - 0.5) * 10 },
+              velocity: { x: (Math.random() - 0.5) * 1.0, y: (Math.random() - 0.5) * 1.0 },
+              drag: 0.9, life: 22, color: '#78716c', size: 3 + Math.random() * 3,
+              alt: 2, altVel: 0.5,
+            });
+          }
+        }
+      } else if (unit.entrench || unit.isEntrenched) {
+        unit.entrench = 0;
+        unit.isEntrenched = false; // orders changed — foxhole abandoned
+      }
+
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
           ? (weatherRef.current === 'storm' ? 0.22 : 1.0)
           : (weatherRef.current === 'rain' ? 0.60 : weatherRef.current === 'snow' ? 0.65 : 1.0);
         let moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * weatherMovePenalty;
 
-        // Team stance orders: hold stops the advance, retreat pulls back toward
-        // your own edge (units still fight, seek cover and keep separation).
-        const stance = stancesRef.current[unit.team];
+        // Stance orders: per-unit overrides beat the team-wide setting. Hold
+        // stops the advance, retreat pulls back toward your own edge (units
+        // still fight, seek cover and keep separation).
+        const stance = unit.orders ?? stancesRef.current[unit.team];
         if (stance === 'hold') {
           moveX = 0;
         } else if (stance === 'retreat') {
@@ -1452,6 +1776,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
+        if (rallyOn[unit.team]) moveX *= RALLY_SPEED_MULT; // rally surge
+
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
 
@@ -1468,6 +1794,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             alt: 2 + Math.random() * 4,
             altVel: 0.25
           });
+        }
+
+        // Faint tread marks: throttled per vehicle and globally capped so the
+        // ground never fills up with them
+        if (isVehicle && (Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05)) {
+          const stagger = (unit.id.charCodeAt(1) || 0) * 7;
+          if ((tickCountRef.current + stagger) % 28 === 0 &&
+              particlesRef.current.reduce((n, pp) => n + (pp.isSkid ? 1 : 0), 0) < 60) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: unit.position.x, y: unit.position.y },
+              life: 420, color: '#1c1917', size: unit.width * 0.5,
+              isSkid: true, rot: Math.atan2(moveY, moveX),
+            });
+          }
+
+          // Heavy wheels crush crates and set off barrels
+          if (isSearchTick(unit)) {
+            terrainRef.current.forEach(p => {
+              if ((p.type !== 'crate' && p.type !== 'barrel') || p.state === 'broken') return;
+              if (Math.abs(p.x - unit.position.x) < unit.width * 0.6 + p.size &&
+                  Math.abs(p.y - unit.position.y) < unit.height * 0.6 + p.size) breakProp(p);
+            });
+          }
         }
 
         // Hard building collision — push unit out of any building it overlaps
@@ -1598,6 +1948,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 bridge.health = Math.min(BRIDGE_HP, (bridge.health ?? 0) + 55);
                 if (bridge.health >= BRIDGE_HP * 0.5 && bridge.state === 'broken') {
                   bridge.state = 'normal'; // usable again at half integrity
+                  pushEvent('bridge', `${teamName(unit.team)} engineer repaired the bridge`, unit.team);
                   soundService.playSpawnSound(unit.team === Team.EAST);
                 }
                 particlesRef.current.push({
@@ -1637,6 +1988,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             target = potentialTargets.find(o =>
               o.team !== unit.team &&
               (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.RAMBO || o.type === UnitType.AIRBORNE) &&
+              !smokeBlocked(unit, o) &&
               Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
             );
             // No fallback - completely ignores vehicles
@@ -1685,7 +2037,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
                   unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
                 const fd = Math.sqrt((ft.position.x - unit.position.x) ** 2 + (ft.position.y - unit.position.y) ** 2);
-                if ((!ftIsAir || canEngageAirFocus) && fd < range) target = ft;
+                if ((!ftIsAir || canEngageAirFocus) && fd < range && !smokeBlocked(unit, ft)) target = ft;
               } else {
                 focus.targetId = null;
               }
@@ -1711,6 +2063,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if ((UNIT_CONFIG[o.type] as any).isFlying) return false; // ground pass only
                 const oLife = Date.now() - (o.spawnTime || 0);
                 if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
+                if (smokeBlocked(unit, o)) return false;
                 return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
               }) || null;
             }
@@ -1776,7 +2129,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      unit.attackCooldown = Math.max(0, unit.attackCooldown - 1);
+      // Rallied units reload faster (cooldown ticks down 45% quicker)
+      unit.attackCooldown = Math.max(0, unit.attackCooldown - (rallyOn[unit.team] ? RALLY_RELOAD_MULT : 1));
 
       if ((unit.team === Team.WEST && unit.position.x > CANVAS_WIDTH) || (unit.team === Team.EAST && unit.position.x < 0)) {
         const breakthroughValue = unit.type === UnitType.TANK ? 3 : 1;
@@ -1963,11 +2317,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           p.state = UnitState.MOVING;
           p.position.x = u.position.x + ((idx % 3) - 1) * 18;
           p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + (Math.floor(idx / 3) - 0.5) * 26));
-          unitsRef.current.push(p);
+          if (!unitsRef.current.includes(p)) unitsRef.current.push(p); // guard against same-tick board duplication
         });
         u.passengers = [];
       }
       if (u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
+        // Feed only reports high-value losses so cheap squads don't flood it
+        if (((UNIT_CONFIG[u.type] as any).cost || 0) >= 100) {
+          pushEvent('kill', `${teamName(u.team)} ${unitLabel(u.type)} destroyed`, u.team);
+        }
         statsRef.current[u.team].lost++;
         const ts = typeStatsRef.current[u.team];
         ts.lost[u.type] = (ts.lost[u.type] || 0) + 1;
@@ -2115,6 +2473,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       if (cpuTimerRef.current[ME] >= spawnInterval) {
         cpuTimerRef.current[ME] = 0;
+
+        // Hard CPU generalship: read the balance of forces and set the army
+        // stance — fall back to regroup (and heal) when badly outmatched,
+        // dig in when slightly weaker, push when stronger.
+        if (DIFF.stanceIQ) {
+          const val = (us: Unit[]) => us.reduce((s, u) => s + ((UNIT_CONFIG[u.type] as any).cost || 0), 0);
+          const myVal = val(myActive), foeVal = val(foeActive);
+          const desired: Stance = foeVal > 200 && myVal < foeVal * 0.5 ? 'retreat'
+            : foeVal > 200 && myVal < foeVal * 0.75 ? 'hold'
+            : 'advance';
+          if (stancesRef.current[ME] !== desired) {
+            stancesRef.current[ME] = desired;
+            pushEvent('command', `${teamName(ME)} army ${desired === 'retreat' ? 'falls back to regroup' : desired === 'hold' ? 'digs in' : 'advances'}!`, ME);
+          }
+        }
+
+        // Team commands come out of the wallet BEFORE unit shopping so the
+        // affordability snapshot below stays accurate. `commands` scales how
+        // eagerly this difficulty invests (easy never does).
+        if (DIFF.commands > 0) {
+          const lvl = incomeLevelRef.current[ME];
+          if (lvl < INCOME_UPGRADE_MAX &&
+              moneyRef.current[ME] > INCOME_UPGRADE_BASE_COST * (lvl + 1) + 350 &&
+              Math.random() < 0.3 * DIFF.commands) {
+            runCommand(ME, 'income');
+          }
+          const myGroundCount = myActive.filter(u => !(UNIT_CONFIG[u.type] as any).isFlying).length;
+          if (myGroundCount >= 8 && moneyRef.current[ME] > RALLY_COST + 250 && Math.random() < 0.12 * DIFF.special * DIFF.commands) {
+            runCommand(ME, 'rally'); // validates its own cooldown
+          }
+        }
+
         const money = moneyRef.current[ME];
 
         // --- Threat analysis ---
@@ -2138,15 +2528,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const add = (t: UnitType, w: number) => { if (can(t)) prio[t] = (prio[t] || 0) + w; };
 
         // --- Counter-picks (emergency priority) ---
-        if (airThreats >= 2 && !myHasAA)  add(UnitType.ANTI_AIR, 10);
-        else if (airThreats >= 1 && !myHasAA) add(UnitType.ANTI_AIR, 5);
-        if (airThreats >= 2) add(UnitType.FIGHTER, 4);
-        if (infThreats >= 4) add(UnitType.MORTAR, 3);
-        if (armorThreats >= 3)               { add(UnitType.ARTILLERY, 6); add(UnitType.HELICOPTER, 4); }
-        else if (armorThreats >= 1)          add(UnitType.ARTILLERY, 3);
-        if (infThreats >= 6 && !myHasTesla) add(UnitType.TESLA, 7);
-        else if (infThreats >= 4)            { add(UnitType.FLAMETHROWER, 4); add(UnitType.TESLA, 3); }
-        else if (infThreats >= 2)            add(UnitType.FLAMETHROWER, 2);
+        // Lower difficulties often fail to read the foe's composition and
+        // just build from the general pool below.
+        if (Math.random() < DIFF.counterSmart) {
+          if (airThreats >= 2 && !myHasAA)  add(UnitType.ANTI_AIR, 10);
+          else if (airThreats >= 1 && !myHasAA) add(UnitType.ANTI_AIR, 5);
+          if (airThreats >= 2) add(UnitType.FIGHTER, 4);
+          if (infThreats >= 4) add(UnitType.MORTAR, 3);
+          if (armorThreats >= 3)               { add(UnitType.ARTILLERY, 6); add(UnitType.HELICOPTER, 4); }
+          else if (armorThreats >= 1)          add(UnitType.ARTILLERY, 3);
+          if (infThreats >= 6 && !myHasTesla) add(UnitType.TESLA, 7);
+          else if (infThreats >= 4)            { add(UnitType.FLAMETHROWER, 4); add(UnitType.TESLA, 3); }
+          else if (infThreats >= 2)            add(UnitType.FLAMETHROWER, 2);
+        }
 
         // --- Support ---
         if (!myHasMedic && myInfCount >= 3) add(UnitType.MEDIC, 5);
@@ -2179,6 +2573,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // --- Special tactics (override normal spawn with a chance) ---
         let specialSpawned = false;
+
+        // Smoke blinds the foe's long-range battery: dropped ON their
+        // artillery/snipers/mortars, the cloud stops them firing out while my
+        // units close the distance. (Never on my own troops — smoke blocks
+        // targeting both ways, so that would blind my own push.)
+        const foeLongRange = foeUnits.filter(u => u.type === UnitType.ARTILLERY || u.type === UnitType.SNIPER || u.type === UnitType.MORTAR);
+        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 2 && smokesRef.current.length < 2 && Math.random() < 0.2 * DIFF.special) {
+          const cx = foeLongRange.reduce((s, u) => s + u.position.x, 0) / foeLongRange.length;
+          const cy = foeLongRange.reduce((s, u) => s + u.position.y, 0) / foeLongRange.length;
+          spawnUnit(ME, UnitType.SMOKE, { absolutePos: { x: cx, y: cy } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.SMOKE] as any).cost;
+          specialSpawned = true;
+        }
 
         // Missile strike at enemy cluster
         if (!specialSpawned && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special) {
@@ -2244,7 +2651,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (pool.length === 0) {
               const noAiTypes = new Set([UnitType.AIRSTRIKE, UnitType.NUKE, UnitType.GUNSHIP, UnitType.NAPALM,
                                          UnitType.MISSILE_STRIKE, UnitType.AIRBORNE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK,
-                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER]);
+                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
                 return cost > 0 && cost <= money && !noAiTypes.has(t);
@@ -2285,7 +2692,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, captureOwner: captureRef.current.owner, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
@@ -2299,6 +2706,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           WEST: unitsRef.current.filter(u => u.team === Team.WEST).length,
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
+        smokes: smokesRef.current.length,
+        entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
+        incomeLevel: { ...incomeLevelRef.current },
+        rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
+        unitOrders: unitsRef.current.filter(u => u.orders).length,
+        // Test hook: select the first n units of the first human team
+        selectOwn: (n: number) => {
+          const human = [Team.WEST, Team.EAST].find(t => !cpuRef.current.teams.includes(t));
+          if (!human) return [];
+          const ids = unitsRef.current.filter(u => u.team === human && u.health > 0 && !u.boarded).slice(0, n).map(u => u.id);
+          onSelectUnitsRef.current?.(human, ids);
+          return ids;
+        },
+        // Test hook: simulate clicking a unit (goes through real selection logic)
+        clickUnit: (id: string) => {
+          const u = unitsRef.current.find(x => x.id === id);
+          if (u) handleUnitClickRef.current(u);
+          return !!u;
+        },
+        unitList: unitsRef.current.map(u => ({ id: u.id, type: u.type, team: u.team, squadId: u.squadId })),
         gameOver: gameOverRef.current,
       };
     }
@@ -2354,6 +2781,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         missiles={missilesRef.current}
         lasers={lasersRef.current}
         crates={cratesRef.current}
+        smokes={smokesRef.current}
+        selectedIds={selectedIds}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}

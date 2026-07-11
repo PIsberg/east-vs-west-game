@@ -32,6 +32,7 @@ export enum UnitType {
   SATELLITE = 'SATELLITE',
   CRUISE = 'CRUISE',
   TRANSPORT = 'TRANSPORT',
+  SMOKE = 'SMOKE',
 }
 
 export enum MapType {
@@ -57,7 +58,7 @@ export interface TerrainObject {
   id: string;
   x: number;
   y: number;
-  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building';
+  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel';
   size: number;
   width?: number;
   height?: number;
@@ -96,6 +97,9 @@ export interface Unit {
   lastAttackerId?: string;
   passengers?: Unit[]; // Transport cargo (units removed from the field while riding)
   boarded?: boolean;   // True while riding in a transport
+  entrench?: number;      // ticks spent stationary under 'hold' orders
+  isEntrenched?: boolean; // dug in: reduced incoming direct fire until the unit moves
+  orders?: Stance;        // per-unit order override; undefined = follow the team stance
 }
 
 export interface Projectile {
@@ -125,12 +129,22 @@ export interface Particle {
   drag?: number;      // For friction/slowdown
   targetPos?: Vector2D; // For Lightning beams
   isGroundDecal?: boolean;
+  isSkid?: boolean; // Faint vehicle tread marks; rot gives the travel direction
+  rot?: number;     // Ground-plane orientation (radians) for directional decals
   isBolt?: boolean; // Vertical sky-to-ground lightning bolt
   isCorpse?: boolean; // Fallen infantry body / burnt vehicle wreck
   isShockwave?: boolean; // Expanding ground ring; size = max radius, life counts 18..0
   alt?: number;    // Explicit render altitude (world Y); overrides the legacy life-based height
   altVel?: number; // Altitude change per tick (rising smoke, falling snow)
   text?: string; // For floating text (e.g. Dollar Sign)
+}
+
+export interface GameEvent {
+  id: string;
+  time: number; // Date.now() when emitted — the feed fades entries by age
+  kind: 'kill' | 'bridge' | 'crate' | 'capture' | 'strike' | 'command';
+  team?: Team; // team the event concerns (colors the feed line); undefined = neutral
+  text: string;
 }
 
 export interface GameState {
@@ -146,7 +160,10 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+  events?: GameEvent[];
   captureOwner?: Team | null;
+  incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
+  rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
   baseHP?: {
     [Team.WEST]: number;
     [Team.EAST]: number;
@@ -154,6 +171,14 @@ export interface GameState {
 }
 
 export type GameMode = 'points' | 'basehp';
+
+// Team command buffs (Date.now() timestamps)
+export interface RallyState {
+  until: number;   // rally buff active while now < until
+  readyAt: number; // next activation allowed when now >= readyAt
+}
+
+export type TeamCommand = 'rally' | 'income';
 
 export type Stance = 'advance' | 'hold' | 'retreat';
 
@@ -199,6 +224,16 @@ export interface SupplyCrate {
   alt: number; // descending under a parachute while > 0
   type: 'cash' | 'squad' | 'medkit';
   life: number; // ticks remaining once landed before it despawns
+}
+
+export interface SmokeZone {
+  id: string;
+  team: Team;
+  x: number;
+  y: number;
+  life: number;    // ticks remaining
+  maxLife: number;
+  radius: number;  // targeting through the cloud is blocked beyond point-blank range
 }
 
 export interface LaserStrike {
