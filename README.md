@@ -97,7 +97,12 @@ The first team to reach **100 Points** wins.
 
 ## 🙏 Asset Credits
 
-Soldier and tank 3D models by **[Quaternius](https://quaternius.com/)** (via [Poly Pizza](https://poly.pizza/u/Quaternius)) — licensed [CC0](https://creativecommons.org/publicdomain/zero/1.0/). Thank you for the incredible free packs!
+3D unit models, all via [Poly Pizza](https://poly.pizza/) — thank you to these artists for the free packs:
+
+- **Soldier** (all infantry) and **Tank** by [Quaternius](https://quaternius.com/) — [CC0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Jeep, Truck, Light Tank (APC) and Helicopter** from the [Low Poly Military Vehicles](https://poly.pizza/bundle/Low-Poly-Military-Vehicles-lSgBuYh48X) bundle and **Missile Turret** (Anti-Air) by [Zsky](https://poly.pizza/u/Zsky) — [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+- **Low poly Fighter** by [Stephen Graybill](https://poly.pizza/m/1fi8ZIDdFCP) — CC-BY 3.0
+- **Drone** by [NateGazzard](https://poly.pizza/m/DNbUoMtG3H) — CC-BY 3.0
 
 ---
 
