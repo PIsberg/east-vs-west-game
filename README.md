@@ -24,6 +24,11 @@ The first team to reach **100 Points** wins.
 - **Click Terrain**: Inspect terrain or targeting (for airstrikes).
 - **Click an Enemy Unit**: Your army focus-fires it for 6 seconds.
 - **Orders** (per side): Advance / Hold / Fall Back stances.
+- **Troop Control**: Click one of **your own units** to select it (squad-spawned infantry selects as a squad); **double-click to select every unit of that type**. An order panel appears: **⚔ Attack / ⛨ Hold / ⏪ Fall Back / Follow Team**. Per-unit orders override the team stance; a colored dot above each unit shows its personal order. Click open ground or press Esc to deselect.
+- **Command bar** (centered under the battlefield): **Economy upgrades** (3 levels, +25% income each — invest early or field units now) and the **Rally Horn** ($150: +45% fire rate & +25% speed for 8 seconds, long cooldown — time it with a push).
+- **Field Repairs**: Wounded units heal slowly near their own edge when out of combat — pull damaged veterans back with **Fall Back** instead of feeding kills to the enemy.
+- **Battle Feed**: Key events (big-unit kills, bridges, supply drops, capture point, nukes) scroll by in the lower-left corner.
+- **Sound & Music**: Toggle SFX mute and the procedural battle-march from the top bar; settings and your menu choices (map, side, CPU level, win mode) are remembered between visits.
 
 #### Keyboard Shortcuts
 - **West Team (Left)**: `1` - `0`, `-`, `=`
@@ -62,6 +67,7 @@ The first team to reach **100 Points** wins.
 | **Airstrike** | **Napalm Run**. Burns a wide area over time. | Cooldown/Money. |
 | **Paratroopers** | **Deep Strike**. Drop squad behind enemy lines. | Vulnerable while falling. |
 | **Missile** | **Precision Strike**. High damage to single point. | - |
+| **Smoke** | **Concealment**. Blocks targeting into/out of the cloud (~13s). Counters snipers & artillery. | Close assaults, Air units. |
 | **Cruise Missile** | Sea-launched from beyond the map edge. Flies in low, big warhead. | Cost. |
 | **Satellite Laser** | Orbital beam: red designator, then a sustained burn that melts a zone. | Cost, telegraphed. |
 | **Nuke** | **Mass Destruction**. Huge area damage. Friendly Fire Enabled! | Use with caution! |
@@ -69,12 +75,14 @@ The first team to reach **100 Points** wins.
 ---
 
 ## 🌍 Terrain & Tactics
+- **Entrenchment**: Foot soldiers that hold still under **Hold** orders dig in after ~6 seconds — a foxhole with sandbags appears and they take **45% less direct fire** until they move. Explosive weapons ignore foxholes.
 
 - **Hills**: Units on hills get **+30% Range** and **-20% Reload Time**. Key for artillery.
 - **Cover (Trees/Rocks)**: Infantry will automatically seek cover. Reduces incoming damage by **60%**.
 - **River**: Slows down infantry. Vehicles MUST use bridges to cross.
 - **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
+- **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
 
 ---
 
