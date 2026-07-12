@@ -164,6 +164,7 @@ export interface GameState {
   weatherNext?: { type: 'clear' | 'rain' | 'snow' | 'fog' | 'storm', at: number };
   events?: GameEvent[];
   captureOwner?: Team | null;
+  flankOwners?: (Team | null)[]; // [top post, bottom post]
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
   rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
   baseHP?: {

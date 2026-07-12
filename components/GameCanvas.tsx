@@ -988,6 +988,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true); }
       if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
     }
+    // Capture-income counterweight: like the upgrade rubber-band, the side
+    // holding fewer points recovers 40% of the bonus gap — captures stay
+    // worth fighting for without letting a triple-hold snowball the game
+    {
+      const capBonus = (t: Team) => [captureRef.current, ...flankCapsRef.current].reduce((s, c) => s + (c.owner === t ? (c.bonus ?? 0.5) : 0), 0);
+      const capGap = capBonus(Team.WEST) - capBonus(Team.EAST);
+      if (capGap !== 0) moneyRef.current[capGap > 0 ? Team.EAST : Team.WEST] += MONEY_PER_TICK * Math.abs(capGap) * 0.4;
+    }
 
     // Optimization: Build Spatial Grid
     spatialHash.current.clear();
@@ -2931,13 +2939,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (pool.length > 0) {
               const chosen = pool[Math.floor(Math.random() * pool.length)];
               const cost = (UNIT_CONFIG[chosen] as any).cost;
+              // Flank pressure (normal/hard): lean spawns toward flank posts
+              // the CPU doesn't hold — easy keeps building blind
+              let lane: SpawnLane | undefined;
+              if (DIFF.commands > 0 && Math.random() < 0.45) {
+                const [topCap, botCap] = flankCapsRef.current;
+                const wantTop = topCap.owner !== ME;
+                const wantBot = botCap.owner !== ME;
+                if (wantTop && wantBot) lane = Math.random() < 0.5 ? 'top' : 'bot';
+                else if (wantTop) lane = 'top';
+                else if (wantBot) lane = 'bot';
+              }
               if (chosen === UnitType.SOLDIER) {
                 const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
                 const sqId = generateId();
+                const playTop = HORIZON_Y + 50, playH = CANVAS_HEIGHT - HORIZON_Y - 100;
+                const laneY =
+                  lane === 'top' ? playTop + Math.random() * (playH / 3) :
+                  lane === 'bot' ? playTop + (2 * playH) / 3 + Math.random() * (playH / 3) :
+                  playTop + Math.random() * playH;
                 for (let si = 0; si < 3; si++) {
                   unitsRef.current.push({
                     id: generateId(), team: ME, type: UnitType.SOLDIER,
-                    position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: HORIZON_Y + 50 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 100) },
+                    position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: Math.min(CANVAS_HEIGHT - 20, laneY + si * 12) },
                     state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
                     attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
                     spawnTime: Date.now(), isInCover: false, squadId: sqId
@@ -2946,7 +2970,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   typeStatsRef.current[ME].spawned[UnitType.SOLDIER] = (typeStatsRef.current[ME].spawned[UnitType.SOLDIER] || 0) + 1;
                 }
               } else {
-                spawnUnit(ME, chosen);
+                spawnUnit(ME, chosen, lane ? { lane } : undefined);
               }
               moneyRef.current[ME] = Math.max(0, moneyRef.current[ME] - cost);
             }
@@ -2973,7 +2997,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {

@@ -769,9 +769,12 @@ const App: React.FC = () => {
               </div>
             )}
             {gameState.weather === 'clear' && !compact && (!gameState.weatherNext || gameState.weatherNext.type === 'clear') && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
-            {gameState.captureOwner && (
-              <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
-                <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
+            {(gameState.captureOwner || gameState.flankOwners?.some(o => o)) && (
+              <div className="flex items-center gap-1" title="Capture points: top flank · center · bottom flank">
+                <MapPin size={12} className={gameState.captureOwner === Team.WEST ? 'text-blue-400' : gameState.captureOwner === Team.EAST ? 'text-red-400' : 'text-stone-400'} />
+                {[gameState.flankOwners?.[0] ?? null, gameState.captureOwner ?? null, gameState.flankOwners?.[1] ?? null].map((o, i) => (
+                  <span key={i} className={`inline-block rounded-full ${i === 1 ? 'w-2.5 h-2.5' : 'w-1.5 h-1.5'} ${o === Team.WEST ? 'bg-blue-500' : o === Team.EAST ? 'bg-red-500' : 'bg-stone-600'}`} />
+                ))}
               </div>
             )}
           </div>
