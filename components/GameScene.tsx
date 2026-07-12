@@ -180,6 +180,27 @@ const MAT_TREE_TRUNK = new THREE.MeshStandardMaterial({ color: '#451a03' });
 const MAT_TREE_LEAVES = new THREE.MeshStandardMaterial({ color: '#14532d' });
 const MAT_HILL = new THREE.MeshStandardMaterial({ color: '#4d7c0f' });
 
+// Shared prop geometries — every tree/rock reuses these, scaled at the mesh,
+// instead of allocating its own vertex buffers (trees alone were ~4 each)
+const GEO_TRUNK = new THREE.CylinderGeometry(5, 8, 30, 10);
+const GEO_PINE_1 = new THREE.ConeGeometry(22, 28, 10);
+const GEO_PINE_2 = new THREE.ConeGeometry(16, 24, 10);
+const GEO_PINE_3 = new THREE.ConeGeometry(10, 20, 10);
+const GEO_CLUMP = new THREE.DodecahedronGeometry(1, 0); // oak canopies + boulders
+const GEO_POPLAR = new THREE.CylinderGeometry(8, 12, 60, 10);
+// Cached standard materials keyed by color/emissive — safe to share since
+// props never animate their materials (burning flicker swaps cache entries)
+const MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const stdMat = (color: string, emissive = '#000000') => {
+    const key = `${color}|${emissive}`;
+    let m = MAT_CACHE.get(key);
+    if (!m) {
+        m = new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 1.4 });
+        MAT_CACHE.set(key, m);
+    }
+    return m;
+};
+
 // -- River Shader & Component --
 
 import { extend } from '@react-three/fiber';
@@ -1927,20 +1948,11 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const rockSeed = Math.abs((item.x * 73856093) ^ (item.y * 19349663));
         return (
             <ClickableGroup position={[item.x, item.size / 2, item.y]} onCanvasClick={onCanvasClick}>
-                <mesh castShadow receiveShadow rotation={[item.size, item.x, item.y]}>
-                    <dodecahedronGeometry args={[item.size, 0]} />
-                    <meshStandardMaterial color="#57534e" />
-                </mesh>
+                <mesh castShadow receiveShadow rotation={[item.size, item.x, item.y]} scale={item.size} geometry={GEO_CLUMP} material={stdMat('#57534e')} />
                 {/* Smaller companion boulders */}
-                <mesh position={[item.size * 0.9, -item.size * 0.25, item.size * 0.4]} rotation={[rockSeed % 3, rockSeed % 5, 0]} castShadow>
-                    <dodecahedronGeometry args={[item.size * 0.45, 0]} />
-                    <meshStandardMaterial color="#4b4642" />
-                </mesh>
+                <mesh position={[item.size * 0.9, -item.size * 0.25, item.size * 0.4]} rotation={[rockSeed % 3, rockSeed % 5, 0]} scale={item.size * 0.45} castShadow geometry={GEO_CLUMP} material={stdMat('#4b4642')} />
                 {rockSeed % 2 === 0 && (
-                    <mesh position={[-item.size * 0.8, -item.size * 0.3, -item.size * 0.35]} rotation={[rockSeed % 4, 0, rockSeed % 3]} castShadow>
-                        <dodecahedronGeometry args={[item.size * 0.35, 0]} />
-                        <meshStandardMaterial color="#6b6560" />
-                    </mesh>
+                    <mesh position={[-item.size * 0.8, -item.size * 0.3, -item.size * 0.35]} rotation={[rockSeed % 4, 0, rockSeed % 3]} scale={item.size * 0.35} castShadow geometry={GEO_CLUMP} material={stdMat('#6b6560')} />
                 )}
             </ClickableGroup>
         );
@@ -2051,53 +2063,30 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         }
         const burningEmissive = item.state === 'burning' ? leavesColor : '#000000';
 
+        const leafMat = stdMat(leavesColor, burningEmissive);
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
-                <group rotation={rot} position={[0, yOffset, 0]}>
+                <group rotation={rot} position={[0, yOffset, 0]} scale={scaleMod}>
                     {/* Trunk */}
-                    <mesh position={[0, 15 * scaleMod, 0]} castShadow>
-                        <cylinderGeometry args={[5 * scaleMod, 8 * scaleMod, 30 * scaleMod]} />
-                        <meshStandardMaterial color={trunkColor} />
-                    </mesh>
+                    <mesh position={[0, 15, 0]} castShadow geometry={GEO_TRUNK} material={stdMat(trunkColor)} />
 
                     {/* Leaves */}
                     {type === 0 && ( // Pine — three stacked tiers
                         <group>
-                            <mesh position={[0, 34 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[22 * scaleMod, 28 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[16 * scaleMod, 24 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[0, 64 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[10 * scaleMod, 20 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
+                            <mesh position={[0, 34, 0]} castShadow geometry={GEO_PINE_1} material={leafMat} />
+                            <mesh position={[0, 50, 0]} castShadow geometry={GEO_PINE_2} material={leafMat} />
+                            <mesh position={[0, 64, 0]} castShadow geometry={GEO_PINE_3} material={leafMat} />
                         </group>
                     )}
                     {type === 1 && ( // Oak — clustered canopy
                         <group>
-                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                                <dodecahedronGeometry args={[22 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[12 * scaleMod, 42 * scaleMod, 6 * scaleMod]} castShadow>
-                                <dodecahedronGeometry args={[14 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[-11 * scaleMod, 44 * scaleMod, -5 * scaleMod]} castShadow>
-                                <dodecahedronGeometry args={[13 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
+                            <mesh position={[0, 50, 0]} scale={22} castShadow geometry={GEO_CLUMP} material={leafMat} />
+                            <mesh position={[12, 42, 6]} scale={14} castShadow geometry={GEO_CLUMP} material={leafMat} />
+                            <mesh position={[-11, 44, -5]} scale={13} castShadow geometry={GEO_CLUMP} material={leafMat} />
                         </group>
                     )}
                     {type === 2 && ( // Poplar
-                        <mesh position={[0, 45 * scaleMod, 0]} castShadow>
-                            <cylinderGeometry args={[8 * scaleMod, 12 * scaleMod, 60 * scaleMod]} />
-                            <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                        </mesh>
+                        <mesh position={[0, 45, 0]} castShadow geometry={GEO_POPLAR} material={leafMat} />
                     )}
 
                 </group>
@@ -2688,7 +2677,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'snow'  ? 0.5 : 0.6;
 
     return (
-        <Canvas key={fx} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
+        <Canvas key={fx} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}
