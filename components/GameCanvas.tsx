@@ -190,6 +190,35 @@ const MiniMap: React.FC<{
   );
 };
 
+// Post-match timeline: score (or base HP) per team over the whole battle
+const TimelineGraph: React.FC<{ history: { t: number, w: number, e: number }[] }> = ({ history }) => {
+  const cvRef = useRef<HTMLCanvasElement>(null);
+  const W = 264, H = 72;
+  useEffect(() => {
+    const ctx = cvRef.current?.getContext('2d');
+    if (!ctx || history.length < 2) return;
+    ctx.clearRect(0, 0, W, H);
+    const maxV = Math.max(1, ...history.map(s => Math.max(s.w, s.e)));
+    const maxT = history[history.length - 1].t || 1;
+    const px = (t: number) => 4 + (t / maxT) * (W - 8);
+    const py = (v: number) => H - 6 - (v / maxV) * (H - 12);
+    ctx.strokeStyle = 'rgba(120, 113, 108, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(4, H - 6);
+    ctx.lineTo(W - 4, H - 6);
+    ctx.stroke();
+    for (const [key, color] of [['w', '#60a5fa'], ['e', '#f87171']] as const) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      history.forEach((s, i) => { const x = px(s.t), y = py(s[key]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+  }, [history]);
+  return <canvas ref={cvRef} width={W} height={H} data-testid="timeline" className="rounded border border-stone-700 bg-stone-950/60" />;
+};
+
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
   spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }[];
@@ -320,6 +349,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.EAST]: { kills: {}, killValue: {}, lost: {}, spawned: {} },
   });
   const matchStartRef = useRef(Date.now());
+  // Score-over-time samples for the victory-screen timeline (one every ~5s)
+  const scoreHistoryRef = useRef<{ t: number, w: number, e: number }[]>([]);
+  const lastSampleRef = useRef(0);
   const baseHPRef = useRef({ [Team.WEST]: BASE_HP, [Team.EAST]: BASE_HP });
   const gameModeRef = useRef<GameMode>(gameMode);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
@@ -382,6 +414,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     if (!gameOver) return;
     soundService.setRotorLoop(false);
+    // Close the timeline with the final standings
+    const hp = gameModeRef.current === 'basehp';
+    scoreHistoryRef.current.push({
+      t: Date.now() - matchStartRef.current,
+      w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+      e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+    });
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
@@ -2909,6 +2948,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // 1. Force R3F re-render locally 60fps (for smooth movement)
     setFrame(f => f + 1);
 
+    // Timeline sample for the victory-screen graph
+    if (Date.now() - lastSampleRef.current > 5000) {
+      lastSampleRef.current = Date.now();
+      const hp = gameModeRef.current === 'basehp';
+      scoreHistoryRef.current.push({
+        t: Date.now() - matchStartRef.current,
+        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+      });
+      if (scoreHistoryRef.current.length > 400) scoreHistoryRef.current.shift();
+    }
+
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
       onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
@@ -3096,6 +3147,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               <div className="text-stone-500 uppercase text-xs pt-0.5">Duration</div>
               <div className="text-center font-mono col-span-2">{Math.floor((Date.now() - matchStartRef.current) / 60000)}m {Math.floor(((Date.now() - matchStartRef.current) % 60000) / 1000)}s</div>
             </div>
+
+            {/* How the battle unfolded */}
+            {scoreHistoryRef.current.length >= 2 && (
+              <div className="flex flex-col items-center gap-1">
+                <TimelineGraph history={scoreHistoryRef.current} />
+                <div className="text-[9px] uppercase tracking-wider text-stone-500">{gameMode === 'basehp' ? 'Base HP' : 'Score'} over time</div>
+              </div>
+            )}
 
             <div className="flex gap-3">
               <button
