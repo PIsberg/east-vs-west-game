@@ -160,6 +160,8 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+  // Pre-rolled forecast: what rolls in next and when (epoch ms)
+  weatherNext?: { type: 'clear' | 'rain' | 'snow' | 'fog' | 'storm', at: number };
   events?: GameEvent[];
   captureOwner?: Team | null;
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };

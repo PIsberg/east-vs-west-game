@@ -21,7 +21,7 @@ interface GameSceneProps {
     smokes?: SmokeZone[];
     selectedIds?: string[];
     // Imperative camera controls for the on-screen zoom/scroll buttons
-    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void }) => void;
+    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void; state: () => { dist: number, tx: number, tz: number } | null }) => void;
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -2641,6 +2641,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 c.update();
             },
             reset: () => { controlsRef.current?.reset(); },
+            state: () => { const c = controlsRef.current; return c ? { dist: c.object.position.distanceTo(c.target), tx: c.target.x, tz: c.target.z } : null; },
         };
         // Snapshot the initial framing so reset() returns exactly here.
         // OrbitControls mounts async inside the R3F canvas, so retry briefly.
@@ -2648,7 +2649,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             if (controlsRef.current) { controlsRef.current.saveState(); clearInterval(save); }
         }, 100);
         onCameraApi?.(api);
-        (window as any).__ewCam = { ...api, state: () => { const c = controlsRef.current; return c ? { dist: c.object.position.distanceTo(c.target), tx: c.target.x, tz: c.target.z } : null; } };
+        (window as any).__ewCam = api;
         return () => clearInterval(save);
     }, [onCameraApi]);
 

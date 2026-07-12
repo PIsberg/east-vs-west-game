@@ -64,13 +64,22 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
 // every fielded unit as a team-colored dot; air units render as a small cross.
 const AIR_TYPES = new Set([UnitType.HELICOPTER, UnitType.FIGHTER, UnitType.DRONE, UnitType.GUNSHIP]);
 
+// Imperative camera controls handed up by GameScene (buttons + minimap viewport)
+export type CamApi = {
+  zoom: (f: number) => void;
+  pan: (dx: number) => void;
+  reset: () => void;
+  state: () => { dist: number, tx: number, tz: number } | null;
+};
+
 const MiniMap: React.FC<{
   unitsRef: React.MutableRefObject<Unit[]>;
   terrainRef: React.MutableRefObject<TerrainObject[]>;
   smokesRef: React.MutableRefObject<SmokeZone[]>;
   captureRef: React.MutableRefObject<CapturePoint>;
+  camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, compact }) => {
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, camApiRef, compact }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -135,6 +144,21 @@ const MiniMap: React.FC<{
           ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
         } else {
           ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+      }
+
+      // Camera viewport bracket: the horizontal span currently on screen.
+      // At the default framing (dist ≈ 735) the whole 800-wide field is
+      // visible, so span ≈ dist * 1.09 empirically; pan is x-only.
+      const cam = camApiRef.current?.state();
+      if (cam) {
+        const halfSpan = Math.min(CANVAS_WIDTH, cam.dist * 1.09) / 2;
+        const x0 = Math.max(0, mx(cam.tx - halfSpan));
+        const x1 = Math.min(W, mx(cam.tx + halfSpan));
+        if (x1 - x0 < W - 2) { // hide when everything is visible anyway
+          ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x0 + 0.5, 0.5, x1 - x0 - 1, H - 1);
         }
       }
     };
@@ -257,6 +281,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
+  // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
+  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>((() => {
+    const r = Math.random();
+    return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+  })());
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
     x: CANVAS_WIDTH / 2,
@@ -360,8 +389,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // On-screen camera buttons: GameScene hands us an imperative zoom/pan/reset
   // API; holding a button repeats its action for smooth motion.
-  const camApiRef = useRef<{ zoom: (f: number) => void; pan: (dx: number) => void; reset: () => void } | null>(null);
-  const handleCameraApi = useCallback((api: { zoom: (f: number) => void; pan: (dx: number) => void; reset: () => void }) => { camApiRef.current = api; }, []);
+  const camApiRef = useRef<CamApi | null>(null);
+  const handleCameraApi = useCallback((api: CamApi) => { camApiRef.current = api; }, []);
   const camHoldRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const camHoldStop = () => { if (camHoldRef.current) { clearInterval(camHoldRef.current); camHoldRef.current = null; } };
   const camHoldStart = (fn: () => void, repeat = true) => {
@@ -376,6 +405,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (e.key.toLowerCase() === 'r') {
         weatherRef.current = weatherRef.current === 'clear' ? 'rain' : 'clear';
         weatherTimerRef.current = Date.now() + 20000; // Lock state for 20s
+        nextWeatherRef.current = 'clear';
         console.log("Debug: Weather toggled to", weatherRef.current);
       }
     };
@@ -1316,18 +1346,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (Math.abs(fly.currentX) > CANVAS_WIDTH + 300) flyoversRef.current.splice(i, 1);
     }
 
-    // Weather Logic
+    // Weather Logic — the NEXT weather is pre-rolled so the HUD can forecast it
     if (Date.now() > weatherTimerRef.current) {
-      if (weatherRef.current === 'clear') {
+      const incoming = nextWeatherRef.current;
+      const wasClear = weatherRef.current === 'clear';
+      weatherRef.current = incoming;
+      const holdMs =
+        incoming === 'rain'  ? 15000 + Math.random() * 15000 :
+        incoming === 'snow'  ? 18000 + Math.random() * 18000 :
+        incoming === 'fog'   ? 12000 + Math.random() * 12000 :
+        incoming === 'storm' ? 10000 + Math.random() * 10000 :
+        wasClear ? 22000 + Math.random() * 20000 : 28000 + Math.random() * 28000;
+      weatherTimerRef.current = Date.now() + holdMs;
+      if (incoming !== 'clear') nextWeatherRef.current = 'clear';
+      else {
         const r = Math.random();
-        if (r < 0.28) { weatherRef.current = 'rain';  weatherTimerRef.current = Date.now() + 15000 + Math.random() * 15000; }
-        else if (r < 0.44) { weatherRef.current = 'snow';  weatherTimerRef.current = Date.now() + 18000 + Math.random() * 18000; }
-        else if (r < 0.56) { weatherRef.current = 'fog';   weatherTimerRef.current = Date.now() + 12000 + Math.random() * 12000; }
-        else if (r < 0.65) { weatherRef.current = 'storm'; weatherTimerRef.current = Date.now() + 10000 + Math.random() * 10000; }
-        else { weatherTimerRef.current = Date.now() + 22000 + Math.random() * 20000; }
-      } else {
-        weatherRef.current = 'clear';
-        weatherTimerRef.current = Date.now() + 28000 + Math.random() * 28000;
+        nextWeatherRef.current = r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
       }
     }
 
@@ -2864,7 +2898,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
@@ -3000,7 +3034,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} compact={compact} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} camApiRef={camApiRef} compact={compact} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">

@@ -729,7 +729,13 @@ const App: React.FC = () => {
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
             {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
-            {gameState.weather === 'clear' && !compact && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
+            {gameState.weather === 'clear' && gameState.weatherNext && gameState.weatherNext.type !== 'clear' && (
+              <div className="flex items-center gap-1 text-stone-400" title={`${gameState.weatherNext.type} rolling in — plan around the combat penalties`}>
+                <Wind size={14} />
+                <span className="text-[10px] font-bold uppercase">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - Date.now()) / 1000))}s</span>
+              </div>
+            )}
+            {gameState.weather === 'clear' && !compact && (!gameState.weatherNext || gameState.weatherNext.type === 'clear') && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
             {gameState.captureOwner && (
               <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
                 <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
