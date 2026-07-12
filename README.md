@@ -4,7 +4,9 @@ A real-time tug-of-war strategy game inspired by the classic Commodore Amiga tit
 
 Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Four battlefields, two win modes (**100 Points** or **Base HP**).
 
-![east-vs-west1-PXL_20260102_152535277](https://github.com/user-attachments/assets/7f40c567-b98a-412a-bc20-ab26f77321eb)
+![Battle on the countryside map — 3D unit models, minimap and full HUD](docs/screenshot-battle.png)
+
+See [CHANGELOG.md](CHANGELOG.md) for what's new.
 
 ## 🎮 How to Play
 
