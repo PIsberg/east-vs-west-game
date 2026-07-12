@@ -32,6 +32,10 @@ The first team to reach **100 Points** wins.
 - **Field Repairs**: Wounded units heal slowly near their own edge when out of combat — pull damaged veterans back with **Fall Back** instead of feeding kills to the enemy.
 - **Battle Feed**: Key events (big-unit kills, bridges, supply drops, capture point, nukes) scroll by in the lower-left corner.
 - **Sound & Music**: Toggle SFX mute and the procedural battle-march from the top bar; settings and your menu choices (map, side, CPU level, win mode) are remembered between visits.
+- **Minimap** (top-right of the battlefield): live unit dots, capture rings and the camera's current view — **click it to jump the camera** anywhere.
+- **Capture Points**: the center flag grants **+50% income**; two smaller flank posts add **+12% each** — spread your lanes to hold them.
+- **Challenges** (splash screen): six preset missions with handicaps, time limits and unit restrictions; completions earn permanent badges. Recent battle results also show on the splash.
+- **Shortcuts & Access**: number keys **1–0** buy your core units, **P** pauses; **FX** toggles low-graphics for weak devices (auto-detected too); **CB** recolors East to amber for colorblind players.
 - **Mobile**: Play on your phone in **landscape** — the layout switches to a compact battle view (slim header, scrollable unit panels) and the field manual is tucked behind the **Manual** button in the top bar (toggleable on desktop too). Portrait shows a rotate prompt.
 
 #### Keyboard Shortcuts
@@ -66,6 +70,7 @@ The first team to reach **100 Points** wins.
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |
 | **T. Mine** | Anti-Tank trap. High damage massive explosion. | Infantry (trigger radius). |
 | **Bunker** | Static strongpoint placed anywhere on your half. | Artillery, being bypassed. |
+| **Gunboat** | Naval gun platform — station it on a river or channel to guard the crossings. | Artillery, aircraft. |
 
 ### Air Support
 | Unit | Role | Note |
