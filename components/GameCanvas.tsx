@@ -432,6 +432,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
+    // Record the result for the splash screen's Recent Battles panel
+    try {
+      const rec = {
+        when: Date.now(),
+        map: mapType,
+        mode: gameModeRef.current,
+        winner: gameOver,
+        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+        dur: Math.round((Date.now() - matchStartRef.current) / 1000),
+        spectate: cpuRef.current.teams.length === 2,
+      };
+      const hist = JSON.parse(localStorage.getItem('ewv-history') || '[]');
+      hist.unshift(rec);
+      localStorage.setItem('ewv-history', JSON.stringify(hist.slice(0, 10)));
+    } catch { /* ignore */ }
   }, [gameOver]);
 
   // Rotor ambience while any helicopter is fielded (single shared loop)

@@ -181,6 +181,10 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(
     URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
   );
+  // Recent battle results, written by GameCanvas at game over
+  const [history] = useState<{ when: number, map: string, mode: string, winner: string, w: number, e: number, dur: number, spectate?: boolean }[]>(() => {
+    try { return JSON.parse(localStorage.getItem('ewv-history') || '[]'); } catch { return []; }
+  });
   const [fx, setFx] = useState<'high' | 'low'>(() => {
     try { return localStorage.getItem('ewv-fx') === 'low' ? 'low' : 'high'; } catch { return 'high'; }
   });
@@ -730,6 +734,23 @@ const App: React.FC = () => {
             <span className={`text-stone-500 tracking-wide text-center ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
             </span>
+            {/* Recent battles */}
+            {!compact && history.length > 0 && (
+              <div data-testid="recent-battles" className="bg-black/70 backdrop-blur-sm rounded-lg border border-stone-700 px-3 py-1.5 flex flex-col gap-0.5 max-w-md">
+                <span className="text-[9px] uppercase tracking-widest text-stone-500 text-center">Recent battles</span>
+                {history.slice(0, 4).map((h, i) => {
+                  const mins = Math.max(1, Math.round((Date.now() - h.when) / 60000));
+                  const ago = mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.round(mins / 60)}h ago` : `${Math.round(mins / 1440)}d ago`;
+                  return (
+                    <span key={i} className="text-[10px] text-stone-400 font-mono whitespace-nowrap">
+                      <span className={h.winner === 'WEST' ? 'text-blue-400' : 'text-red-400'}>{h.winner}</span>
+                      {` won ${h.w}-${h.e} · ${h.map.toLowerCase()} · ${Math.floor(h.dur / 60)}m${h.dur % 60}s · ${ago}`}
+                      {h.spectate ? ' · cpu-vs-cpu' : ''}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
