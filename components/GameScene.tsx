@@ -29,6 +29,7 @@ interface GameSceneProps {
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     capture?: CapturePoint;
+    flanks?: CapturePoint[];
     onUnitClick?: (unit: Unit) => void;
     focusIds?: string[];
 }
@@ -44,10 +45,11 @@ const getDayFactor = () => {
 };
 
 // Mid-map capture point: flag + capture-progress ring
-const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
+const CapturePoint3D = ({ cap, small }: { cap: CapturePoint, small?: boolean }) => {
     const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? '#b91c1c' : '#a8a29e';
     const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? '#ef4444' : '#a8a29e';
     const pct = Math.min(1, Math.abs(cap.progress) / 300);
+    const poleH = small ? 34 : 50;
     return (
         <group position={[cap.x, 0, cap.y]}>
             {/* Zone marker */}
@@ -63,16 +65,16 @@ const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
                 </mesh>
             )}
             {/* Flag pole */}
-            <mesh position={[0, 25, 0]} castShadow>
-                <cylinderGeometry args={[0.8, 0.8, 50]} />
+            <mesh position={[0, poleH / 2, 0]} castShadow>
+                <cylinderGeometry args={[0.8, 0.8, poleH]} />
                 <meshStandardMaterial color="#78716c" />
             </mesh>
             {/* Banner */}
-            <mesh position={[6, 44, 0]} castShadow>
-                <boxGeometry args={[12, 8, 0.5]} />
+            <mesh position={[small ? 4.2 : 6, poleH - 6, 0]} castShadow>
+                <boxGeometry args={[small ? 8.4 : 12, small ? 5.6 : 8, 0.5]} />
                 <meshStandardMaterial color={ownerColor} />
             </mesh>
-            {cap.owner && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
+            {cap.owner && !small && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
         </group>
     );
 };
@@ -2600,7 +2602,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', mapType, shake, capture, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
 
     // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
     // the camera's offset from the target (OrbitControls' min/maxDistance
@@ -2725,6 +2727,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 ))}
                 <BorderLine onCanvasClick={onCanvasClick} />
                 {capture && <CapturePoint3D cap={capture} />}
+                {flanks?.map((f, i) => <CapturePoint3D key={i} cap={f} small />)}
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments

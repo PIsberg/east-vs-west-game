@@ -190,6 +190,7 @@ export interface CapturePoint {
   radius: number;
   owner: Team | null;
   progress: number; // -max..+max, positive = West capturing
+  bonus?: number;   // income multiplier granted to the holder (default 0.5)
 }
 
 export interface Flyover {

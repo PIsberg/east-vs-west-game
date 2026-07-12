@@ -78,9 +78,10 @@ const MiniMap: React.FC<{
   terrainRef: React.MutableRefObject<TerrainObject[]>;
   smokesRef: React.MutableRefObject<SmokeZone[]>;
   captureRef: React.MutableRefObject<CapturePoint>;
+  flankCapsRef: React.MutableRefObject<CapturePoint[]>;
   camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, camApiRef, compact }) => {
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -129,12 +130,13 @@ const MiniMap: React.FC<{
         ctx.fill();
       }
 
-      const cap = captureRef.current;
-      ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? '#f87171' : '#fbbf24';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
-      ctx.stroke();
+      for (const cap of [captureRef.current, ...flankCapsRef.current]) {
+        ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? '#f87171' : '#fbbf24';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       for (const u of unitsRef.current) {
         if (u.boarded) continue;
@@ -336,6 +338,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     owner: null,
     progress: 0,
   });
+  // Flank posts: smaller income bonuses on the top/bottom lanes, placed
+  // point-symmetric about the center so neither side gets a shorter walk
+  const flankCapsRef = useRef<CapturePoint[]>([
+    { x: 310, y: HORIZON_Y + 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
+    { x: 490, y: CANVAS_HEIGHT - 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
+  ]);
   const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
   const cpuRef = useRef<{ teams: Team[], difficulty: CpuDifficulty }>({ teams: cpuTeams, difficulty: cpuDifficulty });
   const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
@@ -959,9 +967,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
-    // Capture point: uncontested ground presence flips it; holder earns +50% income
-    {
-      const cap = captureRef.current;
+    // Capture points: uncontested ground presence flips them; holders earn
+    // bonus income (center +50%, flank posts +12% each)
+    for (const cap of [captureRef.current, ...flankCapsRef.current]) {
       let westIn = false, eastIn = false;
       for (const u of unitsRef.current) {
         if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) continue;
@@ -973,9 +981,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + 1);
       else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
-      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', 'West holds the capture point (+50% income)', Team.WEST); soundService.playSpawnSound(false); }
-      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', 'East holds the capture point (+50% income)', Team.EAST); soundService.playSpawnSound(true); }
-      if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * 0.5;
+      const bonus = cap.bonus ?? 0.5;
+      const isCenter = cap === captureRef.current;
+      const label = isCenter ? 'the capture point' : 'a flank post';
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true); }
+      if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
     }
 
     // Optimization: Build Spatial Grid
@@ -3061,6 +3072,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         mapType={mapType}
         shake={shakeRef}
         capture={captureRef.current}
+        flanks={flankCapsRef.current}
         onUnitClick={handleUnitClick}
         focusIds={[focusRef.current[Team.WEST], focusRef.current[Team.EAST]]
           .filter(f => f.targetId && Date.now() < f.until)
@@ -3099,7 +3111,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} camApiRef={camApiRef} compact={compact} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
