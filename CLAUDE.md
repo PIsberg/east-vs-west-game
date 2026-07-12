@@ -11,7 +11,7 @@ npm run build      # Production build (outputs to dist/)
 npm run preview    # Preview production build
 ```
 
-No test runner or linter is configured — verify changes manually in the browser.
+Headless e2e suite: `node scripts/e2e/run-all.cjs` against a running dev server (requires `puppeteer-core` on the resolve path and Edge — same setup as the balance harness; see the runner's header for coverage and test-writing gotchas). No unit-test runner or linter is configured.
 
 **Always run `npx tsc --noEmit` before committing.** `vite build` uses esbuild, which strips types without checking them — a missing import or type error passes the build but crashes at runtime (white screen). The codebase typechecks clean; keep it that way.
 
