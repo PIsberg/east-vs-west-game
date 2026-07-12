@@ -243,6 +243,11 @@ interface GameCanvasProps {
   selectedIds?: string[];
   compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
   fx?: 'high' | 'low'; // render quality, passed through to GameScene
+  // Challenge mode: handicap on the human side's starting money (applied at
+  // mount only) and a completion callback when the human wins
+  startMoneyMult?: number;
+  challengeId?: string | null;
+  onChallengeWon?: (id: string) => void;
   // Measured canvas size from App's layout observer. When provided these win
   // over the internal window-based estimate, making the battlefield fit the
   // real space between header, side panels and command bar exactly.
@@ -271,6 +276,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   selectedIds,
   compact,
   fx,
+  startMoneyMult,
+  challengeId,
+  onChallengeWon,
   viewW,
   viewH,
 }) => {
@@ -432,6 +440,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
+    if (humanWon && challengeId && cpuRef.current.teams.length === 1) onChallengeWon?.(challengeId);
     // Record the result for the splash screen's Recent Battles panel
     try {
       const rec = {
@@ -658,7 +667,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const scoreRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
-  const moneyRef = useRef({ [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY });
+  // Challenge handicap scales the HUMAN sides' opening funds only
+  const moneyRef = useRef({
+    [Team.WEST]: INITIAL_MONEY * (cpuTeams.includes(Team.WEST) ? 1 : (startMoneyMult ?? 1)),
+    [Team.EAST]: INITIAL_MONEY * (cpuTeams.includes(Team.EAST) ? 1 : (startMoneyMult ?? 1)),
+  });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
 
   // Team commands: economy upgrades (permanent income levels) and the rally
@@ -3040,6 +3053,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           onSelectUnitsRef.current?.(human, ids);
           return ids;
         },
+        // Test hook: end the match immediately (drives the real gameOver path)
+        winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
         // Test hook: simulate clicking a unit (goes through real selection logic)
         clickUnit: (id: string) => {
           const u = unitsRef.current.find(x => x.id === id);

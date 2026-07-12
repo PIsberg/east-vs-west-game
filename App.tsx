@@ -137,6 +137,14 @@ const REMATCH = (() => {
 })();
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
 
+// Preset challenge missions: fixed settings + optional handicap, completion
+// badges persist in ewv-challenges
+const CHALLENGES = [
+  { id: 'first-blood', name: 'First Blood', desc: 'Win a battle against an Easy CPU', map: MapType.COUNTRYSIDE, mode: 'points' as GameMode, cpu: 'easy' as const, moneyMult: 1 },
+  { id: 'underdog', name: 'Underdog', desc: 'Beat a Normal CPU starting with half the money', map: MapType.URBAN, mode: 'points' as GameMode, cpu: 'normal' as const, moneyMult: 0.5 },
+  { id: 'iron-wall', name: 'Iron Wall', desc: 'Raze a Hard CPU\'s base before it razes yours', map: MapType.DESERT, mode: 'basehp' as GameMode, cpu: 'hard' as const, moneyMult: 1 },
+];
+
 // Number-row hotkeys spawn for the player's side (badge shown in the tooltip)
 const SPAWN_HOTKEYS: Record<string, UnitType> = {
   '1': UnitType.SOLDIER, '2': UnitType.SNIPER, '3': UnitType.FLAMETHROWER, '4': UnitType.MEDIC,
@@ -181,6 +189,11 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(
     URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
   );
+  // Active challenge (null = free play) + persisted completion badges
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [challengesDone, setChallengesDone] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('ewv-challenges') || '[]'); } catch { return []; }
+  });
   // Recent battle results, written by GameCanvas at game over
   const [history] = useState<{ when: number, map: string, mode: string, winner: string, w: number, e: number, dur: number, spectate?: boolean }[]>(() => {
     try { return JSON.parse(localStorage.getItem('ewv-history') || '[]'); } catch { return []; }
@@ -289,7 +302,29 @@ const App: React.FC = () => {
     soundService.setMusicOn(on);
   };
 
+  // Launch a challenge: apply its settings, remount the engine fresh (the
+  // money handicap only applies at mount), and start the battle
+  const startChallenge = (c: typeof CHALLENGES[number]) => {
+    setMapType(c.map);
+    setGameMode(c.mode);
+    setCpuLevel(c.cpu);
+    setPlayerSide(Team.WEST);
+    setChallenge(c.id);
+    setGameKey(prev => prev + 1);
+    handleStartClick();
+  };
+  // GameCanvas reports a human challenge win back up
+  const onChallengeWon = useCallback((id: string) => {
+    setChallengesDone(prev => {
+      if (prev.includes(id)) return prev;
+      const next = [...prev, id];
+      try { localStorage.setItem('ewv-challenges', JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   const resetGame = () => {
+    setChallenge(null); // leaving a challenge returns to free play
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
     setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setWeather('clear'); setPaused(false);
@@ -724,6 +759,26 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+            {/* Challenge missions */}
+            <div data-testid="challenges" className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 ${compact ? 'p-1.5' : 'p-2.5'}`}>
+              <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-1.5'}`}>Challenges</p>
+              <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
+                {CHALLENGES.map(c => {
+                  const done = challengesDone.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => startChallenge(c)}
+                      title={c.desc}
+                      className={`rounded border text-center transition-all ${compact ? 'px-1.5 py-1' : 'px-3 py-1.5'} ${done ? 'border-green-500/70 bg-green-950/50' : 'border-stone-600 hover:border-amber-400 bg-black/40'}`}
+                    >
+                      <div className={`font-bold uppercase ${compact ? 'text-[9px]' : 'text-[11px]'} ${done ? 'text-green-400' : 'text-stone-200'}`}>{done ? '✓ ' : ''}{c.name}</div>
+                      {!compact && <div className="text-[8px] text-stone-500">{c.desc}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <button
               className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
@@ -811,7 +866,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} viewW={viewSize.w} viewH={viewSize.h} />
+          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
