@@ -168,6 +168,8 @@ const SPAWN_HOTKEYS: Record<string, UnitType> = {
 };
 const HOTKEY_OF: Partial<Record<UnitType, string>> =
   Object.fromEntries(Object.entries(SPAWN_HOTKEYS).map(([k, t]) => [t, k]));
+// pointer: coarse = the PRIMARY input is a finger — a mouse-first laptop with a touchscreen still reads as fine/click
+const HAS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
 // Last-used menu choices survive reloads (URL params still win)
@@ -447,7 +449,7 @@ const App: React.FC = () => {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setSelection(null); return; }
+      if (e.key === 'Escape') { setSelection(null); setTargetingInfo(null); return; }
       // Unit Order (Top to Bottom as rendered)
       const unitOrder = [
         UnitType.SOLDIER, UnitType.RAMBO, UnitType.MINE_PERSONAL, // Infantry
@@ -907,8 +909,24 @@ const App: React.FC = () => {
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
           }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
+          {/* Armed-strike banner: tells the player what to do next (worded for
+              their input device) and offers the only cancel path besides Esc */}
+          {targetingInfo && (
+            <div data-testid="targeting-banner" className="absolute top-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-stone-950/90 border border-amber-500 rounded-lg px-3 py-1.5 shadow-2xl">
+              <Crosshair size={13} className="text-amber-400 animate-pulse" />
+              <span className="text-[11px] text-amber-200 font-bold uppercase whitespace-nowrap">
+                {targetingInfo.type.replace('_', ' ')} armed — {HAS_TOUCH ? 'tap' : 'click'} the battlefield
+              </span>
+              <button
+                onClick={() => setTargetingInfo(null)}
+                className="text-[10px] uppercase font-bold border border-stone-500 rounded px-1.5 py-0.5 text-stone-300 hover:text-white hover:border-stone-300 transition-colors"
+              >
+                ✕ Cancel
+              </button>
+            </div>
+          )}
           {/* One-time tutorial toast for troop control */}
-          {troopHint && !selection && (
+          {troopHint && !selection && !targetingInfo && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
               💡 <strong>Click one of your units</strong> to give it its own orders — Attack, Hold or Fall Back.<br />
               <span className="text-amber-200/70"><strong>Double-click</strong> selects every unit of that type. Esc or a ground click deselects.</span>
