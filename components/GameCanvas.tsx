@@ -2941,6 +2941,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           specialSpawned = true;
         }
 
+        // Naval picket: anchor a gunboat on a river segment to guard crossings
+        // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
+        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special) {
+          const rivers = terrainRef.current.filter(t => t.type === 'river');
+          const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
+          if (rivers.length > 0 && myBoats < 2) {
+            const seg = rivers[Math.floor(Math.random() * rivers.length)];
+            const ok = spawnUnit(ME, UnitType.GUNBOAT, { absolutePos: { x: seg.x, y: seg.y } });
+            if (ok !== false) {
+              moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.GUNBOAT] as any).cost;
+              specialSpawned = true;
+            }
+          }
+        }
+
         // Tank mines when armor is a threat — laid just ahead of the foe's front line
         if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special) {
           const mineX = ME === Team.EAST
