@@ -26,6 +26,7 @@ interface GameSceneProps {
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
     fx?: 'high' | 'low'; // low: no shadows/bloom/clouds, dpr 1 — for weak GPUs
+    cb?: boolean; // colorblind-assist: East identity color becomes amber
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     capture?: CapturePoint;
@@ -46,8 +47,8 @@ const getDayFactor = () => {
 
 // Mid-map capture point: flag + capture-progress ring
 const CapturePoint3D = ({ cap, small }: { cap: CapturePoint, small?: boolean }) => {
-    const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? '#b91c1c' : '#a8a29e';
-    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? '#ef4444' : '#a8a29e';
+    const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? eastColor('#b91c1c') : '#a8a29e';
+    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? eastColor('#ef4444') : '#a8a29e';
     const pct = Math.min(1, Math.abs(cap.progress) / 300);
     const poleH = small ? 34 : 50;
     return (
@@ -509,7 +510,12 @@ Object.values(MODEL_URL).forEach(u => useGLTF.preload(u));
 
 const TEAM_TINT_WEST = '#60a5fa';
 const TEAM_TINT_EAST = '#f87171';
-const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : TEAM_TINT_EAST;
+// Colorblind-assist: East's identity color becomes amber. Set synchronously in
+// the GameScene body before children render; the Canvas remounts on toggle so
+// every tinted clone and flag re-evaluates.
+let CB_MODE = false;
+const eastColor = (normal: string, cbAlt = '#f59e0b') => CB_MODE ? cbAlt : normal;
+const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : eastColor(TEAM_TINT_EAST, '#fbbf24');
 
 // Clone a GLB per unit (SkeletonUtils handles skinned meshes) and recolor
 // named materials: each rule lerps matching materials toward a color.
@@ -768,7 +774,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 </mesh>
                                 <mesh position={[2.6, 3.4, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
                                     <boxGeometry args={[5, 3.2, 0.3]} />
-                                    <meshStandardMaterial color={isWest ? '#3b82f6' : '#ef4444'} emissive={isWest ? '#3b82f6' : '#ef4444'} emissiveIntensity={0.3} side={THREE.DoubleSide} />
+                                    <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.3} side={THREE.DoubleSide} />
                                 </mesh>
                             </group>
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
@@ -1322,7 +1328,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             </mesh>
                             <mesh position={[3.5, 5.5, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
                                 <boxGeometry args={[7, 4.5, 0.4]} />
-                                <meshStandardMaterial color={isWest ? '#3b82f6' : '#ef4444'} emissive={isWest ? '#3b82f6' : '#ef4444'} emissiveIntensity={0.25} side={THREE.DoubleSide} />
+                                <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.25} side={THREE.DoubleSide} />
                             </mesh>
                         </group>
                         {/* Gun slit opening */}
@@ -2633,7 +2639,10 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+    // Must be set before children render — teamTint/eastColor read it
+    CB_MODE = cb;
+    MAT_RING_EAST.color.set(cb ? '#f59e0b' : '#ef4444');
 
     // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
     // the camera's offset from the target (OrbitControls' min/maxDistance
@@ -2710,7 +2719,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'snow'  ? 0.5 : 0.6;
 
     return (
-        <Canvas key={fx} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
+        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}

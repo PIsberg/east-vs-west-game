@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
-import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship } from 'lucide-react';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -218,6 +218,11 @@ const App: React.FC = () => {
     try { return localStorage.getItem('ewv-fx') === 'low' ? 'low' : 'high'; } catch { return 'high'; }
   });
   const setFxPersist = (v: 'high' | 'low') => { setFx(v); try { localStorage.setItem('ewv-fx', v); } catch { /* ignore */ } };
+  // Colorblind-assist: East reads as amber across rings/minimap/pips/flags
+  const [cb, setCb] = useState<boolean>(() => {
+    try { return localStorage.getItem('ewv-cb') === '1'; } catch { return false; }
+  });
+  const toggleCb = () => setCb(v => { const n = !v; try { localStorage.setItem('ewv-cb', n ? '1' : '0'); } catch { /* ignore */ } return n; });
   const [mapType, setMapType] = useState<MapType>(
     Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType :
     Object.values(MapType).includes(SAVED_PREFS.mapType as MapType) ? SAVED_PREFS.mapType as MapType : MapType.COUNTRYSIDE
@@ -857,6 +862,7 @@ const App: React.FC = () => {
             <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
+            <button onClick={toggleCb} title={cb ? 'Standard team colors' : 'Colorblind assist: East shows as amber in rings, minimap and indicators'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cb ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Eye size={10} />CB</button>
             {activeChallenge && !showSplash && (
               <div data-testid="challenge-chip" className="flex items-center gap-1 text-amber-300" title={activeChallenge.desc}>
                 <Target size={12} />
@@ -881,7 +887,7 @@ const App: React.FC = () => {
               <div className="flex items-center gap-1" title="Capture points: top flank · center · bottom flank">
                 <MapPin size={12} className={gameState.captureOwner === Team.WEST ? 'text-blue-400' : gameState.captureOwner === Team.EAST ? 'text-red-400' : 'text-stone-400'} />
                 {[gameState.flankOwners?.[0] ?? null, gameState.captureOwner ?? null, gameState.flankOwners?.[1] ?? null].map((o, i) => (
-                  <span key={i} className={`inline-block rounded-full ${i === 1 ? 'w-2.5 h-2.5' : 'w-1.5 h-1.5'} ${o === Team.WEST ? 'bg-blue-500' : o === Team.EAST ? 'bg-red-500' : 'bg-stone-600'}`} />
+                  <span key={i} className={`inline-block rounded-full ${i === 1 ? 'w-2.5 h-2.5' : 'w-1.5 h-1.5'} ${o === Team.WEST ? 'bg-blue-500' : o === Team.EAST ? (cb ? 'bg-amber-400' : 'bg-red-500') : 'bg-stone-600'}`} />
                 ))}
               </div>
             )}
@@ -898,7 +904,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
+          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">

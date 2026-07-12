@@ -81,7 +81,8 @@ const MiniMap: React.FC<{
   flankCapsRef: React.MutableRefObject<CapturePoint[]>;
   camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact }) => {
+  cb?: boolean;
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact, cb }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -98,6 +99,7 @@ const MiniMap: React.FC<{
       const ctx = cvRef.current?.getContext('2d');
       if (!ctx) return;
       ctx.clearRect(0, 0, W, H);
+      const eastUi = cb ? '#fbbf24' : '#f87171';
       ctx.fillStyle = 'rgba(28, 37, 26, 0.92)';
       ctx.fillRect(0, 0, W, H);
 
@@ -131,7 +133,7 @@ const MiniMap: React.FC<{
       }
 
       for (const cap of [captureRef.current, ...flankCapsRef.current]) {
-        ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? '#f87171' : '#fbbf24';
+        ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? eastUi : cb ? '#e7e5e4' : '#fbbf24';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
@@ -141,7 +143,7 @@ const MiniMap: React.FC<{
       for (const u of unitsRef.current) {
         if (u.boarded) continue;
         const x = mx(u.position.x), y = my(u.position.y);
-        ctx.fillStyle = u.team === Team.WEST ? '#60a5fa' : '#f87171';
+        ctx.fillStyle = u.team === Team.WEST ? '#60a5fa' : eastUi;
         if (AIR_TYPES.has(u.type)) {
           ctx.fillRect(x - 1.8, y - 0.6, 3.6, 1.2);
           ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
@@ -169,7 +171,7 @@ const MiniMap: React.FC<{
     draw();
     const id = window.setInterval(draw, 150);
     return () => window.clearInterval(id);
-  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef]);
+  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef, cb]);
 
   // Click-to-pan: jump the camera to the clicked spot (pan is x-only)
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -243,6 +245,7 @@ interface GameCanvasProps {
   selectedIds?: string[];
   compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
   fx?: 'high' | 'low'; // render quality, passed through to GameScene
+  cb?: boolean; // colorblind-assist: East reads as amber in UI seams
   // Challenge mode: handicap on the human side's starting money (applied at
   // mount only) and a completion callback when the human wins
   startMoneyMult?: number;
@@ -276,6 +279,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   selectedIds,
   compact,
   fx,
+  cb,
   startMoneyMult,
   challengeId,
   onChallengeWon,
@@ -3193,7 +3197,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} cb={cb} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
