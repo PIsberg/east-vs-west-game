@@ -152,6 +152,7 @@ const CHALLENGES: Challenge[] = [
   { id: 'blitzkrieg', name: 'Blitzkrieg', desc: 'Beat a Normal CPU in under 5 minutes', map: MapType.COUNTRYSIDE, mode: 'points', cpu: 'normal', maxDurSec: 300 },
   { id: 'boots-only', name: 'Boots Only', desc: 'Beat a Normal CPU buying only infantry', map: MapType.DESERT, mode: 'points', cpu: 'normal', infantryOnly: true },
   { id: 'iron-wall', name: 'Iron Wall', desc: 'Raze a Hard CPU\'s base before it razes yours', map: MapType.DESERT, mode: 'basehp', cpu: 'hard' },
+  { id: 'admiral', name: 'Admiral', desc: 'Win among the islands — gunboats rule the channels', map: MapType.ARCHIPELAGO, mode: 'points', cpu: 'normal' },
 ];
 // Foot units allowed under the Boots Only restriction
 const INFANTRY_ALLOWED = new Set([
@@ -390,10 +391,11 @@ const App: React.FC = () => {
     if (showSplash) return; // armed once the battle starts
     const onKey = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-      const type = SPAWN_HOTKEYS[e.key];
-      if (!type) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'p' || e.key === 'P') { setPaused(prev => !prev); return; }
+      const type = SPAWN_HOTKEYS[e.key];
+      if (!type) return;
       spawnReqRef.current(playerSide, type);
     };
     window.addEventListener('keydown', onKey);
@@ -968,6 +970,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Points:</strong> Hold the center flag uncontested for <span className="text-amber-400">+50% income</span>; the two smaller flank posts add <span className="text-amber-400">+12% each</span>.</li>
             <li><strong className="text-white">Gunboat:</strong> Station it on a <span className="text-amber-400">river or channel</span> (click open water when placing) — a tough, long-range gun platform that guards crossings.</li>
+            <li><strong className="text-white">Shortcuts & Access:</strong> Number keys <span className="text-amber-400">1–0</span> buy your core units, <span className="text-amber-400">P</span> pauses. The <span className="text-amber-400">CB</span> toggle recolors East to amber for colorblind players.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
             <li><strong className="text-white">Troop Control:</strong> <span className="text-amber-400">Click your own unit</span> to select it (squads select together), <span className="text-amber-400">double-click for all of that type</span>, then give Attack/Hold/Fall Back orders that override the team stance (colored dot shows the order; Esc deselects).</li>
             <li><strong className="text-white">Entrench:</strong> Foot soldiers holding still under <span className="text-amber-400">Hold</span> orders dig in after ~6s: <span className="text-amber-400">-45% direct fire damage</span> until they move. Explosives ignore foxholes.</li>
