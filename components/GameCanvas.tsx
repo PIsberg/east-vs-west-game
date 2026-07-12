@@ -211,6 +211,7 @@ interface GameCanvasProps {
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
   compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
+  fx?: 'high' | 'low'; // render quality, passed through to GameScene
   // Measured canvas size from App's layout observer. When provided these win
   // over the internal window-based estimate, making the battlefield fit the
   // real space between header, side panels and command bar exactly.
@@ -238,6 +239,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onSelectUnits,
   selectedIds,
   compact,
+  fx,
   viewW,
   viewH,
 }) => {
@@ -3000,6 +3002,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         crates={cratesRef.current}
         smokes={smokesRef.current}
         selectedIds={selectedIds}
+        fx={fx}
         onCameraApi={handleCameraApi}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}

@@ -25,6 +25,7 @@ interface GameSceneProps {
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+    fx?: 'high' | 'low'; // low: no shadows/bloom/clouds, dpr 1 — for weak GPUs
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     capture?: CapturePoint;
@@ -2610,7 +2611,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', mapType, shake, capture, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
 
     // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
     // the camera's offset from the target (OrbitControls' min/maxDistance
@@ -2687,7 +2688,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'snow'  ? 0.5 : 0.6;
 
     return (
-        <Canvas shadows dpr={[1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
+        <Canvas key={fx} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}
@@ -2716,7 +2717,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
             <Backdrop mapType={mapType} />
-            <Clouds />
+            {fx !== 'low' && <Clouds />}
 
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
@@ -2775,9 +2776,11 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
-            <EffectComposer>
-                <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
-            </EffectComposer>
+            {fx !== 'low' && (
+                <EffectComposer>
+                    <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+                </EffectComposer>
+            )}
         </Canvas>
     );
 };

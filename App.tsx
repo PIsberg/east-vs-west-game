@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
-import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen } from 'lucide-react';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -181,6 +181,10 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(
     URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
   );
+  const [fx, setFx] = useState<'high' | 'low'>(() => {
+    try { return localStorage.getItem('ewv-fx') === 'low' ? 'low' : 'high'; } catch { return 'high'; }
+  });
+  const setFxPersist = (v: 'high' | 'low') => { setFx(v); try { localStorage.setItem('ewv-fx', v); } catch { /* ignore */ } };
   const [mapType, setMapType] = useState<MapType>(
     Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType :
     Object.values(MapType).includes(SAVED_PREFS.mapType as MapType) ? SAVED_PREFS.mapType as MapType : MapType.COUNTRYSIDE
@@ -295,6 +299,23 @@ const App: React.FC = () => {
       else processSpawn(team, type);
     }
   };
+
+  // Auto-detect weak GPUs once: with no saved preference, if the opening
+  // seconds of the first battle run under ~24fps, drop to low quality.
+  useEffect(() => {
+    if (showSplash) return;
+    try { if (localStorage.getItem('ewv-fx')) return; } catch { return; }
+    let raf = 0;
+    let frames = 0;
+    let start = 0;
+    const loop = () => {
+      frames++;
+      if (performance.now() - start < 4000) raf = requestAnimationFrame(loop);
+      else if (frames / 4 < 24) setFxPersist('low');
+    };
+    const t = setTimeout(() => { start = performance.now(); raf = requestAnimationFrame(loop); }, 3000);
+    return () => { clearTimeout(t); cancelAnimationFrame(raf); };
+  }, [showSplash]);
 
   // Keyboard spawning: number row buys for the player's side. Ref keeps the
   // listener stable while handleSpawnRequest is recreated every render.
@@ -736,6 +757,7 @@ const App: React.FC = () => {
             <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
             <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
+            <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
@@ -765,7 +787,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} viewW={viewSize.w} viewH={viewSize.h} />
+          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} viewW={viewSize.w} viewH={viewSize.h} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
