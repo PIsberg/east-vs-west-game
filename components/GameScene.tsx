@@ -2487,8 +2487,10 @@ const Clouds = () => {
 const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
     const ref = useRef<THREE.InstancedMesh>(null!);
     const COUNT = 140;
-    const active = mapType === MapType.COUNTRYSIDE || mapType === MapType.DESERT;
-    const color = mapType === MapType.DESERT ? '#a16207' : '#1a2e05';
+    const active = mapType !== MapType.URBAN; // city streets stay bare
+    const color =
+        mapType === MapType.DESERT      ? '#a16207' :
+        mapType === MapType.ARCHIPELAGO ? '#15803d' : '#1a2e05';
 
     useEffect(() => {
         if (!active || !ref.current) return;
@@ -2630,11 +2632,17 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // Day/night factor blended on top of the weather palette.
     const dayFactor = getDayFactor();
 
+    // Clear-weather sky carries each map's identity (fog inherits it, so the
+    // desert reads as dust haze and the city as smog); weather overrides it.
+    const clearSky =
+        mapType === MapType.DESERT      ? '#dfc08f' :
+        mapType === MapType.URBAN       ? '#9fb2c0' :
+        mapType === MapType.ARCHIPELAGO ? '#6fd0e8' : '#87CEEB';
     const weatherSky =
         weather === 'rain'  ? '#334155' :
         weather === 'snow'  ? '#cbd5e1' :
         weather === 'fog'   ? '#94a3b8' :
-        weather === 'storm' ? '#1e293b' : '#87CEEB';
+        weather === 'storm' ? '#1e293b' : clearSky;
     const skyColor = TMP_SKY_COLOR.set(weatherSky).lerp(NIGHT_SKY_COLOR, 1 - dayFactor).getHex();
     const sunColor = TMP_SUN_COLOR.set('#ffffff').lerp(MOON_COLOR, 1 - dayFactor).getHex();
 
