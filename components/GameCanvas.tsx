@@ -70,6 +70,7 @@ export type CamApi = {
   pan: (dx: number) => void;
   reset: () => void;
   state: () => { dist: number, tx: number, tz: number } | null;
+  panTo: (x: number) => void;
 };
 
 const MiniMap: React.FC<{
@@ -168,13 +169,23 @@ const MiniMap: React.FC<{
     return () => window.clearInterval(id);
   }, [W, H, unitsRef, terrainRef, smokesRef, captureRef]);
 
+  // Click-to-pan: jump the camera to the clicked spot (pan is x-only)
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const worldX = ((e.clientX - rect.left) / rect.width) * CANVAS_WIDTH;
+    camApiRef.current?.panTo(worldX);
+  };
+
   return (
     <canvas
       ref={cvRef}
       width={W}
       height={H}
       data-testid="minimap"
-      className="absolute top-2 right-2 z-30 rounded border border-stone-600/80 shadow-lg pointer-events-none opacity-90"
+      onClick={onClick}
+      title="Click to move the camera"
+      className="absolute top-2 right-2 z-30 rounded border border-stone-600/80 shadow-lg opacity-90 cursor-pointer"
     />
   );
 };

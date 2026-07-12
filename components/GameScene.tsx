@@ -21,7 +21,7 @@ interface GameSceneProps {
     smokes?: SmokeZone[];
     selectedIds?: string[];
     // Imperative camera controls for the on-screen zoom/scroll buttons
-    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void; state: () => { dist: number, tx: number, tz: number } | null }) => void;
+    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void; state: () => { dist: number, tx: number, tz: number } | null; panTo: (x: number) => void }) => void;
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
@@ -2642,6 +2642,17 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             },
             reset: () => { controlsRef.current?.reset(); },
             state: () => { const c = controlsRef.current; return c ? { dist: c.object.position.distanceTo(c.target), tx: c.target.x, tz: c.target.z } : null; },
+            // Jump the view to a world x (minimap click) — world-axis move, so it
+            // stays correct however the camera is orbited
+            panTo: (x: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const nx = Math.max(40, Math.min(CANVAS_WIDTH - 40, x));
+                const dx = nx - c.target.x;
+                c.target.x = nx;
+                c.object.position.x += dx;
+                c.update();
+            },
         };
         // Snapshot the initial framing so reset() returns exactly here.
         // OrbitControls mounts async inside the R3F canvas, so retry briefly.

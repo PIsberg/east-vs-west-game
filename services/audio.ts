@@ -12,10 +12,14 @@ class SoundService {
   private musicBar = 0;
   private nextBarTime = 0;
 
+  private volume = 0.85;
+
   constructor() {
     try {
       this.muted = localStorage.getItem('ewv-muted') === '1';
       this.musicOn = localStorage.getItem('ewv-music') !== '0';
+      const v = parseFloat(localStorage.getItem('ewv-volume') ?? '');
+      if (!Number.isNaN(v)) this.volume = Math.max(0, Math.min(1, v));
     } catch { /* private browsing — keep defaults */ }
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -27,7 +31,7 @@ class SoundService {
       compressor.attack.value = 0.002;
       compressor.release.value = 0.12;
       const master = this.ctx.createGain();
-      master.gain.value = this.muted ? 0 : 0.85;
+      master.gain.value = this.muted ? 0 : this.volume;
       master.connect(compressor);
       compressor.connect(this.ctx.destination);
       this.dest = master;
@@ -46,8 +50,14 @@ class SoundService {
   public isMuted() { return this.muted; }
   public setMuted(m: boolean) {
     this.muted = m;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.85, this.ctx.currentTime, 0.02);
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.02);
     try { localStorage.setItem('ewv-muted', m ? '1' : '0'); } catch { /* ignore */ }
+  }
+  public getVolume() { return this.volume; }
+  public setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (!this.muted && this.master && this.ctx) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
+    try { localStorage.setItem('ewv-volume', String(this.volume)); } catch { /* ignore */ }
   }
   public isMusicOn() { return this.musicOn; }
   public setMusicOn(on: boolean) {
