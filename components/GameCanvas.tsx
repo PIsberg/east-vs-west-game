@@ -768,6 +768,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
+    // Gunboat must anchor on open water — reject dry-land clicks (no charge)
+    if (type === UnitType.GUNBOAT && options?.absolutePos) {
+      const p = options.absolutePos;
+      const onWater = terrainRef.current.some(t => t.type === 'river' &&
+        Math.abs(p.x - t.x) < (t.width ?? 40) / 2 + 16 &&
+        Math.abs(p.y - t.y) < (t.height ?? 22) / 2 + 16);
+      if (!onWater) {
+        pushEvent('command', `${teamName(team)} gunboat needs open water — deployment aborted`, team);
+        return false;
+      }
+    }
+
     if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE || type === UnitType.GUNSHIP) && options?.absolutePos) {
       const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
       const isGunship = type === UnitType.GUNSHIP;
@@ -848,8 +860,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     if (spawnQueue.length > 0) {
       spawnQueue.forEach(req => {
-        spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
-        if (req.cost) {
+        const ok = spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
+        if (ok !== false && req.cost) {
           moneyRef.current[req.team] = Math.max(0, moneyRef.current[req.team] - req.cost);
         }
       });
@@ -2401,7 +2413,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 isMissile
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
-              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER) soundService.playHeavyShot();
+              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
               else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
               else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
@@ -2957,7 +2969,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (pool.length === 0) {
               const noAiTypes = new Set([UnitType.AIRSTRIKE, UnitType.NUKE, UnitType.GUNSHIP, UnitType.NAPALM,
                                          UnitType.MISSILE_STRIKE, UnitType.AIRBORNE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK,
-                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE]);
+                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE, UnitType.GUNBOAT]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
                 return cost > 0 && cost <= money && !noAiTypes.has(t);

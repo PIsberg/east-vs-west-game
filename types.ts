@@ -32,6 +32,7 @@ export enum UnitType {
   SATELLITE = 'SATELLITE',
   CRUISE = 'CRUISE',
   TRANSPORT = 'TRANSPORT',
+  GUNBOAT = 'GUNBOAT',
   SMOKE = 'SMOKE',
 }
 

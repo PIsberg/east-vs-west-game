@@ -202,6 +202,18 @@ export const UNIT_CONFIG = {
     colorWest: '#0f766e',
     colorEast: '#991b1b',
   },
+  [UnitType.GUNBOAT]: {
+    cost: 145,
+    health: 170,
+    damage: 30,
+    speed: 0, // anchored on water — a river-borne gun platform
+    range: 260,
+    attackSpeed: 75,
+    width: 34,
+    height: 16,
+    colorWest: '#155e75',
+    colorEast: '#7f1d1d',
+  },
   [UnitType.TESLA]: {
     cost: 165,
     health: 165,

@@ -754,6 +754,51 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     )
                 }
                 {
+                    unit.type === UnitType.GUNBOAT && (
+                        <group position={[0, 1.5 + Math.sin(Date.now() * 0.0022 + unit.position.x) * 0.7, 0]} rotation={[Math.sin(Date.now() * 0.0017 + unit.position.y) * 0.03, 0, 0]}>
+                            {/* Hull */}
+                            <mesh position={[0, 3, 0]} castShadow>
+                                <boxGeometry args={[30, 6, 13]} />
+                                <meshStandardMaterial color={color} />
+                            </mesh>
+                            {/* Bow taper */}
+                            <mesh position={[17, 3, 0]} rotation={[0, 0, -Math.PI / 2]} castShadow>
+                                <coneGeometry args={[6.5, 8, 4]} />
+                                <meshStandardMaterial color={color} />
+                            </mesh>
+                            {/* Deck house */}
+                            <mesh position={[-6, 8.5, 0]} castShadow>
+                                <boxGeometry args={[10, 5, 9]} />
+                                <meshStandardMaterial color="#334155" />
+                            </mesh>
+                            {/* Mast */}
+                            <mesh position={[-6, 13, 0]}>
+                                <cylinderGeometry args={[0.4, 0.4, 6]} />
+                                <meshStandardMaterial color="#1e293b" />
+                            </mesh>
+                            {/* Bow gun: mount + barrel with recoil */}
+                            <mesh position={[6, 8, 0]} castShadow>
+                                <cylinderGeometry args={[3, 3.5, 4, 10]} />
+                                <meshStandardMaterial color="#374151" />
+                            </mesh>
+                            <mesh position={[12 - recoil, 8.5, 0]} rotation={[0, 0, -Math.PI / 2]}>
+                                <cylinderGeometry args={[1, 1.2, 14]} />
+                                <meshStandardMaterial color="#1f2937" />
+                            </mesh>
+                            {unit.attackCooldown > (config.attackSpeed - 8) && (
+                                <group position={[20, 8.5, 0]}>
+                                    <MuzzleFlash size={3} />
+                                </group>
+                            )}
+                            {/* Wake foam */}
+                            <mesh position={[0, -2.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                                <ringGeometry args={[16, 19, 20]} />
+                                <meshBasicMaterial color="#e0f2fe" transparent opacity={0.18 + 0.08 * Math.sin(Date.now() * 0.003)} depthWrite={false} />
+                            </mesh>
+                        </group>
+                    )
+                }
+                {
                     unit.type === UnitType.TESLA && (
                         <group>
                             <mesh position={[0, 8, 0]} castShadow>
