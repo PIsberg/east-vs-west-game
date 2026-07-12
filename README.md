@@ -4,7 +4,9 @@ A real-time tug-of-war strategy game inspired by the classic Commodore Amiga tit
 
 Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Four battlefields, two win modes (**100 Points** or **Base HP**).
 
-![east-vs-west1-PXL_20260102_152535277](https://github.com/user-attachments/assets/7f40c567-b98a-412a-bc20-ab26f77321eb)
+![Battle on the countryside map — 3D unit models, minimap and full HUD](docs/screenshot-battle.png)
+
+See [CHANGELOG.md](CHANGELOG.md) for what's new.
 
 ## 🎮 How to Play
 
@@ -24,6 +26,7 @@ The first team to reach **100 Points** wins.
 #### Mouse
 - **Click Unit Buttons** (Left/Right side) to spawn units.
 - **Click Terrain**: Inspect terrain or targeting (for airstrikes).
+- **Camera**: Drag to swing the view (locked to the front 180°), scroll/pinch to zoom — or use the **◀ ▶ + − ⌂ buttons** in the battlefield's corner (hold to keep moving, ⌂ resets the view).
 - **Click an Enemy Unit**: Your army focus-fires it for 6 seconds.
 - **Orders** (per side): Advance / Hold / Fall Back stances.
 - **Troop Control**: Click one of **your own units** to select it (squad-spawned infantry selects as a squad); **double-click to select every unit of that type**. An order panel appears: **⚔ Attack / ⛨ Hold / ⏪ Fall Back / Follow Team**. Per-unit orders override the team stance; a colored dot above each unit shows its personal order. Click open ground or press Esc to deselect.
@@ -31,6 +34,10 @@ The first team to reach **100 Points** wins.
 - **Field Repairs**: Wounded units heal slowly near their own edge when out of combat — pull damaged veterans back with **Fall Back** instead of feeding kills to the enemy.
 - **Battle Feed**: Key events (big-unit kills, bridges, supply drops, capture point, nukes) scroll by in the lower-left corner.
 - **Sound & Music**: Toggle SFX mute and the procedural battle-march from the top bar; settings and your menu choices (map, side, CPU level, win mode) are remembered between visits.
+- **Minimap** (top-right of the battlefield): live unit dots, capture rings and the camera's current view — **click it to jump the camera** anywhere.
+- **Capture Points**: the center flag grants **+50% income**; two smaller flank posts add **+12% each** — spread your lanes to hold them.
+- **Challenges** (splash screen): six preset missions with handicaps, time limits and unit restrictions; completions earn permanent badges. Recent battle results also show on the splash.
+- **Shortcuts & Access**: number keys **1–0** buy your core units, **P** pauses; **FX** toggles low-graphics for weak devices (auto-detected too); **CB** recolors East to amber for colorblind players.
 - **Mobile**: Play on your phone in **landscape** — the layout switches to a compact battle view (slim header, scrollable unit panels) and the field manual is tucked behind the **Manual** button in the top bar (toggleable on desktop too). Portrait shows a rotate prompt.
 
 #### Keyboard Shortcuts
@@ -65,6 +72,7 @@ The first team to reach **100 Points** wins.
 | **Anti-Air** | **Air Defense**. Essential vs Drones & Helicopters. | Tanks, Infantry. |
 | **T. Mine** | Anti-Tank trap. High damage massive explosion. | Infantry (trigger radius). |
 | **Bunker** | Static strongpoint placed anywhere on your half. | Artillery, being bypassed. |
+| **Gunboat** | Naval gun platform — station it on a river or channel to guard the crossings. | Artillery, aircraft. |
 
 ### Air Support
 | Unit | Role | Note |
@@ -92,6 +100,17 @@ The first team to reach **100 Points** wins.
 - **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 - **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
+
+---
+
+## 🙏 Asset Credits
+
+3D unit models, all via [Poly Pizza](https://poly.pizza/) — thank you to these artists for the free packs:
+
+- **Soldier** (all infantry) and **Tank** by [Quaternius](https://quaternius.com/) — [CC0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Jeep, Truck, Light Tank (APC) and Helicopter** from the [Low Poly Military Vehicles](https://poly.pizza/bundle/Low-Poly-Military-Vehicles-lSgBuYh48X) bundle, **Missile Turret** (Anti-Air) and **[Military Boat](https://poly.pizza/m/wouBxOe3CD)** (Gunboat) by [Zsky](https://poly.pizza/u/Zsky) — [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)
+- **Low poly Fighter** by [Stephen Graybill](https://poly.pizza/m/1fi8ZIDdFCP) — CC-BY 3.0
+- **Drone** by [NateGazzard](https://poly.pizza/m/DNbUoMtG3H) — CC-BY 3.0
 
 ---
 

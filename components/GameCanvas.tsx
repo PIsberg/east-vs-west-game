@@ -59,6 +59,170 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
   hard:   { interval: 0.62, incomeBonus: 0.15, special: 1.5, counterSmart: 1.0, commands: 1.2, stanceIQ: true },
 };
 
+// Tactical minimap: a Canvas-2D overview drawn straight from the engine refs at
+// ~7fps. Terrain (river, bridges, hills, buildings), smoke, the capture point and
+// every fielded unit as a team-colored dot; air units render as a small cross.
+const AIR_TYPES = new Set([UnitType.HELICOPTER, UnitType.FIGHTER, UnitType.DRONE, UnitType.GUNSHIP]);
+
+// Imperative camera controls handed up by GameScene (buttons + minimap viewport)
+export type CamApi = {
+  zoom: (f: number) => void;
+  pan: (dx: number) => void;
+  reset: () => void;
+  state: () => { dist: number, tx: number, tz: number } | null;
+  panTo: (x: number) => void;
+};
+
+const MiniMap: React.FC<{
+  unitsRef: React.MutableRefObject<Unit[]>;
+  terrainRef: React.MutableRefObject<TerrainObject[]>;
+  smokesRef: React.MutableRefObject<SmokeZone[]>;
+  captureRef: React.MutableRefObject<CapturePoint>;
+  flankCapsRef: React.MutableRefObject<CapturePoint[]>;
+  camApiRef: React.MutableRefObject<CamApi | null>;
+  compact?: boolean;
+  cb?: boolean;
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact, cb }) => {
+  const cvRef = useRef<HTMLCanvasElement>(null);
+  const W = compact ? 104 : 150;
+  const H = compact ? 48 : 68;
+
+  useEffect(() => {
+    // Battle happens between the horizon and the bottom edge; map that band.
+    const Y0 = HORIZON_Y - 10;
+    const sx = W / CANVAS_WIDTH;
+    const sy = H / (CANVAS_HEIGHT - Y0);
+    const mx = (x: number) => x * sx;
+    const my = (y: number) => (y - Y0) * sy;
+
+    const draw = () => {
+      const ctx = cvRef.current?.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, W, H);
+      const eastUi = cb ? '#fbbf24' : '#f87171';
+      ctx.fillStyle = 'rgba(28, 37, 26, 0.92)';
+      ctx.fillRect(0, 0, W, H);
+
+      for (const t of terrainRef.current) {
+        if (t.type === 'river') {
+          ctx.fillStyle = '#27546b';
+          ctx.fillRect(mx(t.x - (t.width ?? 40) / 2), my(t.y - (t.height ?? 22) / 2),
+            Math.max(1.5, (t.width ?? 40) * sx), Math.max(1.5, (t.height ?? 22) * sy));
+        } else if (t.type === 'hill') {
+          ctx.fillStyle = 'rgba(96, 88, 60, 0.5)';
+          ctx.beginPath();
+          ctx.arc(mx(t.x), my(t.y), Math.max(1.5, t.size * sx * 0.55), 0, Math.PI * 2);
+          ctx.fill();
+        } else if (t.type === 'building') {
+          ctx.fillStyle = 'rgba(120, 113, 108, 0.55)';
+          const s = Math.max(1.5, (t.width ?? t.size) * sx * 0.7);
+          ctx.fillRect(mx(t.x) - s / 2, my(t.y) - s / 2, s, s);
+        }
+      }
+      for (const t of terrainRef.current) {
+        if (t.type !== 'bridge') continue;
+        ctx.fillStyle = '#a8825f';
+        ctx.fillRect(mx(t.x - (t.width ?? 85) / 2), my(t.y - (t.height ?? 40) / 2),
+          Math.max(2, (t.width ?? 85) * sx), Math.max(2, (t.height ?? 40) * sy));
+      }
+      for (const s of smokesRef.current) {
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.3)';
+        ctx.beginPath();
+        ctx.arc(mx(s.x), my(s.y), Math.max(2, s.radius * sx), 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      for (const cap of [captureRef.current, ...flankCapsRef.current]) {
+        ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? eastUi : cb ? '#e7e5e4' : '#fbbf24';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      for (const u of unitsRef.current) {
+        if (u.boarded) continue;
+        const x = mx(u.position.x), y = my(u.position.y);
+        ctx.fillStyle = u.team === Team.WEST ? '#60a5fa' : eastUi;
+        if (AIR_TYPES.has(u.type)) {
+          ctx.fillRect(x - 1.8, y - 0.6, 3.6, 1.2);
+          ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
+        } else {
+          ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+      }
+
+      // Camera viewport bracket: the horizontal span currently on screen.
+      // At the default framing (dist ≈ 735) the whole 800-wide field is
+      // visible, so span ≈ dist * 1.09 empirically; pan is x-only.
+      const cam = camApiRef.current?.state();
+      if (cam) {
+        const halfSpan = Math.min(CANVAS_WIDTH, cam.dist * 1.09) / 2;
+        const x0 = Math.max(0, mx(cam.tx - halfSpan));
+        const x1 = Math.min(W, mx(cam.tx + halfSpan));
+        if (x1 - x0 < W - 2) { // hide when everything is visible anyway
+          ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x0 + 0.5, 0.5, x1 - x0 - 1, H - 1);
+        }
+      }
+    };
+
+    draw();
+    const id = window.setInterval(draw, 150);
+    return () => window.clearInterval(id);
+  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef, cb]);
+
+  // Click-to-pan: jump the camera to the clicked spot (pan is x-only)
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const worldX = ((e.clientX - rect.left) / rect.width) * CANVAS_WIDTH;
+    camApiRef.current?.panTo(worldX);
+  };
+
+  return (
+    <canvas
+      ref={cvRef}
+      width={W}
+      height={H}
+      data-testid="minimap"
+      onClick={onClick}
+      title="Click to move the camera"
+      className="absolute top-2 right-2 z-30 rounded border border-stone-600/80 shadow-lg opacity-90 cursor-pointer"
+    />
+  );
+};
+
+// Post-match timeline: score (or base HP) per team over the whole battle
+const TimelineGraph: React.FC<{ history: { t: number, w: number, e: number }[] }> = ({ history }) => {
+  const cvRef = useRef<HTMLCanvasElement>(null);
+  const W = 264, H = 72;
+  useEffect(() => {
+    const ctx = cvRef.current?.getContext('2d');
+    if (!ctx || history.length < 2) return;
+    ctx.clearRect(0, 0, W, H);
+    const maxV = Math.max(1, ...history.map(s => Math.max(s.w, s.e)));
+    const maxT = history[history.length - 1].t || 1;
+    const px = (t: number) => 4 + (t / maxT) * (W - 8);
+    const py = (v: number) => H - 6 - (v / maxV) * (H - 12);
+    ctx.strokeStyle = 'rgba(120, 113, 108, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(4, H - 6);
+    ctx.lineTo(W - 4, H - 6);
+    ctx.stroke();
+    for (const [key, color] of [['w', '#60a5fa'], ['e', '#f87171']] as const) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      history.forEach((s, i) => { const x = px(s.t), y = py(s[key]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+      ctx.stroke();
+    }
+  }, [history]);
+  return <canvas ref={cvRef} width={W} height={H} data-testid="timeline" className="rounded border border-stone-700 bg-stone-950/60" />;
+};
+
 interface GameCanvasProps {
   onGameStateChange: (state: GameState) => void;
   spawnQueue: { team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }[];
@@ -80,6 +244,13 @@ interface GameCanvasProps {
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
   compact?: boolean; // mobile-landscape layout: slimmer chrome, no 640px floor
+  fx?: 'high' | 'low'; // render quality, passed through to GameScene
+  cb?: boolean; // colorblind-assist: East reads as amber in UI seams
+  // Challenge mode: handicap on the human side's starting money (applied at
+  // mount only) and a completion callback when the human wins
+  startMoneyMult?: number;
+  challengeId?: string | null;
+  onChallengeWon?: (id: string, durSec: number) => void;
   // Measured canvas size from App's layout observer. When provided these win
   // over the internal window-based estimate, making the battlefield fit the
   // real space between header, side panels and command bar exactly.
@@ -107,6 +278,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onSelectUnits,
   selectedIds,
   compact,
+  fx,
+  cb,
+  startMoneyMult,
+  challengeId,
+  onChallengeWon,
   viewW,
   viewH,
 }) => {
@@ -161,6 +337,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
+  // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
+  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>((() => {
+    const r = Math.random();
+    return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+  })());
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
     x: CANVAS_WIDTH / 2,
@@ -169,6 +350,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     owner: null,
     progress: 0,
   });
+  // Flank posts: smaller income bonuses on the top/bottom lanes, placed
+  // point-symmetric about the center so neither side gets a shorter walk
+  const flankCapsRef = useRef<CapturePoint[]>([
+    { x: 310, y: HORIZON_Y + 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
+    { x: 490, y: CANVAS_HEIGHT - 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
+  ]);
   const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
   const cpuRef = useRef<{ teams: Team[], difficulty: CpuDifficulty }>({ teams: cpuTeams, difficulty: cpuDifficulty });
   const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
@@ -182,6 +369,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.EAST]: { kills: {}, killValue: {}, lost: {}, spawned: {} },
   });
   const matchStartRef = useRef(Date.now());
+  // Score-over-time samples for the victory-screen timeline (one every ~5s)
+  const scoreHistoryRef = useRef<{ t: number, w: number, e: number }[]>([]);
+  const lastSampleRef = useRef(0);
   const baseHPRef = useRef({ [Team.WEST]: BASE_HP, [Team.EAST]: BASE_HP });
   const gameModeRef = useRef<GameMode>(gameMode);
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
@@ -238,9 +428,65 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
+
+  // End-of-game audio: fanfare when a human side wins (or in spectate),
+  // a somber sting when the CPU takes it. Both stop the battle music.
+  useEffect(() => {
+    if (!gameOver) return;
+    soundService.setRotorLoop(false);
+    // Close the timeline with the final standings
+    const hp = gameModeRef.current === 'basehp';
+    scoreHistoryRef.current.push({
+      t: Date.now() - matchStartRef.current,
+      w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+      e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+    });
+    const humanWon = !cpuRef.current.teams.includes(gameOver);
+    if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
+    else soundService.playDefeatSound();
+    if (humanWon && challengeId && cpuRef.current.teams.length === 1) onChallengeWon?.(challengeId, Math.round((Date.now() - matchStartRef.current) / 1000));
+    // Record the result for the splash screen's Recent Battles panel
+    try {
+      const rec = {
+        when: Date.now(),
+        map: mapType,
+        mode: gameModeRef.current,
+        winner: gameOver,
+        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+        dur: Math.round((Date.now() - matchStartRef.current) / 1000),
+        spectate: cpuRef.current.teams.length === 2,
+      };
+      const hist = JSON.parse(localStorage.getItem('ewv-history') || '[]');
+      hist.unshift(rec);
+      localStorage.setItem('ewv-history', JSON.stringify(hist.slice(0, 10)));
+    } catch { /* ignore */ }
+  }, [gameOver]);
+
+  // Rotor ambience while any helicopter is fielded (single shared loop)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const heliUp = !gameOverRef.current && !speedRef.current.paused &&
+        unitsRef.current.some(u => u.type === UnitType.HELICOPTER && !u.boarded);
+      soundService.setRotorLoop(heliUp);
+    }, 1000);
+    return () => { window.clearInterval(id); soundService.setRotorLoop(false); };
+  }, []);
   // Latest selection callback for use inside the stale tick closure (debug hook)
   const onSelectUnitsRef = useRef(onSelectUnits);
   useEffect(() => { onSelectUnitsRef.current = onSelectUnits; }, [onSelectUnits]);
+
+  // On-screen camera buttons: GameScene hands us an imperative zoom/pan/reset
+  // API; holding a button repeats its action for smooth motion.
+  const camApiRef = useRef<CamApi | null>(null);
+  const handleCameraApi = useCallback((api: CamApi) => { camApiRef.current = api; }, []);
+  const camHoldRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const camHoldStop = () => { if (camHoldRef.current) { clearInterval(camHoldRef.current); camHoldRef.current = null; } };
+  const camHoldStart = (fn: () => void, repeat = true) => {
+    fn();
+    camHoldStop();
+    if (repeat) camHoldRef.current = setInterval(fn, 40);
+  };
 
   // Debug Keys
   useEffect(() => {
@@ -248,6 +494,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (e.key.toLowerCase() === 'r') {
         weatherRef.current = weatherRef.current === 'clear' ? 'rain' : 'clear';
         weatherTimerRef.current = Date.now() + 20000; // Lock state for 20s
+        nextWeatherRef.current = 'clear';
         console.log("Debug: Weather toggled to", weatherRef.current);
       }
     };
@@ -424,7 +671,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const scoreRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
-  const moneyRef = useRef({ [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY });
+  // Challenge handicap scales the HUMAN sides' opening funds only
+  const moneyRef = useRef({
+    [Team.WEST]: INITIAL_MONEY * (cpuTeams.includes(Team.WEST) ? 1 : (startMoneyMult ?? 1)),
+    [Team.EAST]: INITIAL_MONEY * (cpuTeams.includes(Team.EAST) ? 1 : (startMoneyMult ?? 1)),
+  });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
 
   // Team commands: economy upgrades (permanent income levels) and the rally
@@ -521,6 +772,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
+    // Gunboat must anchor on open water — reject dry-land clicks (no charge)
+    if (type === UnitType.GUNBOAT && options?.absolutePos) {
+      const p = options.absolutePos;
+      const onWater = terrainRef.current.some(t => t.type === 'river' &&
+        Math.abs(p.x - t.x) < (t.width ?? 40) / 2 + 16 &&
+        Math.abs(p.y - t.y) < (t.height ?? 22) / 2 + 16);
+      if (!onWater) {
+        pushEvent('command', `${teamName(team)} gunboat needs open water — deployment aborted`, team);
+        return false;
+      }
+    }
+
     if ((type === UnitType.AIRSTRIKE || type === UnitType.AIRBORNE || type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE || type === UnitType.GUNSHIP) && options?.absolutePos) {
       const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
       const isGunship = type === UnitType.GUNSHIP;
@@ -601,8 +864,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     if (spawnQueue.length > 0) {
       spawnQueue.forEach(req => {
-        spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
-        if (req.cost) {
+        const ok = spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
+        if (ok !== false && req.cost) {
           moneyRef.current[req.team] = Math.max(0, moneyRef.current[req.team] - req.cost);
         }
       });
@@ -749,9 +1012,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
-    // Capture point: uncontested ground presence flips it; holder earns +50% income
-    {
-      const cap = captureRef.current;
+    // Capture points: uncontested ground presence flips them; holders earn
+    // bonus income (center +50%, flank posts +12% each)
+    for (const cap of [captureRef.current, ...flankCapsRef.current]) {
       let westIn = false, eastIn = false;
       for (const u of unitsRef.current) {
         if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) continue;
@@ -763,9 +1026,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + 1);
       else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
-      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', 'West holds the capture point (+50% income)', Team.WEST); soundService.playSpawnSound(false); }
-      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', 'East holds the capture point (+50% income)', Team.EAST); soundService.playSpawnSound(true); }
-      if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * 0.5;
+      const bonus = cap.bonus ?? 0.5;
+      const isCenter = cap === captureRef.current;
+      const label = isCenter ? 'the capture point' : 'a flank post';
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true); }
+      if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
+    }
+    // Capture-income counterweight: like the upgrade rubber-band, the side
+    // holding fewer points recovers 40% of the bonus gap — captures stay
+    // worth fighting for without letting a triple-hold snowball the game
+    {
+      const capBonus = (t: Team) => [captureRef.current, ...flankCapsRef.current].reduce((s, c) => s + (c.owner === t ? (c.bonus ?? 0.5) : 0), 0);
+      const capGap = capBonus(Team.WEST) - capBonus(Team.EAST);
+      if (capGap !== 0) moneyRef.current[capGap > 0 ? Team.EAST : Team.WEST] += MONEY_PER_TICK * Math.abs(capGap) * 0.4;
     }
 
     // Optimization: Build Spatial Grid
@@ -1174,6 +1448,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           else if (fly.type === UnitType.AIRBORNE) {
             const config = UNIT_CONFIG[UnitType.AIRBORNE];
             for (let j = 0; j < 3; j++) unitsRef.current.push({ id: generateId(), team: fly.team, type: UnitType.AIRBORNE, position: { x: fly.targetPos.x + (j - 1) * 25, y: fly.targetPos.y }, state: UnitState.MOVING, health: config.health, maxHealth: config.health, attackCooldown: 0, targetId: null, width: config.width, height: config.height, spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY });
+            // Dropped troops bypass spawnUnit — keep built/spawned telemetry honest
+            statsRef.current[fly.team].built += 3;
+            const ats = typeStatsRef.current[fly.team];
+            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + 3;
           }
         }
       }
@@ -1184,18 +1462,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (Math.abs(fly.currentX) > CANVAS_WIDTH + 300) flyoversRef.current.splice(i, 1);
     }
 
-    // Weather Logic
+    // Weather Logic — the NEXT weather is pre-rolled so the HUD can forecast it
     if (Date.now() > weatherTimerRef.current) {
-      if (weatherRef.current === 'clear') {
+      const incoming = nextWeatherRef.current;
+      const wasClear = weatherRef.current === 'clear';
+      weatherRef.current = incoming;
+      const holdMs =
+        incoming === 'rain'  ? 15000 + Math.random() * 15000 :
+        incoming === 'snow'  ? 18000 + Math.random() * 18000 :
+        incoming === 'fog'   ? 12000 + Math.random() * 12000 :
+        incoming === 'storm' ? 10000 + Math.random() * 10000 :
+        wasClear ? 22000 + Math.random() * 20000 : 28000 + Math.random() * 28000;
+      weatherTimerRef.current = Date.now() + holdMs;
+      if (incoming !== 'clear') nextWeatherRef.current = 'clear';
+      else {
         const r = Math.random();
-        if (r < 0.28) { weatherRef.current = 'rain';  weatherTimerRef.current = Date.now() + 15000 + Math.random() * 15000; }
-        else if (r < 0.44) { weatherRef.current = 'snow';  weatherTimerRef.current = Date.now() + 18000 + Math.random() * 18000; }
-        else if (r < 0.56) { weatherRef.current = 'fog';   weatherTimerRef.current = Date.now() + 12000 + Math.random() * 12000; }
-        else if (r < 0.65) { weatherRef.current = 'storm'; weatherTimerRef.current = Date.now() + 10000 + Math.random() * 10000; }
-        else { weatherTimerRef.current = Date.now() + 22000 + Math.random() * 20000; }
-      } else {
-        weatherRef.current = 'clear';
-        weatherTimerRef.current = Date.now() + 28000 + Math.random() * 28000;
+        nextWeatherRef.current = r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
       }
     }
 
@@ -2135,10 +2417,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 isMissile
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
-              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER) soundService.playHeavyShot();
-              else if (unit.type === UnitType.ARTILLERY || unit.type === UnitType.MORTAR) soundService.playArtilleryFire();
+              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
+              else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
+              else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
               else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
               else if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) soundService.playRocketSound();
+              else if (unit.type === UnitType.DRONE) soundService.playDroneZip();
               else soundService.playRifleShot();
             }
           }
@@ -2158,15 +2442,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           scoreRef.current[unit.team] += breakthroughValue;
         }
 
-        // Dollar Sign Animation
+        // Breakthrough feedback: the points it scored + the 50% refund
         particlesRef.current.push({
           id: generateId(),
           position: { x: unit.position.x, y: unit.position.y },
-          velocity: { x: 0, y: 0.5 }, // Float up
-          life: 90,
-          color: '#22c55e', // Green for money
-          size: 8, // Scale for 3D text
-          text: '$'
+          velocity: { x: 0, y: 0.55 },
+          life: 100,
+          color: '#fbbf24',
+          size: 9,
+          text: gameModeRef.current === 'basehp' ? `-${breakthroughValue} HP` : `+${breakthroughValue}${breakthroughValue > 1 ? ' ★' : ''}`,
+        });
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: unit.position.x, y: unit.position.y + 14 },
+          velocity: { x: 0, y: 0.45 },
+          life: 80,
+          color: '#22c55e',
+          size: 6,
+          text: `+$${Math.floor(UNIT_CONFIG[unit.type].cost * 0.5)}`,
         });
 
         // Win Condition Check (points mode)
@@ -2360,6 +2653,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (reward > 0) {
         const killerTeam = u.team === Team.WEST ? Team.EAST : Team.WEST;
         moneyRef.current[killerTeam] += reward;
+        // Bounty popup at the kill site — only for meaningful rewards so
+        // massed squad deaths don't wallpaper the field with text
+        if (reward >= 15) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: u.position.x, y: u.position.y },
+            velocity: { x: 0, y: 0.5 },
+            life: 60,
+            color: '#4ade80',
+            size: 5,
+            text: `+$${reward}`,
+          });
+        }
       }
 
       if (u.type === UnitType.APC) {
@@ -2639,6 +2945,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           specialSpawned = true;
         }
 
+        // Naval picket: anchor a gunboat on a river segment to guard crossings
+        // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
+        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special) {
+          const rivers = terrainRef.current.filter(t => t.type === 'river');
+          const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
+          if (rivers.length > 0 && myBoats < 2) {
+            const seg = rivers[Math.floor(Math.random() * rivers.length)];
+            const ok = spawnUnit(ME, UnitType.GUNBOAT, { absolutePos: { x: seg.x, y: seg.y } });
+            if (ok !== false) {
+              moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.GUNBOAT] as any).cost;
+              specialSpawned = true;
+            }
+          }
+        }
+
         // Tank mines when armor is a threat — laid just ahead of the foe's front line
         if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special) {
           const mineX = ME === Team.EAST
@@ -2667,7 +2988,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (pool.length === 0) {
               const noAiTypes = new Set([UnitType.AIRSTRIKE, UnitType.NUKE, UnitType.GUNSHIP, UnitType.NAPALM,
                                          UnitType.MISSILE_STRIKE, UnitType.AIRBORNE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK,
-                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE]);
+                                         UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE, UnitType.GUNBOAT]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
                 return cost > 0 && cost <= money && !noAiTypes.has(t);
@@ -2678,13 +2999,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (pool.length > 0) {
               const chosen = pool[Math.floor(Math.random() * pool.length)];
               const cost = (UNIT_CONFIG[chosen] as any).cost;
+              // Flank pressure (normal/hard): lean spawns toward flank posts
+              // the CPU doesn't hold — easy keeps building blind
+              let lane: SpawnLane | undefined;
+              if (DIFF.commands > 0 && Math.random() < 0.45) {
+                const [topCap, botCap] = flankCapsRef.current;
+                const wantTop = topCap.owner !== ME;
+                const wantBot = botCap.owner !== ME;
+                if (wantTop && wantBot) lane = Math.random() < 0.5 ? 'top' : 'bot';
+                else if (wantTop) lane = 'top';
+                else if (wantBot) lane = 'bot';
+              }
               if (chosen === UnitType.SOLDIER) {
                 const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
                 const sqId = generateId();
+                const playTop = HORIZON_Y + 50, playH = CANVAS_HEIGHT - HORIZON_Y - 100;
+                const laneY =
+                  lane === 'top' ? playTop + Math.random() * (playH / 3) :
+                  lane === 'bot' ? playTop + (2 * playH) / 3 + Math.random() * (playH / 3) :
+                  playTop + Math.random() * playH;
                 for (let si = 0; si < 3; si++) {
                   unitsRef.current.push({
                     id: generateId(), team: ME, type: UnitType.SOLDIER,
-                    position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: HORIZON_Y + 50 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 100) },
+                    position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: Math.min(CANVAS_HEIGHT - 20, laneY + si * 12) },
                     state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
                     attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
                     spawnTime: Date.now(), isInCover: false, squadId: sqId
@@ -2693,7 +3030,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   typeStatsRef.current[ME].spawned[UnitType.SOLDIER] = (typeStatsRef.current[ME].spawned[UnitType.SOLDIER] || 0) + 1;
                 }
               } else {
-                spawnUnit(ME, chosen);
+                spawnUnit(ME, chosen, lane ? { lane } : undefined);
               }
               moneyRef.current[ME] = Math.max(0, moneyRef.current[ME] - cost);
             }
@@ -2706,9 +3043,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // 1. Force R3F re-render locally 60fps (for smooth movement)
     setFrame(f => f + 1);
 
+    // Timeline sample for the victory-screen graph
+    if (Date.now() - lastSampleRef.current > 5000) {
+      lastSampleRef.current = Date.now();
+      const hp = gameModeRef.current === 'basehp';
+      scoreHistoryRef.current.push({
+        t: Date.now() - matchStartRef.current,
+        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
+        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+      });
+      if (scoreHistoryRef.current.length > 400) scoreHistoryRef.current.shift();
+    }
+
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, events: eventsRef.current, captureOwner: captureRef.current.owner, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
@@ -2735,6 +3084,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           onSelectUnitsRef.current?.(human, ids);
           return ids;
         },
+        // Test hook: end the match immediately (drives the real gameOver path)
+        winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
         // Test hook: simulate clicking a unit (goes through real selection logic)
         clickUnit: (id: string) => {
           const u = unitsRef.current.find(x => x.id === id);
@@ -2799,12 +3150,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         crates={cratesRef.current}
         smokes={smokesRef.current}
         selectedIds={selectedIds}
+        fx={fx}
+        onCameraApi={handleCameraApi}
         onCanvasClick={onCanvasClick}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}
         mapType={mapType}
         shake={shakeRef}
         capture={captureRef.current}
+        flanks={flankCapsRef.current}
         onUnitClick={handleUnitClick}
         focusIds={[focusRef.current[Team.WEST], focusRef.current[Team.EAST]]
           .filter(f => f.targetId && Date.now() < f.until)
@@ -2818,6 +3172,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           pointerEvents: 'none', zIndex: 100
         }} />
       )}
+
+      {/* Camera controls: tap or hold to scroll and zoom, ⌂ resets the view */}
+      <div className="absolute bottom-2 right-2 z-40 flex gap-1 select-none">
+        {([
+          { icon: '◀', title: 'Scroll left (hold)', act: () => camApiRef.current?.pan(-14), repeat: true },
+          { icon: '▶', title: 'Scroll right (hold)', act: () => camApiRef.current?.pan(14), repeat: true },
+          { icon: '+', title: 'Zoom in (hold)', act: () => camApiRef.current?.zoom(0.96), repeat: true },
+          { icon: '−', title: 'Zoom out (hold)', act: () => camApiRef.current?.zoom(1.045), repeat: true },
+          { icon: '⌂', title: 'Reset view', act: () => camApiRef.current?.reset(), repeat: false },
+        ] as const).map(b => (
+          <button
+            key={b.icon}
+            title={b.title}
+            onPointerDown={(e) => { e.stopPropagation(); camHoldStart(b.act, b.repeat); }}
+            onPointerUp={camHoldStop}
+            onPointerLeave={camHoldStop}
+            onPointerCancel={camHoldStop}
+            onContextMenu={(e) => e.preventDefault()}
+            className="w-7 h-7 rounded border border-stone-600 bg-stone-900/80 text-stone-300 text-sm leading-none hover:text-white hover:border-stone-400 active:bg-stone-700 transition-colors touch-none"
+          >
+            {b.icon}
+          </button>
+        ))}
+      </div>
+
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} cb={cb} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
@@ -2849,16 +3229,45 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               <div className="text-stone-500 uppercase text-xs pt-0.5">Units Lost</div>
               <div className="text-center font-mono">{statsRef.current[Team.WEST].lost}</div>
               <div className="text-center font-mono">{statsRef.current[Team.EAST].lost}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5">Economy Lvl</div>
+              <div className="text-center font-mono">{incomeLevelRef.current[Team.WEST]}</div>
+              <div className="text-center font-mono">{incomeLevelRef.current[Team.EAST]}</div>
+              <div className="text-stone-500 uppercase text-xs pt-0.5" title="Unit type with the most kills">MVP Unit</div>
+              {[Team.WEST, Team.EAST].map(t => {
+                const kills = typeStatsRef.current[t].kills;
+                const mvp = Object.entries(kills).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <div key={t} className="text-center font-mono text-xs pt-0.5">
+                    {mvp ? `${mvp[0].replace('_', ' ')} · ${mvp[1]}` : '—'}
+                  </div>
+                );
+              })}
               <div className="text-stone-500 uppercase text-xs pt-0.5">Duration</div>
               <div className="text-center font-mono col-span-2">{Math.floor((Date.now() - matchStartRef.current) / 60000)}m {Math.floor(((Date.now() - matchStartRef.current) % 60000) / 1000)}s</div>
             </div>
 
-            <button
-              onClick={() => window.location.reload()}
-              className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95 flex items-center gap-2"
-            >
-              Play Again
-            </button>
+            {/* How the battle unfolded */}
+            {scoreHistoryRef.current.length >= 2 && (
+              <div className="flex flex-col items-center gap-1">
+                <TimelineGraph history={scoreHistoryRef.current} />
+                <div className="text-[9px] uppercase tracking-wider text-stone-500">{gameMode === 'basehp' ? 'Base HP' : 'Score'} over time</div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { try { localStorage.setItem('ewv-rematch', '1'); } catch { /* ignore */ } window.location.reload(); }}
+                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+              >
+                ⚔ Rematch
+              </button>
+              <button
+                onClick={() => window.location.reload()}
+                className="px-8 py-3 bg-stone-700 hover:bg-stone-600 text-stone-200 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+              >
+                Menu
+              </button>
+            </div>
           </div>
         </div>
       )}

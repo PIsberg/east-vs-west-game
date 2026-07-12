@@ -32,6 +32,7 @@ export enum UnitType {
   SATELLITE = 'SATELLITE',
   CRUISE = 'CRUISE',
   TRANSPORT = 'TRANSPORT',
+  GUNBOAT = 'GUNBOAT',
   SMOKE = 'SMOKE',
 }
 
@@ -160,8 +161,11 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+  // Pre-rolled forecast: what rolls in next and when (epoch ms)
+  weatherNext?: { type: 'clear' | 'rain' | 'snow' | 'fog' | 'storm', at: number };
   events?: GameEvent[];
   captureOwner?: Team | null;
+  flankOwners?: (Team | null)[]; // [top post, bottom post]
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
   rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
   baseHP?: {
@@ -188,6 +192,7 @@ export interface CapturePoint {
   radius: number;
   owner: Team | null;
   progress: number; // -max..+max, positive = West capturing
+  bonus?: number;   // income multiplier granted to the holder (default 0.5)
 }
 
 export interface Flyover {

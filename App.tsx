@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
-import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen } from 'lucide-react';
+import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
@@ -127,7 +127,47 @@ const TeslaIcon = ({ size = 20 }: { size?: number }) => (
 // Hidden harness params: ?spectate (CPU vs CPU), &map=URBAN, &speed=4, &mode=basehp
 const URL_PARAMS = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
 const SPECTATE = URL_PARAMS.has('spectate');
+// One-shot flag set by the victory screen's Rematch button: skip the splash
+// and drop straight into a fresh battle with the same settings.
+const REMATCH = (() => {
+  try {
+    if (localStorage.getItem('ewv-rematch')) { localStorage.removeItem('ewv-rematch'); return true; }
+  } catch { /* ignore */ }
+  return false;
+})();
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
+
+// Preset challenge missions: fixed settings + optional handicap, completion
+// badges persist in ewv-challenges
+interface Challenge {
+  id: string; name: string; desc: string;
+  map: MapType; mode: GameMode; cpu: 'easy' | 'normal' | 'hard';
+  moneyMult?: number;    // handicap on the human side's starting funds
+  maxDurSec?: number;    // must win within this time
+  infantryOnly?: boolean; // human may only buy foot units
+}
+const CHALLENGES: Challenge[] = [
+  { id: 'first-blood', name: 'First Blood', desc: 'Win a battle against an Easy CPU', map: MapType.COUNTRYSIDE, mode: 'points', cpu: 'easy' },
+  { id: 'underdog', name: 'Underdog', desc: 'Beat a Normal CPU starting with half the money', map: MapType.URBAN, mode: 'points', cpu: 'normal', moneyMult: 0.5 },
+  { id: 'blitzkrieg', name: 'Blitzkrieg', desc: 'Beat a Normal CPU in under 5 minutes', map: MapType.COUNTRYSIDE, mode: 'points', cpu: 'normal', maxDurSec: 300 },
+  { id: 'boots-only', name: 'Boots Only', desc: 'Beat a Normal CPU buying only infantry', map: MapType.DESERT, mode: 'points', cpu: 'normal', infantryOnly: true },
+  { id: 'iron-wall', name: 'Iron Wall', desc: 'Raze a Hard CPU\'s base before it razes yours', map: MapType.DESERT, mode: 'basehp', cpu: 'hard' },
+  { id: 'admiral', name: 'Admiral', desc: 'Win among the islands — gunboats rule the channels', map: MapType.ARCHIPELAGO, mode: 'points', cpu: 'normal' },
+];
+// Foot units allowed under the Boots Only restriction
+const INFANTRY_ALLOWED = new Set([
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.MINE_PERSONAL,
+]);
+
+// Number-row hotkeys spawn for the player's side (badge shown in the tooltip)
+const SPAWN_HOTKEYS: Record<string, UnitType> = {
+  '1': UnitType.SOLDIER, '2': UnitType.SNIPER, '3': UnitType.FLAMETHROWER, '4': UnitType.MEDIC,
+  '5': UnitType.MORTAR, '6': UnitType.JEEP, '7': UnitType.TANK, '8': UnitType.APC,
+  '9': UnitType.HELICOPTER, '0': UnitType.ANTI_AIR,
+};
+const HOTKEY_OF: Partial<Record<UnitType, string>> =
+  Object.fromEntries(Object.entries(SPAWN_HOTKEYS).map(([k, t]) => [t, k]));
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
 // Last-used menu choices survive reloads (URL params still win)
@@ -151,7 +191,7 @@ const App: React.FC = () => {
   });
   const [weather, setWeather] = useState<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const [targetingInfo, setTargetingInfo] = useState<{ team: Team, type: UnitType } | null>(null);
-  const [showSplash, setShowSplash] = useState(!SPECTATE);
+  const [showSplash, setShowSplash] = useState(!SPECTATE && !REMATCH);
   const [splashFading, setSplashFading] = useState(false);
   const [paused, setPaused] = useState(false);
   const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
@@ -164,6 +204,26 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(
     URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
   );
+  // Active challenge (null = free play) + persisted completion badges
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const challengeStartRef = useRef(0);
+  const [challengesDone, setChallengesDone] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('ewv-challenges') || '[]'); } catch { return []; }
+  });
+  const activeChallenge = CHALLENGES.find(c => c.id === challenge) ?? null;
+  // Recent battle results, written by GameCanvas at game over
+  const [history] = useState<{ when: number, map: string, mode: string, winner: string, w: number, e: number, dur: number, spectate?: boolean }[]>(() => {
+    try { return JSON.parse(localStorage.getItem('ewv-history') || '[]'); } catch { return []; }
+  });
+  const [fx, setFx] = useState<'high' | 'low'>(() => {
+    try { return localStorage.getItem('ewv-fx') === 'low' ? 'low' : 'high'; } catch { return 'high'; }
+  });
+  const setFxPersist = (v: 'high' | 'low') => { setFx(v); try { localStorage.setItem('ewv-fx', v); } catch { /* ignore */ } };
+  // Colorblind-assist: East reads as amber across rings/minimap/pips/flags
+  const [cb, setCb] = useState<boolean>(() => {
+    try { return localStorage.getItem('ewv-cb') === '1'; } catch { return false; }
+  });
+  const toggleCb = () => setCb(v => { const n = !v; try { localStorage.setItem('ewv-cb', n ? '1' : '0'); } catch { /* ignore */ } return n; });
   const [mapType, setMapType] = useState<MapType>(
     Object.values(MapType).includes(PARAM_MAP as MapType) ? PARAM_MAP as MapType :
     Object.values(MapType).includes(SAVED_PREFS.mapType as MapType) ? SAVED_PREFS.mapType as MapType : MapType.COUNTRYSIDE
@@ -264,7 +324,33 @@ const App: React.FC = () => {
     soundService.setMusicOn(on);
   };
 
+  // Launch a challenge: apply its settings, remount the engine fresh (the
+  // money handicap only applies at mount), and start the battle
+  const startChallenge = (c: typeof CHALLENGES[number]) => {
+    setMapType(c.map);
+    setGameMode(c.mode);
+    setCpuLevel(c.cpu);
+    setPlayerSide(Team.WEST);
+    setChallenge(c.id);
+    challengeStartRef.current = Date.now();
+    setGameKey(prev => prev + 1);
+    handleStartClick();
+  };
+  // GameCanvas reports a human challenge win back up; timed challenges only
+  // count when the win landed inside the limit
+  const onChallengeWon = useCallback((id: string, durSec: number) => {
+    const c = CHALLENGES.find(ch => ch.id === id);
+    if (c?.maxDurSec && durSec > c.maxDurSec) return;
+    setChallengesDone(prev => {
+      if (prev.includes(id)) return prev;
+      const next = [...prev, id];
+      try { localStorage.setItem('ewv-challenges', JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   const resetGame = () => {
+    setChallenge(null); // leaving a challenge returns to free play
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
     setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setWeather('clear'); setPaused(false);
@@ -272,12 +358,49 @@ const App: React.FC = () => {
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
+    if (activeChallenge?.infantryOnly && team === playerSide && !INFANTRY_ALLOWED.has(type)) return; // Boots Only
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
-      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE, UnitType.SMOKE].includes(type)) setTargetingInfo({ team, type });
+      if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNBOAT, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE, UnitType.SMOKE].includes(type)) setTargetingInfo({ team, type });
       else processSpawn(team, type);
     }
   };
+
+  // Auto-detect weak GPUs once: with no saved preference, if the opening
+  // seconds of the first battle run under ~24fps, drop to low quality.
+  useEffect(() => {
+    if (showSplash) return;
+    try { if (localStorage.getItem('ewv-fx')) return; } catch { return; }
+    let raf = 0;
+    let frames = 0;
+    let start = 0;
+    const loop = () => {
+      frames++;
+      if (performance.now() - start < 4000) raf = requestAnimationFrame(loop);
+      else if (frames / 4 < 24) setFxPersist('low');
+    };
+    const t = setTimeout(() => { start = performance.now(); raf = requestAnimationFrame(loop); }, 3000);
+    return () => { clearTimeout(t); cancelAnimationFrame(raf); };
+  }, [showSplash]);
+
+  // Keyboard spawning: number row buys for the player's side. Ref keeps the
+  // listener stable while handleSpawnRequest is recreated every render.
+  const spawnReqRef = useRef(handleSpawnRequest);
+  spawnReqRef.current = handleSpawnRequest;
+  useEffect(() => {
+    if (showSplash) return; // armed once the battle starts
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (e.key === 'p' || e.key === 'P') { setPaused(prev => !prev); return; }
+      const type = SPAWN_HOTKEYS[e.key];
+      if (!type) return;
+      spawnReqRef.current(playerSide, type);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSplash, playerSide]);
 
   const processSpawn = (team: Team, type: UnitType, absolutePos?: { x: number, y: number }) => {
     const cost = UNIT_CONFIG[type].cost;
@@ -397,6 +520,7 @@ const App: React.FC = () => {
       [UnitType.TRANSPORT]: [<User size={8} key="u" />, <FastForward size={8} key="f" />],
       [UnitType.APC]: [<User size={8} key="u" />],
       [UnitType.BUNKER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.GUNBOAT]: [<User size={8} key="u" />, <Truck size={8} key="t" />],
       [UnitType.GUNSHIP]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.SMOKE]: [<SniperIcon size={8} key="s" />, <ArtilleryIcon size={8} key="a" />],
     };
@@ -411,7 +535,7 @@ const App: React.FC = () => {
               title={label}
               className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
               onClick={() => handleSpawnRequest(team, type)}
-              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type))}
             >
               <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
               <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
@@ -420,10 +544,25 @@ const App: React.FC = () => {
               {/* Tooltip Popup */}
               <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
                 <div className="text-[9px] font-bold text-white uppercase whitespace-nowrap">{label} — ${UNIT_CONFIG[type].cost}</div>
+                {(() => {
+                  const c = UNIT_CONFIG[type] as any;
+                  if (!c.health || !c.damage) return null; // strikes/mines have no combat statline
+                  return (
+                    <div className="flex gap-2 text-[8px] font-mono text-stone-300 whitespace-nowrap">
+                      <span title="Hit points">♥ {c.health}</span>
+                      <span title="Damage per shot">⚔ {c.damage}</span>
+                      <span title="Range">➶ {c.range}</span>
+                      <span title="Speed">» {c.speed >= 1.1 ? 'fast' : c.speed >= 0.5 ? 'med' : 'slow'}</span>
+                    </div>
+                  );
+                })()}
                 <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
                 <div className="flex gap-2 text-stone-300">
                   {UNIT_COUNTERS[type as UnitType]}
                 </div>
+                {team === playerSide && HOTKEY_OF[type] && (
+                  <div className="text-[8px] text-stone-500 whitespace-nowrap">Hotkey: <span className="text-stone-300 font-mono">{HOTKEY_OF[type]}</span></div>
+                )}
               </div>
             </button>
           ))}
@@ -497,7 +636,8 @@ const App: React.FC = () => {
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
           { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
           { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },
-          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> }
+          { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
+          { type: UnitType.GUNBOAT, label: "GUNBOAT", icon: <Ship size={16} /> }
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
@@ -649,6 +789,26 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+            {/* Challenge missions */}
+            <div data-testid="challenges" className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 ${compact ? 'p-1.5' : 'p-2.5'}`}>
+              <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-1.5'}`}>Challenges</p>
+              <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
+                {CHALLENGES.map(c => {
+                  const done = challengesDone.includes(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => startChallenge(c)}
+                      title={c.desc}
+                      className={`rounded border text-center transition-all ${compact ? 'px-1.5 py-1' : 'px-3 py-1.5'} ${done ? 'border-green-500/70 bg-green-950/50' : 'border-stone-600 hover:border-amber-400 bg-black/40'}`}
+                    >
+                      <div className={`font-bold uppercase ${compact ? 'text-[9px]' : 'text-[11px]'} ${done ? 'text-green-400' : 'text-stone-200'}`}>{done ? '✓ ' : ''}{c.name}</div>
+                      {!compact && <div className="text-[8px] text-stone-500">{c.desc}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
             <button
               className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
@@ -659,6 +819,23 @@ const App: React.FC = () => {
             <span className={`text-stone-500 tracking-wide text-center ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
             </span>
+            {/* Recent battles */}
+            {!compact && history.length > 0 && (
+              <div data-testid="recent-battles" className="bg-black/70 backdrop-blur-sm rounded-lg border border-stone-700 px-3 py-1.5 flex flex-col gap-0.5 max-w-md">
+                <span className="text-[9px] uppercase tracking-widest text-stone-500 text-center">Recent battles</span>
+                {history.slice(0, 4).map((h, i) => {
+                  const mins = Math.max(1, Math.round((Date.now() - h.when) / 60000));
+                  const ago = mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.round(mins / 60)}h ago` : `${Math.round(mins / 1440)}d ago`;
+                  return (
+                    <span key={i} className="text-[10px] text-stone-400 font-mono whitespace-nowrap">
+                      <span className={h.winner === 'WEST' ? 'text-blue-400' : 'text-red-400'}>{h.winner}</span>
+                      {` won ${h.w}-${h.e} · ${h.map.toLowerCase()} · ${Math.floor(h.dur / 60)}m${h.dur % 60}s · ${ago}`}
+                      {h.spectate ? ' · cpu-vs-cpu' : ''}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -672,17 +849,48 @@ const App: React.FC = () => {
             <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
             <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
             <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
+            {!compact && !muted && (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                defaultValue={Math.round(soundService.getVolume() * 100)}
+                onChange={e => soundService.setVolume(Number(e.target.value) / 100)}
+                title="Master volume"
+                className="w-14 h-1 accent-amber-500 cursor-pointer"
+              />
+            )}
             <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
             <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
+            <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
+            <button onClick={toggleCb} title={cb ? 'Standard team colors' : 'Colorblind assist: East shows as amber in rings, minimap and indicators'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cb ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Eye size={10} />CB</button>
+            {activeChallenge && !showSplash && (
+              <div data-testid="challenge-chip" className="flex items-center gap-1 text-amber-300" title={activeChallenge.desc}>
+                <Target size={12} />
+                <span className="text-[10px] font-bold uppercase">
+                  {activeChallenge.name}
+                  {activeChallenge.maxDurSec ? ` ${Math.max(0, activeChallenge.maxDurSec - Math.floor((Date.now() - challengeStartRef.current) / 1000))}s` : ''}
+                </span>
+              </div>
+            )}
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
             {gameState.weather === 'storm' && <div className="flex items-center gap-1 text-yellow-300 animate-pulse"><Zap size={14} /><span className="text-[10px] font-bold">STORM</span></div>}
-            {gameState.weather === 'clear' && !compact && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
-            {gameState.captureOwner && (
-              <div className={`flex items-center gap-1 ${gameState.captureOwner === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
-                <MapPin size={12} /><span className="text-[10px] font-bold">POINT: {gameState.captureOwner}</span>
+            {gameState.weather === 'clear' && gameState.weatherNext && gameState.weatherNext.type !== 'clear' && (
+              <div className="flex items-center gap-1 text-stone-400" title={`${gameState.weatherNext.type} rolling in — plan around the combat penalties`}>
+                <Wind size={14} />
+                <span className="text-[10px] font-bold uppercase">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - Date.now()) / 1000))}s</span>
+              </div>
+            )}
+            {gameState.weather === 'clear' && !compact && (!gameState.weatherNext || gameState.weatherNext.type === 'clear') && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
+            {(gameState.captureOwner || gameState.flankOwners?.some(o => o)) && (
+              <div className="flex items-center gap-1" title="Capture points: top flank · center · bottom flank">
+                <MapPin size={12} className={gameState.captureOwner === Team.WEST ? 'text-blue-400' : gameState.captureOwner === Team.EAST ? 'text-red-400' : 'text-stone-400'} />
+                {[gameState.flankOwners?.[0] ?? null, gameState.captureOwner ?? null, gameState.flankOwners?.[1] ?? null].map((o, i) => (
+                  <span key={i} className={`inline-block rounded-full ${i === 1 ? 'w-2.5 h-2.5' : 'w-1.5 h-1.5'} ${o === Team.WEST ? 'bg-blue-500' : o === Team.EAST ? (cb ? 'bg-amber-400' : 'bg-red-500') : 'bg-stone-600'}`} />
+                ))}
               </div>
             )}
           </div>
@@ -698,7 +906,7 @@ const App: React.FC = () => {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} viewW={viewSize.w} viewH={viewSize.h} />
+          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
           {/* One-time tutorial toast for troop control */}
           {troopHint && !selection && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
@@ -760,7 +968,9 @@ const App: React.FC = () => {
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
-            <li><strong className="text-white">Capture Point:</strong> Hold the center flag uncontested to earn <span className="text-amber-400">+50% income</span>.</li>
+            <li><strong className="text-white">Capture Points:</strong> Hold the center flag uncontested for <span className="text-amber-400">+50% income</span>; the two smaller flank posts add <span className="text-amber-400">+12% each</span>.</li>
+            <li><strong className="text-white">Gunboat:</strong> Station it on a <span className="text-amber-400">river or channel</span> (click open water when placing) — a tough, long-range gun platform that guards crossings.</li>
+            <li><strong className="text-white">Shortcuts & Access:</strong> Number keys <span className="text-amber-400">1–0</span> buy your core units, <span className="text-amber-400">P</span> pauses. The <span className="text-amber-400">CB</span> toggle recolors East to amber for colorblind players.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
             <li><strong className="text-white">Troop Control:</strong> <span className="text-amber-400">Click your own unit</span> to select it (squads select together), <span className="text-amber-400">double-click for all of that type</span>, then give Attack/Hold/Fall Back orders that override the team stance (colored dot shows the order; Esc deselects).</li>
             <li><strong className="text-white">Entrench:</strong> Foot soldiers holding still under <span className="text-amber-400">Hold</span> orders dig in after ~6s: <span className="text-amber-400">-45% direct fire damage</span> until they move. Explosives ignore foxholes.</li>

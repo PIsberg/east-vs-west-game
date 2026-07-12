@@ -12,10 +12,14 @@ class SoundService {
   private musicBar = 0;
   private nextBarTime = 0;
 
+  private volume = 0.85;
+
   constructor() {
     try {
       this.muted = localStorage.getItem('ewv-muted') === '1';
       this.musicOn = localStorage.getItem('ewv-music') !== '0';
+      const v = parseFloat(localStorage.getItem('ewv-volume') ?? '');
+      if (!Number.isNaN(v)) this.volume = Math.max(0, Math.min(1, v));
     } catch { /* private browsing — keep defaults */ }
     try {
       const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -27,7 +31,7 @@ class SoundService {
       compressor.attack.value = 0.002;
       compressor.release.value = 0.12;
       const master = this.ctx.createGain();
-      master.gain.value = this.muted ? 0 : 0.85;
+      master.gain.value = this.muted ? 0 : this.volume;
       master.connect(compressor);
       compressor.connect(this.ctx.destination);
       this.dest = master;
@@ -46,8 +50,14 @@ class SoundService {
   public isMuted() { return this.muted; }
   public setMuted(m: boolean) {
     this.muted = m;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.85, this.ctx.currentTime, 0.02);
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.02);
     try { localStorage.setItem('ewv-muted', m ? '1' : '0'); } catch { /* ignore */ }
+  }
+  public getVolume() { return this.volume; }
+  public setVolume(v: number) {
+    this.volume = Math.max(0, Math.min(1, v));
+    if (!this.muted && this.master && this.ctx) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
+    try { localStorage.setItem('ewv-volume', String(this.volume)); } catch { /* ignore */ }
   }
   public isMusicOn() { return this.musicOn; }
   public setMusicOn(on: boolean) {
@@ -150,6 +160,63 @@ class SoundService {
   }
 
   // ── Rocket / AA missile ──────────────────────────────────────────────────
+  // ── Helicopter rotor ambience — one shared loop while any heli is fielded ─
+  private rotorSrc: AudioBufferSourceNode | null = null;
+  private rotorGain: GainNode | null = null;
+
+  public setRotorLoop(on: boolean) {
+    if (!this.ctx || !this.dest) return;
+    if (on && !this.rotorSrc) {
+      this.ensureContext();
+      // Looped noise pulsed at ~13Hz through a lowpass reads as distant rotor chop
+      const dur = 2;
+      const n = Math.floor(this.ctx.sampleRate * dur);
+      const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) {
+        const t = i / this.ctx.sampleRate;
+        const chop = 0.55 + 0.45 * Math.sin(2 * Math.PI * 13 * t);
+        d[i] = (Math.random() * 2 - 1) * chop;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 320;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, this.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.045, this.ctx.currentTime + 0.8);
+      src.connect(f); f.connect(g); g.connect(this.dest);
+      src.start();
+      this.rotorSrc = src;
+      this.rotorGain = g;
+    } else if (!on && this.rotorSrc) {
+      const src = this.rotorSrc, g = this.rotorGain!;
+      this.rotorSrc = null;
+      this.rotorGain = null;
+      g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+      setTimeout(() => { try { src.stop(); } catch { /* already stopped */ } }, 600);
+    }
+  }
+
+  // Mortar launch — hollow tube "thoonk", much lighter than the artillery boom
+  public playMortarThunk() {
+    if (!this.ctx || !this.canPlay('mortar', 200)) return;
+    this.ensureContext();
+    const buf = this.noise(0.12, (i, n) => Math.pow(1 - i / n, 2.2));
+    if (buf) this.playNoise(buf, 'bandpass', 420, 150, 0.3, 0.12);
+    this.playOsc('sine', 180, 55, 0.3, 0.16);
+  }
+
+  // Drone burst — light high-pitched energy zip
+  public playDroneZip() {
+    if (!this.ctx || !this.canPlay('drone', 90)) return;
+    this.ensureContext();
+    this.playOsc('square', 1900, 700, 0.05, 0.08);
+    this.playOsc('sine', 2400, 1100, 0.04, 0.06);
+  }
+
   public playRocketSound() {
     if (!this.ctx || !this.canPlay('rocket', 130)) return;
     this.ensureContext();
@@ -182,6 +249,38 @@ class SoundService {
     [523.25, 659.25, 783.99].forEach((freq, i) => {
       this.playOsc('sine', freq, freq * 1.02, 0.07, 0.22, i * 0.065);
     });
+  }
+
+  // ── Victory fanfare — triumphant ascending bugle resolution ──────────────
+  public playVictorySound() {
+    if (!this.ctx || !this.canPlay('victory', 5000)) return;
+    this.ensureContext();
+    this.stopMusic();
+    const t = this.ctx.currentTime + 0.05;
+    const C5 = 523.25, E5 = 659.25, G5 = 784, C6 = 1046.5;
+    this.snare(t, 0.2); this.snare(t + 0.12, 0.22); this.kick(t + 0.24);
+    this.trumpet(C5, t + 0.26, 0.16, 0.36);
+    this.trumpet(E5, t + 0.44, 0.16, 0.36);
+    this.trumpet(G5, t + 0.62, 0.2, 0.4);
+    this.kick(t + 0.9); this.snare(t + 0.9, 0.3);
+    this.trumpet(C6, t + 0.92, 0.9, 0.46);
+    this.trumpet(G5, t + 0.92, 0.9, 0.3);
+    this.snare(t + 1.8, 0.22); this.kick(t + 1.9, 0.7);
+  }
+
+  // ── Defeat sting — slow descending minor lament ──────────────────────────
+  public playDefeatSound() {
+    if (!this.ctx || !this.canPlay('defeat', 5000)) return;
+    this.ensureContext();
+    this.stopMusic();
+    const t = this.ctx.currentTime + 0.05;
+    const C5 = 523.25, Ab4 = 415.3, F4 = 349.23, C4 = 261.63;
+    this.kick(t, 0.6);
+    this.trumpet(C5, t + 0.1, 0.5, 0.3);
+    this.trumpet(Ab4, t + 0.65, 0.5, 0.3);
+    this.trumpet(F4, t + 1.2, 0.55, 0.3);
+    this.kick(t + 1.85, 0.7);
+    this.trumpet(C4, t + 1.9, 1.4, 0.34);
   }
 
   // ── Rally Horn — quick ascending bugle call ──────────────────────────────

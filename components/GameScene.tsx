@@ -1,7 +1,8 @@
 
-import React, { useEffect, useMemo, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text } from '@react-three/drei';
+import React, { Suspense, useEffect, useMemo, useRef } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text, useGLTF, useAnimations } from '@react-three/drei';
+import { SkeletonUtils } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
@@ -19,12 +20,17 @@ interface GameSceneProps {
     crates?: SupplyCrate[];
     smokes?: SmokeZone[];
     selectedIds?: string[];
+    // Imperative camera controls for the on-screen zoom/scroll buttons
+    onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void; state: () => { dist: number, tx: number, tz: number } | null; panTo: (x: number) => void }) => void;
     onCanvasClick: (x: number, y: number) => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
+    fx?: 'high' | 'low'; // low: no shadows/bloom/clouds, dpr 1 — for weak GPUs
+    cb?: boolean; // colorblind-assist: East identity color becomes amber
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     capture?: CapturePoint;
+    flanks?: CapturePoint[];
     onUnitClick?: (unit: Unit) => void;
     focusIds?: string[];
 }
@@ -40,10 +46,11 @@ const getDayFactor = () => {
 };
 
 // Mid-map capture point: flag + capture-progress ring
-const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
-    const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? '#b91c1c' : '#a8a29e';
-    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? '#ef4444' : '#a8a29e';
+const CapturePoint3D = ({ cap, small }: { cap: CapturePoint, small?: boolean }) => {
+    const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? eastColor('#b91c1c') : '#a8a29e';
+    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? eastColor('#ef4444') : '#a8a29e';
     const pct = Math.min(1, Math.abs(cap.progress) / 300);
+    const poleH = small ? 34 : 50;
     return (
         <group position={[cap.x, 0, cap.y]}>
             {/* Zone marker */}
@@ -59,16 +66,16 @@ const CapturePoint3D = ({ cap }: { cap: CapturePoint }) => {
                 </mesh>
             )}
             {/* Flag pole */}
-            <mesh position={[0, 25, 0]} castShadow>
-                <cylinderGeometry args={[0.8, 0.8, 50]} />
+            <mesh position={[0, poleH / 2, 0]} castShadow>
+                <cylinderGeometry args={[0.8, 0.8, poleH]} />
                 <meshStandardMaterial color="#78716c" />
             </mesh>
             {/* Banner */}
-            <mesh position={[6, 44, 0]} castShadow>
-                <boxGeometry args={[12, 8, 0.5]} />
+            <mesh position={[small ? 4.2 : 6, poleH - 6, 0]} castShadow>
+                <boxGeometry args={[small ? 8.4 : 12, small ? 5.6 : 8, 0.5]} />
                 <meshStandardMaterial color={ownerColor} />
             </mesh>
-            {cap.owner && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
+            {cap.owner && !small && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
         </group>
     );
 };
@@ -175,6 +182,27 @@ const MAT_SKY_GROUND = new THREE.MeshStandardMaterial({ color: '#7dd3fc' }); // 
 const MAT_TREE_TRUNK = new THREE.MeshStandardMaterial({ color: '#451a03' });
 const MAT_TREE_LEAVES = new THREE.MeshStandardMaterial({ color: '#14532d' });
 const MAT_HILL = new THREE.MeshStandardMaterial({ color: '#4d7c0f' });
+
+// Shared prop geometries — every tree/rock reuses these, scaled at the mesh,
+// instead of allocating its own vertex buffers (trees alone were ~4 each)
+const GEO_TRUNK = new THREE.CylinderGeometry(5, 8, 30, 10);
+const GEO_PINE_1 = new THREE.ConeGeometry(22, 28, 10);
+const GEO_PINE_2 = new THREE.ConeGeometry(16, 24, 10);
+const GEO_PINE_3 = new THREE.ConeGeometry(10, 20, 10);
+const GEO_CLUMP = new THREE.DodecahedronGeometry(1, 0); // oak canopies + boulders
+const GEO_POPLAR = new THREE.CylinderGeometry(8, 12, 60, 10);
+// Cached standard materials keyed by color/emissive — safe to share since
+// props never animate their materials (burning flicker swaps cache entries)
+const MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const stdMat = (color: string, emissive = '#000000') => {
+    const key = `${color}|${emissive}`;
+    let m = MAT_CACHE.get(key);
+    if (!m) {
+        m = new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 1.4 });
+        MAT_CACHE.set(key, m);
+    }
+    return m;
+};
 
 // -- River Shader & Component --
 
@@ -461,6 +489,156 @@ const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparen
 const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
 const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
+// ── GLB unit models (Quaternius, CC0 — see README credits) ──────────────────
+// Loaded once via useGLTF; every unit gets a SkeletonUtils clone (required for
+// skinned meshes) with team-marked materials tinted toward its side's color.
+// Relative paths resolve against the page URL, which works both on the Vite
+// dev server and under the GitHub Pages base path.
+const MODEL_URL = {
+    soldier: 'models/soldier.glb',
+    tank: 'models/tank.glb',
+    jeep: 'models/jeep.glb',
+    truck: 'models/truck.glb',
+    apc: 'models/apc.glb',
+    antiair: 'models/antiair.glb',
+    helicopter: 'models/helicopter.glb',
+    fighter: 'models/fighter.glb',
+    drone: 'models/drone.glb',
+    gunboat: 'models/gunboat.glb',
+};
+Object.values(MODEL_URL).forEach(u => useGLTF.preload(u));
+
+const TEAM_TINT_WEST = '#60a5fa';
+const TEAM_TINT_EAST = '#f87171';
+// Colorblind-assist: East's identity color becomes amber. Set synchronously in
+// the GameScene body before children render; the Canvas remounts on toggle so
+// every tinted clone and flag re-evaluates.
+let CB_MODE = false;
+const eastColor = (normal: string, cbAlt = '#f59e0b') => CB_MODE ? cbAlt : normal;
+const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : eastColor(TEAM_TINT_EAST, '#fbbf24');
+
+// Clone a GLB per unit (SkeletonUtils handles skinned meshes) and recolor
+// named materials: each rule lerps matching materials toward a color.
+type TintRule = { materials: string[], color: string, strength: number };
+function useTintedClone(url: string, rules: TintRule[]) {
+    const { scene } = useGLTF(url);
+    const key = rules.map(r => r.materials.join('.') + r.color + r.strength).join('|');
+    return useMemo(() => {
+        const root = SkeletonUtils.clone(scene);
+        root.traverse((o: any) => {
+            if (o.isMesh || o.isSkinnedMesh) {
+                o.castShadow = true;
+                o.frustumCulled = false; // skinned bounds lag the armature
+                if (o.material) {
+                    o.material = o.material.clone();
+                    const rule = rules.find(r => r.materials.some(m => o.material.name.includes(m)));
+                    if (rule) o.material.color = o.material.color.clone().lerp(new THREE.Color(rule.color), rule.strength);
+                }
+            }
+        });
+        return root;
+    }, [scene, key]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+// Static (unskinned) model: runtime bounding-box auto-fit IS reliable here
+// (unlike the armature-driven soldier/tank), plus optional spinning rotor
+// nodes and a yaw to map the model's native forward onto the game's +X.
+const StaticModel = ({ url, tints, targetLen, axis = 'z', yaw = Math.PI / 2, spinNodes }: {
+    url: string, tints: TintRule[], targetLen: number, axis?: 'x' | 'y' | 'z', yaw?: number, spinNodes?: string[],
+}) => {
+    const obj = useTintedClone(url, tints);
+    const fit = useMemo(() => {
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const s = targetLen / (size[axis] || 1);
+        return { s, groundY: -box.min.y * s };
+    }, [obj, targetLen, axis]);
+    const spinners = useMemo(() => {
+        const found: THREE.Object3D[] = [];
+        if (spinNodes) obj.traverse((o: any) => { if (spinNodes.some(n => o.name.includes(n))) found.push(o); });
+        return found;
+    }, [obj, spinNodes]); // eslint-disable-line react-hooks/exhaustive-deps
+    useFrame((_, dt) => { for (const r of spinners) r.rotation.y += dt * 30; });
+    return (
+        <group position={[0, fit.groundY, 0]} rotation={[0, yaw, 0]} scale={fit.s}>
+            <primitive object={obj} />
+        </group>
+    );
+};
+
+// Empirical model scales: skinned bind-pose bounding boxes are useless here
+// (the Quaternius armatures carry large transforms), so these were calibrated
+// visually against the world's tree/rock/unit sizes.
+// (probe-measured: soldier is human-scale 1.8 units tall; the tank armature
+// bakes a large scale and natively faces +X, so it gets no extra yaw)
+const SOLDIER_SCALE = 11;
+const TANK_SCALE = 2.7;
+
+// Role accents: the soldier model's 'Grey' vest material takes a per-role
+// color so specialists stay readable while 'Swat' (body) carries the team.
+const INFANTRY_ACCENT: Partial<Record<UnitType, string>> = {
+    [UnitType.SNIPER]: '#3f6212',       // camo green
+    [UnitType.RAMBO]: '#dc2626',        // hero red
+    [UnitType.FLAMETHROWER]: '#ea580c', // burn orange
+    [UnitType.MEDIC]: '#f8fafc',        // white
+    [UnitType.ENGINEER]: '#facc15',     // hi-vis yellow
+    [UnitType.MORTAR]: '#78350f',       // powder brown
+    [UnitType.AIRBORNE]: '#374151',     // drop-suit slate
+};
+
+// Animated infantry (all foot units reuse the rifleman): runs, aims and
+// fires using the model's own clips.
+const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: number }) => {
+    const { animations } = useGLTF(MODEL_URL.soldier);
+    const accent = INFANTRY_ACCENT[unit.type];
+    const obj = useTintedClone(MODEL_URL.soldier, [
+        { materials: ['Swat'], color: teamTint(unit.team), strength: 0.75 },
+        ...(accent ? [{ materials: ['Grey', 'Black'], color: accent, strength: 0.85 }] : []),
+    ]);
+    const group = useRef<THREE.Group>(null!);
+    const { actions } = useAnimations(animations, group);
+    const clip = unit.state === UnitState.ATTACKING ? 'CharacterArmature|Idle_Gun_Shoot'
+        : unit.state === UnitState.MOVING ? 'CharacterArmature|Run'
+        : unit.type === UnitType.SNIPER ? 'CharacterArmature|Idle_Gun_Pointing'
+        : 'CharacterArmature|Idle_Gun';
+    useEffect(() => {
+        const a = actions[clip];
+        if (!a) return;
+        a.reset();
+        // Desync squads so they don't march in lockstep
+        a.time = ((unit.id.charCodeAt(0) + unit.id.charCodeAt(2)) % 10) / 10 * a.getClip().duration;
+        a.fadeIn(0.12).play();
+        return () => { a.fadeOut(0.12); };
+    }, [actions, clip, unit.id]);
+    return (
+        <group ref={group} rotation={[0, Math.PI / 2, 0]} scale={scale}>
+            <primitive object={obj} />
+        </group>
+    );
+};
+
+// Tank with animated tracks while rolling.
+const TankModel = ({ unit }: { unit: Unit }) => {
+    const { animations } = useGLTF(MODEL_URL.tank);
+    const obj = useTintedClone(MODEL_URL.tank, [{ materials: ['Main'], color: teamTint(unit.team), strength: 0.45 }]);
+    const group = useRef<THREE.Group>(null!);
+    const { actions } = useAnimations(animations, group);
+    useEffect(() => {
+        const a = actions['TankArmature|Tank_Forward'];
+        if (!a) return;
+        // Keep the clip PLAYING even when stationary (paused) — a stopped
+        // action reverts the skinned tracks to their coiled bind pose.
+        a.play();
+        a.paused = unit.state !== UnitState.MOVING;
+    }, [actions, unit.state]);
+    return (
+        <group ref={group} scale={TANK_SCALE}>
+            <primitive object={obj} />
+        </group>
+    );
+};
+
 const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }: { unit: Unit, terrain: TerrainObject[], onCanvasClick: (x: number, y: number) => void, onUnitClick?: (unit: Unit) => void, focused?: boolean, selected?: boolean }) => {
     const config = UNIT_CONFIG[unit.type] as any;
     const terrainH = getTerrainHeight(unit.position.x, unit.position.y, terrain);
@@ -494,7 +672,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
         unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE ||
         unit.type === UnitType.ENGINEER || unit.type === UnitType.MORTAR;
     const walkPhase = (unit.id.charCodeAt(0) * 13 + (unit.id.charCodeAt(1) || 0) * 7) % 100;
-    const walking = isInfantry && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
+    // GLB soldiers animate their own run cycle — no procedural bob for them
+    const walking = isInfantry && unit.type !== UnitType.SOLDIER && unit.state === UnitState.MOVING && !unit.isInCover && yOffset === 0;
     const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
     const bobTilt = walking ? Math.sin(Date.now() * 0.012 + walkPhase) * 0.05 : 0;
 
@@ -553,139 +732,61 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.SOLDIER && (
                         <group position={[0, 0, 0]}>
-                            {/* Head */}
-                            <mesh position={[0, 16, 0]} castShadow>
-                                <sphereGeometry args={[3.5, 16, 16]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} /> {/* Skin tone */}
-                                <mesh position={[0, 1, 0]}>
-                                    <cylinderGeometry args={[4, 3.8, 2]} />
-                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} /> {/* Helmet */}
-                                </mesh>
-                            </mesh>
-                            {/* Body */}
-                            <mesh position={[0, 9, 0]} castShadow>
-                                <boxGeometry args={[6, 10, 4]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Arms */}
-                            <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[4, 10, 2]} rotation={[-0.5, 0, -0.2]}> {/* Aiming arm */}
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Rifle held across, pointing forward (+X) */}
-                            <group position={[4, 11.5, 1]}>
-                                <mesh rotation={[0, 0, Math.PI / 2]}>
-                                    <boxGeometry args={[1.2, 10, 1.2]} />
-                                    <meshStandardMaterial color="#1c1917" />
-                                </mesh>
-                                <mesh position={[-3, -0.8, 0]}> {/* Stock */}
-                                    <boxGeometry args={[3, 2, 1]} />
-                                    <meshStandardMaterial color="#44403c" />
-                                </mesh>
-                                <mesh position={[1, -1.5, 0]}> {/* Magazine */}
-                                    <boxGeometry args={[1, 2.5, 1]} />
-                                    <meshStandardMaterial color="#292524" />
-                                </mesh>
-                                {unit.attackCooldown > (config.attackSpeed - 6) && (
-                                    <group position={[6, 0, 0]}>
-                                        <MuzzleFlash size={0.8} />
-                                    </group>
-                                )}
-                            </group>
-                            {/* Backpack (behind: model faces +X) */}
-                            <mesh position={[-4.2, 10, 0]} castShadow>
-                                <boxGeometry args={[2.2, 6, 4.5]} />
-                                <meshStandardMaterial color="#3f3f46" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <InfantryLegs walking={walking} phase={walkPhase} transparent={transparent} opacity={opacity} />
+                            <Suspense fallback={null}>
+                                <InfantryModel unit={unit} />
+                            </Suspense>
+                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                                <group position={[10, 12, 1]}>
+                                    <MuzzleFlash size={0.8} />
+                                </group>
+                            )}
                         </group>
                     )
                 }
                 {
                     unit.type === UnitType.TANK && (
                         <group>
-                            {/* Modern Main Battle Tank (Oriented along X-axis for default Right facing) */}
-                            {/* Hull */}
-                            <mesh position={[0, 8, 0]} castShadow receiveShadow>
-                                <boxGeometry args={[45, 12, 28]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Front glacis slope */}
-                            <mesh position={[23, 11, 0]} rotation={[0, 0, -0.55]} castShadow>
-                                <boxGeometry args={[10, 7, 26]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Rear exhaust stacks */}
-                            {[-6, 6].map(z => (
-                                <mesh key={z} position={[-22, 12, z]}>
-                                    <boxGeometry args={[3, 5, 4]} />
-                                    <meshStandardMaterial color="#1c1917" />
-                                </mesh>
-                            ))}
-                            {/* Tracks + side skirts */}
-                            <mesh position={[0, 6, -15]}>
-                                <boxGeometry args={[42, 12, 8]} />
-                                <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 6, 15]}>
-                                <boxGeometry args={[42, 12, 8]} />
-                                <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 12, -19.5]}>
-                                <boxGeometry args={[44, 5, 1.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[0, 12, 19.5]}>
-                                <boxGeometry args={[44, 5, 1.5]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Road wheels */}
-                            {[-16, -8, 0, 8, 16].map(x => (
-                                <group key={x}>
-                                    <mesh position={[x, 5, -15]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                    <mesh position={[x, 5, 15]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 9.2, 12]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                </group>
-                            ))}
-                            {/* Turret + Gun (recoils backward on firing) */}
                             <group position={[-recoil, 0, 0]}>
-                                <mesh position={[0, 18, 0]} castShadow>
-                                    <boxGeometry args={[25, 9, 20]} />
-                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
+                                <Suspense fallback={null}>
+                                    <TankModel unit={unit} />
+                                </Suspense>
+                            </group>
+                            {/* Muzzle Flash at the barrel tip */}
+                            {unit.attackCooldown > (config.attackSpeed - 8) && (
+                                <group position={[34, 15, 0]}>
+                                    <MuzzleFlash size={4} />
+                                </group>
+                            )}
+                        </group>
+                    )
+                }
+                {
+                    unit.type === UnitType.GUNBOAT && (
+                        <group position={[0, 1.5 + Math.sin(Date.now() * 0.0022 + unit.position.x) * 0.7, 0]} rotation={[Math.sin(Date.now() * 0.0017 + unit.position.y) * 0.03, 0, 0]}>
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.gunboat} targetLen={36} axis="x" yaw={0} tints={[{ materials: ['PaletteMaterial001', 'PaletteMaterial002'], color: teamTint(unit.team), strength: 0.6 }]} />
+                            </Suspense>
+                            {/* Team pennant — the textured hull resists tinting, so fly the colors */}
+                            <group position={[-13, 13, 0]}>
+                                <mesh>
+                                    <cylinderGeometry args={[0.3, 0.3, 10]} />
+                                    <meshStandardMaterial color="#57534e" />
                                 </mesh>
-                                {/* Main Gun (Pointing Right +X) */}
-                                <mesh position={[20, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                                    <cylinderGeometry args={[2.5, 2.5, 30]} />
-                                    <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
-                                    <mesh position={[0, 15, 0]}> {/* Bore fume extractor */}
-                                        <cylinderGeometry args={[3.5, 3.5, 6]} />
-                                        <meshStandardMaterial color="#333" />
-                                    </mesh>
-                                </mesh>
-                                {/* Commander cupola + antenna */}
-                                <mesh position={[-5, 24, 5]} castShadow>
-                                    <cylinderGeometry args={[3.5, 4, 3.5, 10]} />
-                                    <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
-                                </mesh>
-                                <mesh position={[-9, 28, -6]}>
-                                    <cylinderGeometry args={[0.3, 0.3, 14]} />
-                                    <meshStandardMaterial color="#888" />
+                                <mesh position={[2.6, 3.4, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
+                                    <boxGeometry args={[5, 3.2, 0.3]} />
+                                    <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.3} side={THREE.DoubleSide} />
                                 </mesh>
                             </group>
-
-                            {/* Muzzle Flash */}
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                <MuzzleFlash size={4} />
+                                <group position={[20, 10, 0]}>
+                                    <MuzzleFlash size={3} />
+                                </group>
                             )}
+                            {/* Wake foam */}
+                            <mesh position={[0, -2.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                                <ringGeometry args={[16, 19, 20]} />
+                                <meshBasicMaterial color="#e0f2fe" transparent opacity={0.18 + 0.08 * Math.sin(Date.now() * 0.003)} depthWrite={false} />
+                            </mesh>
                         </group>
                     )
                 }
@@ -720,6 +821,18 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                     </mesh>
                                 ))}
                             </group>
+                            {/* Stray arc crackling down the coil, flickers in and out */}
+                            {Math.sin(Date.now() * 0.017) > 0.55 && (
+                                <mesh position={[3.5, 27, 3.5]} rotation={[0.5, Date.now() * 0.02 % (Math.PI * 2), 0.9]}>
+                                    <cylinderGeometry args={[0.25, 0.25, 14]} />
+                                    <meshBasicMaterial color="#bae6fd" toneMapped={false} transparent opacity={0.85} />
+                                </mesh>
+                            )}
+                            {/* Pulsing charge glow on the ground */}
+                            <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]} scale={1 + 0.12 * Math.sin(Date.now() * 0.005)}>
+                                <ringGeometry args={[16, 19, 28]} />
+                                <meshBasicMaterial color="#0ea5e9" transparent opacity={0.16 + 0.1 * Math.sin(Date.now() * 0.005)} toneMapped={false} depthWrite={false} />
+                            </mesh>
                         </group>
                     )
                 }
@@ -757,6 +870,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <mesh position={[0, 16, -16]} castShadow>
                                 <boxGeometry args={[18, 5, 6]} />
                                 <meshStandardMaterial color="#3f3f2e" roughness={1} />
+                            </mesh>
+                            {/* Commander hatch + whip antenna */}
+                            <mesh position={[2, 25, -6]} castShadow>
+                                <cylinderGeometry args={[3, 3.4, 2.5, 10]} />
+                                <meshStandardMaterial color="#3a3a2c" roughness={0.9} />
+                            </mesh>
+                            <mesh position={[-12, 30, 7]} rotation={[0.12, 0, -0.1]}>
+                                <cylinderGeometry args={[0.22, 0.4, 16]} />
+                                <meshStandardMaterial color="#1c1917" />
                             </mesh>
                             <mesh position={[-8, 16, 14]} rotation={[Math.PI / 2, 0, 0]} castShadow>
                                 <cylinderGeometry args={[2.5, 2.5, 12]} />
@@ -801,58 +923,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.RAMBO && (
                         <group position={[0, 0, 0]}>
-                            {/* Head w/ Bandana */}
-                            <mesh position={[0, 18, 0]} castShadow>
-                                <sphereGeometry args={[4.5, 16, 16]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                                <mesh position={[0, 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <torusGeometry args={[3.8, 0.8, 8, 24]} />
-                                    <meshStandardMaterial color="red" transparent={transparent} opacity={opacity} />
-                                </mesh>
-                            </mesh>
-                            {/* Muscular Body */}
-                            <mesh position={[0, 10, 0]} castShadow>
-                                <boxGeometry args={[10, 12, 6]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} /> {/* Shirtless / skin */}
-                                <mesh position={[0, -4, 0]}>
-                                    <boxGeometry args={[10.2, 4, 6.2]} />
-                                    <meshStandardMaterial color="#44403c" transparent={transparent} opacity={opacity} /> {/* Pants belt area */}
-                                </mesh>
-                            </mesh>
-                            {/* Arms (Muscular) */}
-                            <mesh position={[-6, 11, 0]} rotation={[0, 0, 0.3]}>
-                                <boxGeometry args={[3.5, 10, 3.5]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[6, 11, 2]} rotation={[-0.4, 0, -0.3]}>
-                                <boxGeometry args={[3.5, 10, 3.5]} />
-                                <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                                {/* Minigun: housing + spinning six-barrel cluster + ammo drum */}
-                                <group position={[0, -6, 2]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <mesh>
-                                        <cylinderGeometry args={[2.2, 2.2, 8]} />
-                                        <meshStandardMaterial color="#1c1917" transparent={transparent} opacity={opacity} />
-                                    </mesh>
-                                    <group rotation={[0, Date.now() / (unit.attackCooldown > 5 ? 18 : 240), 0]}>
-                                        {[0, 1, 2, 3, 4, 5].map(i => (
-                                            <mesh key={i} position={[Math.cos(i * Math.PI / 3) * 1.3, 7, Math.sin(i * Math.PI / 3) * 1.3]}>
-                                                <cylinderGeometry args={[0.45, 0.45, 9, 6]} />
-                                                <meshStandardMaterial color="#3f3f46" />
-                                            </mesh>
-                                        ))}
-                                    </group>
-                                    <mesh position={[0, -2, -2.5]}>
-                                        <cylinderGeometry args={[2, 2, 3.5, 10]} />
-                                        <meshStandardMaterial color="#44403c" />
-                                    </mesh>
-                                    {unit.attackCooldown > 5 && (
-                                        <group position={[0, 12, 0]} rotation={[0, 0, Math.PI / 2]}>
-                                            <MuzzleFlash size={1.5} />
-                                        </group>
-                                    )}
+                            {/* Hero unit runs slightly larger than the rank and file */}
+                            <Suspense fallback={null}>
+                                <InfantryModel unit={unit} scale={SOLDIER_SCALE * 1.18} />
+                            </Suspense>
+                            {unit.attackCooldown > 5 && (
+                                <group position={[12, 13, 1]}>
+                                    <MuzzleFlash size={1.5} />
                                 </group>
-                            </mesh>
-                            <InfantryLegs walking={walking} phase={walkPhase} color="#44403c" transparent={transparent} opacity={opacity} />
+                            )}
                         </group>
                     )
                 }
@@ -860,35 +939,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     (unit.type === UnitType.AIRBORNE) && (
                         <group>
-                            {/* Paratrooper uses Soldier-like model */}
-                            <group position={[0, 0, 0]}>
-                                <mesh position={[0, 16, 0]} castShadow>
-                                    <sphereGeometry args={[3.5, 16, 16]} />
-                                    <meshStandardMaterial color="#fca5a5" />
-                                    <mesh position={[0, 1, 0]}>
-                                        <cylinderGeometry args={[4, 3.8, 2]} />
-                                        <meshStandardMaterial color={color} />
-                                    </mesh>
-                                </mesh>
-                                <mesh position={[0, 9, 0]} castShadow>
-                                    <boxGeometry args={[6, 10, 4]} />
-                                    <meshStandardMaterial color={color} />
-                                    {/* Backpack/Chute Pack */}
-                                    <mesh position={[0, 2, -2.5]}>
-                                        <boxGeometry args={[5, 6, 2]} />
-                                        <meshStandardMaterial color="#4b5563" />
-                                    </mesh>
-                                </mesh>
-                                <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.4]}> {/* Arms out holding lines? */}
-                                    <boxGeometry args={[2.5, 9, 2.5]} />
-                                    <meshStandardMaterial color={color} />
-                                </mesh>
-                                <mesh position={[4, 10, 0]} rotation={[0, 0, -0.4]}>
-                                    <boxGeometry args={[2.5, 9, 2.5]} />
-                                    <meshStandardMaterial color={color} />
-                                </mesh>
-                                <InfantryLegs walking={walking} phase={walkPhase} />
-                            </group>
+                            <Suspense fallback={null}>
+                                <InfantryModel unit={unit} />
+                            </Suspense>
+                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                                <group position={[10, 12, 1]}>
+                                    <MuzzleFlash size={0.8} />
+                                </group>
+                            )}
 
                             {/* Parachute Check */}
                             {(Date.now() - (unit.spawnTime || 0) < 3000) && (
@@ -915,49 +973,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.ANTI_AIR && (
                         <group>
-                            <mesh position={[0, 10, 0]} castShadow receiveShadow>
-                                <boxGeometry args={[35, 16, 25]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Wheels */}
-                            {[-12, 0, 12].map(x => (
-                                <group key={x}>
-                                    <mesh position={[x, 4, -12]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 5, 10]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                    <mesh position={[x, 4, 12]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <cylinderGeometry args={[4.5, 4.5, 5, 10]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['YellowBaseMissileTurret1', 'YellowMiddleMissileTurret1', 'YellowGunsMissileTurret1'], color: teamTint(unit.team), strength: 0.55 }]} />
+                            </Suspense>
+                            {unit.attackCooldown > 35 && (
+                                <group position={[8, 26, 0]} rotation={[0, 0, Math.PI / 4]}>
+                                    <MuzzleFlash size={3} />
                                 </group>
-                            ))}
-                            <mesh position={[0, 22, 0]}>
-                                <cylinderGeometry args={[8, 8, 8, 8]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
-                            {/* Quad missile rack */}
-                            <group position={[0, 28, 5]} rotation={[-Math.PI / 4, 0, 0]}>
-                                <mesh>
-                                    <boxGeometry args={[12, 20, 7]} />
-                                    <meshStandardMaterial color="#222" />
-                                </mesh>
-                                {[[-3.2, 2], [3.2, 2], [-3.2, -2], [3.2, -2]].map(([tx, tz], i) => (
-                                    <mesh key={i} position={[tx, 4, tz]}>
-                                        <cylinderGeometry args={[1.7, 1.7, 16, 8]} />
-                                        <meshStandardMaterial color="#3f3f46" />
-                                        <mesh position={[0, 8.2, 0]}>
-                                            <coneGeometry args={[1.4, 3, 8]} />
-                                            <meshStandardMaterial color="#b91c1c" />
-                                        </mesh>
-                                    </mesh>
-                                ))}
-                                {unit.attackCooldown > 35 && (
-                                    <group position={[0, 12, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                                        <MuzzleFlash size={3} />
-                                    </group>
-                                )}
-                            </group>
+                            )}
                             {/* Spinning search radar */}
                             <group position={[0, 30, -8]}>
                                 <mesh>
@@ -978,36 +1001,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.DRONE && (
                         <group>
-                            <mesh position={[0, 0, 0]} castShadow>
-                                <boxGeometry args={[10, 4, 10]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
-                            <mesh position={[0, 0, 0]}>
-                                <boxGeometry args={[24, 1, 1]} />
-                                <meshStandardMaterial color="#111" />
-                            </mesh>
-                            <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
-                                <boxGeometry args={[24, 1, 1]} />
-                                <meshStandardMaterial color="#111" />
-                            </mesh>
-                            {[[-12, 0], [12, 0], [0, -12], [0, 12]].map((p, i) => (
-                                <group key={i} position={[p[0], 2, p[1]] as any}>
-                                    {/* Blur disc */}
-                                    <mesh>
-                                        <cylinderGeometry args={[4, 4, 0.5]} />
-                                        <meshStandardMaterial color="black" opacity={0.35} transparent />
-                                    </mesh>
-                                    {/* Spinning blade */}
-                                    <group rotation={[0, Date.now() / 25 + i * 1.7, 0]}>
-                                        <mesh position={[0, 0.6, 0]}>
-                                            <boxGeometry args={[7.5, 0.3, 0.8]} />
-                                            <meshStandardMaterial color="#222" />
-                                        </mesh>
-                                    </group>
-                                </group>
-                            ))}
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.drone} targetLen={18} tints={[{ materials: ['ColourPalette'], color: teamTint(unit.team), strength: 0.35 }]} spinNodes={['Rotor']} />
+                            </Suspense>
                             {/* Blinking status LED */}
-                            <mesh position={[0, 3, 0]}>
+                            <mesh position={[0, 6, 0]}>
                                 <sphereGeometry args={[1, 8, 8]} />
                                 <meshBasicMaterial color={Math.floor(Date.now() / 400) % 2 === 0 ? '#ef4444' : '#450a0a'} toneMapped={false} />
                             </mesh>
@@ -1044,43 +1042,12 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.HELICOPTER && (
                         <group position={[0, 15, 0]} rotation={[0, (unit.rotation || 0) - Math.PI / 2, 0]}>
-                            {/* Body (Bubble) */}
-                            <mesh castShadow>
-                                <sphereGeometry args={[8, 16, 16]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Cockpit glass (front) */}
-                            <mesh position={[0, 1.5, 5]}>
-                                <sphereGeometry args={[5.2, 16, 16]} />
-                                <meshStandardMaterial color="#7dd3fc" metalness={0.4} roughness={0.1} transparent opacity={0.85} />
-                            </mesh>
-                            {/* Stub wings + rocket pods */}
-                            <mesh position={[0, -2.5, 0]}>
-                                <boxGeometry args={[20, 1.5, 4]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {[-9, 9].map(x => (
-                                <mesh key={x} position={[x, -4, 1]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[1.8, 1.8, 6, 10]} />
-                                    <meshStandardMaterial color="#374151" />
-                                </mesh>
-                            ))}
-                            {/* Tail Boom */}
-                            <mesh position={[0, 0, -12]} rotation={[Math.PI / 2, 0, 0]}>
-                                <cylinderGeometry args={[2, 4, 16]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Tail Rotor */}
-                            <mesh position={[1, 0, -20]} rotation={[0, 0, (Date.now() / 50)]}>
-                                <boxGeometry args={[1, 8, 1]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
-                            {/* Main Rotor Shaft */}
-                            <mesh position={[0, 8, 0]}>
-                                <cylinderGeometry args={[1, 1, 4]} />
-                                <meshStandardMaterial color="#333" />
-                            </mesh>
-                            {/* Main Rotor Blades (Spinning) + blur disc */}
+                            <group position={[0, -12, 0]} rotation={[0, -Math.PI / 2, 0]}>
+                                <Suspense fallback={null}>
+                                    <StaticModel url={MODEL_URL.helicopter} targetLen={38} axis="x" yaw={0} tints={[{ materials: ['DarkGreen'], color: teamTint(unit.team), strength: 0.5 }]} />
+                                </Suspense>
+                            </group>
+                            {/* Rotor blur disc (the model's rotor is static) */}
                             <group position={[0, 10, 0]} rotation={[0, (Date.now() / 40), 0]}>
                                 <mesh>
                                     <boxGeometry args={[42, 0.4, 2.2]} />
@@ -1095,19 +1062,6 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 <circleGeometry args={[21, 24]} />
                                 <meshBasicMaterial color="#94a3b8" transparent opacity={0.13} side={THREE.DoubleSide} depthWrite={false} />
                             </mesh>
-                            {/* Skids */}
-                            <mesh position={[-4, -8, 0]}>
-                                <boxGeometry args={[1, 1, 16]} />
-                                <meshStandardMaterial color="#444" />
-                            </mesh>
-                            <mesh position={[4, -8, 0]}>
-                                <boxGeometry args={[1, 1, 16]} />
-                                <meshStandardMaterial color="#444" />
-                            </mesh>
-                            <mesh position={[-4, -5, 4]} rotation={[0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
-                            <mesh position={[4, -5, 4]} rotation={[0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
-                            <mesh position={[-4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
-                            <mesh position={[4, -5, -4]} rotation={[-0.5, 0, 0]}><boxGeometry args={[1, 6, 1]} /><meshStandardMaterial color="#444" /></mesh>
 
                             {/* Muzzle Flashes (Missiles/Guns) */}
                             {unit.attackCooldown > (config.attackSpeed - 10) && (
@@ -1122,51 +1076,21 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.SNIPER && (
                         <group position={[0, 0, 0]}>
-                            {/* Ghillie Suit / Camo Body */}
-                            <mesh position={[0, 16, 0]} castShadow>
-                                <sphereGeometry args={[3.5, 16, 16]} />
-                                <meshStandardMaterial color="#fca5a5" /> {/* Skin */}
-                                <mesh position={[0, 1, 0]}> {/* Boonie Hat */}
-                                    <cylinderGeometry args={[5, 4, 1.5]} />
-                                    <meshStandardMaterial color="#3f6212" /> {/* Dark Green */}
+                            <Suspense fallback={null}>
+                                <InfantryModel unit={unit} />
+                            </Suspense>
+                            {/* Periodic scope glint */}
+                            {(Date.now() % 2400) < 180 && (
+                                <mesh position={[8, 13, 1]}>
+                                    <sphereGeometry args={[0.9, 6, 6]} />
+                                    <meshBasicMaterial color="#e0f2fe" toneMapped={false} />
                                 </mesh>
-                            </mesh>
-                            <mesh position={[0, 9, 0]} castShadow>
-                                <boxGeometry args={[6, 10, 4]} />
-                                <meshStandardMaterial color="#3f6212" /> {/* Camo Body */}
-                            </mesh>
-                            {/* Arms Aiming */}
-                            <mesh position={[-4, 10, 2]} rotation={[-0.2, 0, 0.2]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#3f6212" />
-                            </mesh>
-                            <mesh position={[4, 10, 2]} rotation={[-1.2, 0.4, -0.2]}>
-                                <boxGeometry args={[2.5, 9, 2.5]} />
-                                <meshStandardMaterial color="#3f6212" />
-                                {/* Long Rifle */}
-                                <group position={[0, -6, 2]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <mesh position={[0, 6, 0]}> {/* Stock & Body */}
-                                        <boxGeometry args={[1.5, 12, 2]} />
-                                        <meshStandardMaterial color="#3e3228" /> // Wood/Dark
-                                    </mesh>
-                                    <mesh position={[0, 14, 0]}> {/* Long Barrel */}
-                                        <cylinderGeometry args={[0.5, 0.6, 16]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                    <mesh position={[0, 8, 1.5]} rotation={[Math.PI / 2, 0, 0]}> {/* Scope */}
-                                        <cylinderGeometry args={[0.8, 0.8, 6]} />
-                                        <meshStandardMaterial color="#000" />
-                                    </mesh>
-                                    {/* Periodic scope glint */}
-                                    {(Date.now() % 2400) < 180 && (
-                                        <mesh position={[0, 11.5, 1.5]}>
-                                            <sphereGeometry args={[0.9, 6, 6]} />
-                                            <meshBasicMaterial color="#e0f2fe" toneMapped={false} />
-                                        </mesh>
-                                    )}
+                            )}
+                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                                <group position={[11, 12, 1]}>
+                                    <MuzzleFlash size={1} />
                                 </group>
-                            </mesh>
-                            <InfantryLegs walking={walking} phase={walkPhase} color="#3f6212" />
+                            )}
                         </group>
                     )
                 }
@@ -1189,43 +1113,22 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* FLAMETHROWER — soldier body with fuel tank and flame nozzle */}
                 {unit.type === UnitType.FLAMETHROWER && (
                     <group>
-                        {/* Head */}
-                        <mesh position={[0, 16, 0]} castShadow>
-                            <sphereGeometry args={[3.5, 16, 16]} />
-                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                            <mesh position={[0, 1, 0]}>
-                                <cylinderGeometry args={[4, 3.8, 2]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                        </mesh>
-                        {/* Body */}
-                        <mesh position={[0, 9, 0]} castShadow>
-                            <boxGeometry args={[6, 10, 4]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Fuel tank on back */}
-                        <mesh position={[0, 9, -4]} castShadow>
+                        <Suspense fallback={null}>
+                            <InfantryModel unit={unit} />
+                        </Suspense>
+                        {/* Fuel tank on the back */}
+                        <mesh position={[-4, 10, 0]} castShadow>
                             <cylinderGeometry args={[2.5, 2.5, 10]} />
                             <meshStandardMaterial color="#b45309" />
                         </mesh>
-                        {/* Flame arm / nozzle */}
-                        <mesh position={[4, 10, 2]} rotation={[-0.3, 0, -0.15]}>
-                            <boxGeometry args={[2, 9, 2]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            <mesh position={[0, -5, 1.5]} rotation={[Math.PI / 2, 0, 0]}>
-                                <cylinderGeometry args={[1.2, 0.8, 10]} />
-                                <meshStandardMaterial color="#78350f" />
-                                {/* Pilot flame flickering at the nozzle tip */}
-                                <mesh position={[0, 5.5, 0]} scale={1 + 0.3 * Math.sin(Date.now() * 0.03)}>
-                                    <sphereGeometry args={[0.8, 6, 6]} />
-                                    <meshBasicMaterial color={Math.floor(Date.now() / 120) % 2 === 0 ? '#f97316' : '#fbbf24'} toneMapped={false} />
-                                </mesh>
-                            </mesh>
+                        {/* Pilot flame at the muzzle */}
+                        <mesh position={[10, 12, 1]} scale={1 + 0.3 * Math.sin(Date.now() * 0.03)}>
+                            <sphereGeometry args={[0.8, 6, 6]} />
+                            <meshBasicMaterial color={Math.floor(Date.now() / 120) % 2 === 0 ? '#f97316' : '#fbbf24'} toneMapped={false} />
                         </mesh>
-                        <InfantryLegs walking={walking} phase={walkPhase} />
                         {/* Flame burst when attacking (emissive, blooms) */}
                         {unit.attackCooldown > 4 && (
-                            <mesh position={[5, 8, 6]} scale={1 + 0.4 * Math.sin(Date.now() * 0.05)}>
+                            <mesh position={[13, 11, 1]} scale={1 + 0.4 * Math.sin(Date.now() * 0.05)}>
                                 <sphereGeometry args={[2.2, 6, 6]} />
                                 <meshBasicMaterial color="#f97316" toneMapped={false} transparent opacity={0.85} />
                             </mesh>
@@ -1236,35 +1139,17 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* MEDIC — soldier with green cross on helmet */}
                 {unit.type === UnitType.MEDIC && (
                     <group>
-                        {/* Head with cross */}
-                        <mesh position={[0, 16, 0]} castShadow>
-                            <sphereGeometry args={[3.5, 16, 16]} />
-                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                            <mesh position={[0, 1.2, 0]}>
-                                <cylinderGeometry args={[4, 3.8, 2]} />
-                                <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Cross symbol */}
-                            <mesh position={[0, 2.5, 4]}><boxGeometry args={[3, 1, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
-                            <mesh position={[0, 2.5, 4]}><boxGeometry args={[1, 3, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
-                        </mesh>
-                        {/* Body (white coat) */}
-                        <mesh position={[0, 9, 0]} castShadow>
-                            <boxGeometry args={[6, 10, 4]} />
-                            <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Arms */}
-                        <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color="white" transparent={transparent} opacity={opacity} /></mesh>
-                        <mesh position={[4, 10, 1]} rotation={[-0.3, 0, -0.2]}>
-                            <boxGeometry args={[2.5, 9, 2.5]} />
-                            <meshStandardMaterial color="white" transparent={transparent} opacity={opacity} />
-                            {/* Medkit */}
-                            <mesh position={[0, -5, 1.5]}><boxGeometry args={[4, 3, 3]} /><meshStandardMaterial color="#dc2626" /></mesh>
-                        </mesh>
-                        <InfantryLegs walking={walking} phase={walkPhase} color="#1f2937" />
+                        <Suspense fallback={null}>
+                            <InfantryModel unit={unit} />
+                        </Suspense>
+                        {/* Cross above the head */}
+                        <group position={[0, 24, 0]}>
+                            <mesh><boxGeometry args={[3, 1, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
+                            <mesh><boxGeometry args={[1, 3, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
+                        </group>
                         {/* Healing glow (emissive) */}
                         {unit.attackCooldown > 30 && (
-                            <mesh position={[0, 22, 0]}>
+                            <mesh position={[0, 27, 0]}>
                                 <sphereGeometry args={[1.4, 6, 6]} />
                                 <meshBasicMaterial color="#4ade80" toneMapped={false} />
                             </mesh>
@@ -1275,39 +1160,21 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* ENGINEER — soldier with hard hat and mine-detector wand */}
                 {unit.type === UnitType.ENGINEER && (
                     <group>
-                        {/* Head with hard hat */}
-                        <mesh position={[0, 16, 0]} castShadow>
-                            <sphereGeometry args={[3.5, 16, 16]} />
-                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                            <mesh position={[0, 1.5, 0]}>
-                                <cylinderGeometry args={[4.2, 4.2, 2]} />
-                                <meshStandardMaterial color="#facc15" transparent={transparent} opacity={opacity} />
+                        <Suspense fallback={null}>
+                            <InfantryModel unit={unit} />
+                        </Suspense>
+                        {/* Detector pole + sweeping disc held forward */}
+                        <mesh position={[8, 8, 1]} rotation={[0, 0, -Math.PI / 3]}>
+                            <cylinderGeometry args={[0.4, 0.4, 12]} />
+                            <meshStandardMaterial color="#78716c" />
+                            <mesh position={[0, 7, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                                <cylinderGeometry args={[3, 3, 0.8]} />
+                                <meshStandardMaterial color="#57534e" />
                             </mesh>
                         </mesh>
-                        {/* Body (hi-vis vest) */}
-                        <mesh position={[0, 9, 0]} castShadow>
-                            <boxGeometry args={[6, 10, 4]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Arms — one holds the detector forward */}
-                        <mesh position={[-4, 10, 0]} rotation={[0, 0, 0.2]}><boxGeometry args={[2.5, 9, 2.5]} /><meshStandardMaterial color={color} transparent={transparent} opacity={opacity} /></mesh>
-                        <mesh position={[4, 10, 1]} rotation={[-0.6, 0, -0.2]}>
-                            <boxGeometry args={[2.5, 9, 2.5]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            {/* Detector pole + sweeping disc */}
-                            <mesh position={[0, -6, 3]} rotation={[Math.PI / 2.6, 0, 0]}>
-                                <cylinderGeometry args={[0.4, 0.4, 12]} />
-                                <meshStandardMaterial color="#78716c" />
-                                <mesh position={[0, 7, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[3, 3, 0.8]} />
-                                    <meshStandardMaterial color="#57534e" />
-                                </mesh>
-                            </mesh>
-                        </mesh>
-                        <InfantryLegs walking={walking} phase={walkPhase} />
                         {/* Defusing glow (emissive) */}
                         {unit.attackCooldown > (config.attackSpeed - 12) && (
-                            <mesh position={[4, 4, 8]}>
+                            <mesh position={[13, 3, 1]}>
                                 <sphereGeometry args={[1.4, 6, 6]} />
                                 <meshBasicMaterial color="#4ade80" toneMapped={false} />
                             </mesh>
@@ -1319,20 +1186,10 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.MORTAR && (
                     <group>
                         {/* Crewman */}
-                        <mesh position={[-4, 14, 0]} castShadow>
-                            <sphereGeometry args={[3.2, 12, 12]} />
-                            <meshStandardMaterial color="#fca5a5" transparent={transparent} opacity={opacity} />
-                            <mesh position={[0, 1, 0]}>
-                                <cylinderGeometry args={[3.7, 3.5, 1.8]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                        </mesh>
-                        <mesh position={[-4, 8, 0]} castShadow>
-                            <boxGeometry args={[5.5, 9, 4]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        <group position={[-4, 0, 0]}>
-                            <InfantryLegs walking={walking} phase={walkPhase} transparent={transparent} opacity={opacity} />
+                        <group position={[-5, 0, 0]}>
+                            <Suspense fallback={null}>
+                                <InfantryModel unit={unit} />
+                            </Suspense>
                         </group>
                         {/* Mortar tube on baseplate, angled forward */}
                         <group position={[5, 0, 0]}>
@@ -1364,92 +1221,24 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
 
                 {/* JEEP — fast recon 4x4 with roll cage and mounted MG */}
                 {unit.type === UnitType.JEEP && (
-                    <group scale={0.82}>
-                        {/* Body */}
-                        <mesh position={[0, 8, 0]} castShadow receiveShadow>
-                            <boxGeometry args={[26, 7, 15]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Hood (lower, front) */}
-                        <mesh position={[15, 7, 0]} castShadow>
-                            <boxGeometry args={[6, 5, 13]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Windshield */}
-                        <mesh position={[9, 12.5, 0]} rotation={[0, 0, 0.35]}>
-                            <boxGeometry args={[0.8, 5, 12]} />
-                            <meshStandardMaterial color="#7dd3fc" metalness={0.3} roughness={0.15} transparent opacity={0.8} />
-                        </mesh>
-                        {/* Roll cage */}
-                        {[-5, 5].map(z => (
-                            <mesh key={z} position={[-2, 13.5, z]} rotation={[0, 0, 0.12]}>
-                                <cylinderGeometry args={[0.5, 0.5, 7]} />
-                                <meshStandardMaterial color="#27272a" />
-                            </mesh>
-                        ))}
-                        <mesh position={[-2, 17, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                            <cylinderGeometry args={[0.5, 0.5, 11]} />
-                            <meshStandardMaterial color="#27272a" />
-                        </mesh>
-                        {/* Mounted MG on the cage */}
-                        <mesh position={[3, 17.5, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                            <cylinderGeometry args={[0.8, 0.8, 10]} />
-                            <meshStandardMaterial color="#111" />
-                        </mesh>
+                    <group>
+                        <Suspense fallback={null}>
+                            <StaticModel url={MODEL_URL.jeep} targetLen={28} tints={[{ materials: ['DarkGreen_Jeep', 'LightGreen_Jeep'], color: teamTint(unit.team), strength: 0.5 }]} />
+                        </Suspense>
                         {firing && (
-                            <group position={[9, 17.5, 0]}>
+                            <group position={[12, 14, 0]}>
                                 <MuzzleFlash size={1.2} />
                             </group>
                         )}
-                        {/* Wheels */}
-                        {[[-9, -8.5], [-9, 8.5], [10, -8.5], [10, 8.5]].map(([wx, wz], i) => (
-                            <mesh key={i} position={[wx, 4.5, wz]} rotation={[Math.PI / 2, 0, 0]}>
-                                <cylinderGeometry args={[4.5, 4.5, 4, 12]} />
-                                <meshStandardMaterial color="#18181b" />
-                                <mesh position={[0, wz > 0 ? 2.2 : -2.2, 0]}>
-                                    <cylinderGeometry args={[1.8, 1.8, 0.5, 8]} />
-                                    <meshStandardMaterial color="#52525b" />
-                                </mesh>
-                            </mesh>
-                        ))}
                     </group>
                 )}
 
                 {/* TRANSPORT — canvas-topped troop truck; pips show riders aboard */}
                 {unit.type === UnitType.TRANSPORT && (
                     <group>
-                        {/* Cab */}
-                        <mesh position={[14, 8, 0]} castShadow>
-                            <boxGeometry args={[10, 9, 16]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        <mesh position={[16.5, 10, 0]} rotation={[0, 0, 0.3]}>
-                            <boxGeometry args={[0.8, 5, 14]} />
-                            <meshStandardMaterial color="#7dd3fc" metalness={0.3} roughness={0.15} transparent opacity={0.8} />
-                        </mesh>
-                        {/* Flatbed */}
-                        <mesh position={[-4, 6.5, 0]} castShadow receiveShadow>
-                            <boxGeometry args={[26, 6, 17]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Canvas cover (half-cylinder) */}
-                        <mesh position={[-4, 10, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
-                            <cylinderGeometry args={[8.5, 8.5, 26, 12, 1, false, 0, Math.PI]} />
-                            <meshStandardMaterial color="#3f3f2e" roughness={1} side={THREE.DoubleSide} />
-                        </mesh>
-                        {/* Wheels (3 axles) */}
-                        {[[-13, 0], [-3, 0], [13, 0]].map(([wx], i) => (
-                            <group key={i}>
-                                <mesh position={[wx, 4.5, -9.5]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[4.5, 4.5, 4, 12]} />
-                                    <meshStandardMaterial color="#18181b" />
-                                </mesh>
-                                <mesh position={[wx, 4.5, 9.5]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[4.5, 4.5, 4, 12]} />
-                                    <meshStandardMaterial color="#18181b" />
-                                </mesh>
-                            </group>
-                        ))}
+                        <Suspense fallback={null}>
+                            <StaticModel url={MODEL_URL.truck} targetLen={40} tints={[{ materials: ['DarkGreen_ScoutCar', 'Orange_ScoutCar'], color: teamTint(unit.team), strength: 0.5 }]} />
+                        </Suspense>
                         {/* Passenger pips over the canvas */}
                         {Array.from({ length: unit.passengers?.length || 0 }).map((_, i) => (
                             <mesh key={i} position={[-14 + (i % 6) * 4, 21.5, 0]}>
@@ -1463,32 +1252,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* FIGHTER — swept-wing jet at altitude */}
                 {unit.type === UnitType.FIGHTER && (
                     <group rotation={[0, (unit.rotation || 0) - Math.PI / 2, 0]}>
-                        {/* Fuselage (nose toward +Z) */}
-                        <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
-                            <cylinderGeometry args={[2.6, 3.4, 26, 10]} />
-                            <meshStandardMaterial color={color} />
-                        </mesh>
-                        <mesh position={[0, 0, 16]} rotation={[Math.PI / 2, 0, 0]}>
-                            <coneGeometry args={[2.6, 7, 10]} />
-                            <meshStandardMaterial color={color} />
-                        </mesh>
-                        {/* Canopy */}
-                        <mesh position={[0, 2.4, 6]} scale={[1, 0.7, 1.8]}>
-                            <sphereGeometry args={[2.2, 10, 8]} />
-                            <meshStandardMaterial color="#7dd3fc" metalness={0.4} roughness={0.1} transparent opacity={0.85} />
-                        </mesh>
-                        {/* Delta wings */}
-                        <mesh position={[0, 0, -2]} rotation={[0, 0.25, 0]}>
-                            <boxGeometry args={[26, 0.8, 9]} />
-                            <meshStandardMaterial color={color} />
-                        </mesh>
-                        {/* Twin tail fins */}
-                        {[-3, 3].map(x => (
-                            <mesh key={x} position={[x, 3, -11]} rotation={[0.3, 0, 0]}>
-                                <boxGeometry args={[0.7, 6, 5]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                        ))}
+                        <group position={[0, -4, 0]}>
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.fighter} targetLen={30} axis="z" yaw={Math.PI} tints={[{ materials: ['mat21'], color: teamTint(unit.team), strength: 0.4 }]} />
+                            </Suspense>
+                        </group>
                         {/* Afterburner glow */}
                         <mesh position={[0, 0, -14.5]}>
                             <sphereGeometry args={[1.8, 8, 8]} />
@@ -1505,57 +1273,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* APC — boxy armored carrier */}
                 {unit.type === UnitType.APC && (
                     <group>
-                        {/* Hull */}
-                        <mesh position={[0, 8, 0]} castShadow receiveShadow>
-                            <boxGeometry args={[44, 13, 28]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Angled front */}
-                        <mesh position={[22, 10, 0]} rotation={[0, 0, -0.4]} castShadow>
-                            <boxGeometry args={[8, 10, 26]} />
-                            <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* Eight-wheeler running gear */}
-                        {[-15, -5, 5, 15].map(x => (
-                            <group key={x}>
-                                <mesh position={[x, 4, -15]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[5, 5, 6, 12]} />
-                                    <meshStandardMaterial color="#18181b" />
-                                    <mesh position={[0, 3.2, 0]}>
-                                        <cylinderGeometry args={[2, 2, 0.6, 8]} />
-                                        <meshStandardMaterial color="#52525b" />
-                                    </mesh>
-                                </mesh>
-                                <mesh position={[x, 4, 15]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[5, 5, 6, 12]} />
-                                    <meshStandardMaterial color="#18181b" />
-                                    <mesh position={[0, -3.2, 0]}>
-                                        <cylinderGeometry args={[2, 2, 0.6, 8]} />
-                                        <meshStandardMaterial color="#52525b" />
-                                    </mesh>
-                                </mesh>
+                        <Suspense fallback={null}>
+                            <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['Green_LightTank', 'Yellow_LightTank'], color: teamTint(unit.team), strength: 0.5 }]} />
+                        </Suspense>
+                        {unit.attackCooldown > (config.attackSpeed - 10) && (
+                            <group position={[22, 14, 0]}>
+                                <MuzzleFlash size={1.5} />
                             </group>
-                        ))}
-                        {/* Roof hatch + whip antenna */}
-                        <mesh position={[-10, 15, 6]}>
-                            <cylinderGeometry args={[3.5, 3.5, 1.5, 10]} />
-                            <meshStandardMaterial color="#374151" />
-                        </mesh>
-                        <mesh position={[-18, 22, -8]} rotation={[0, 0, 0.15]}>
-                            <cylinderGeometry args={[0.25, 0.25, 14]} />
-                            <meshStandardMaterial color="#888" />
-                        </mesh>
-                        {/* Small turret / MG mount */}
-                        <mesh position={[0, 18, 0]} castShadow>
-                            <boxGeometry args={[14, 6, 14]} />
-                            <meshStandardMaterial color="#374151" transparent={transparent} opacity={opacity} />
-                        </mesh>
-                        {/* MG barrel */}
-                        <mesh position={[12, 18, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                            <cylinderGeometry args={[1, 1, 14]} />
-                            <meshStandardMaterial color="#111" />
-                        </mesh>
-                        {unit.attackCooldown > (config.attackSpeed - 10) && <MuzzleFlash size={1.5} />}
+                        )}
                     </group>
                 )}
 
@@ -1572,6 +1297,40 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <boxGeometry args={[34, 6, 30]} />
                             <meshStandardMaterial color="#374151" roughness={0.9} />
                         </mesh>
+                        {/* Roof lip */}
+                        <mesh position={[0, 14.5, 0]} castShadow>
+                            <boxGeometry args={[36, 1.5, 32]} />
+                            <meshStandardMaterial color="#4b5563" roughness={0.95} />
+                        </mesh>
+                        {/* Observation cupola */}
+                        <mesh position={[-6, 17, -6]} castShadow>
+                            <cylinderGeometry args={[4.5, 5, 4, 10]} />
+                            <meshStandardMaterial color="#374151" roughness={0.9} />
+                        </mesh>
+                        <mesh position={[-6, 19.5, -6]}>
+                            <sphereGeometry args={[4.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                            <meshStandardMaterial color="#2b3442" roughness={0.85} />
+                        </mesh>
+                        {/* Radio mast with blinking tip */}
+                        <mesh position={[-13, 22, 9]}>
+                            <cylinderGeometry args={[0.35, 0.5, 14]} />
+                            <meshStandardMaterial color="#1f2937" />
+                        </mesh>
+                        <mesh position={[-13, 29.5, 9]}>
+                            <sphereGeometry args={[0.9, 6, 6]} />
+                            <meshBasicMaterial color="#f87171" toneMapped={false} transparent opacity={0.35 + 0.65 * Math.abs(Math.sin(Date.now() * 0.004))} />
+                        </mesh>
+                        {/* Team flag on a corner pole */}
+                        <group position={[-13, 20, -12]}>
+                            <mesh>
+                                <cylinderGeometry args={[0.4, 0.4, 16]} />
+                                <meshStandardMaterial color="#57534e" />
+                            </mesh>
+                            <mesh position={[3.5, 5.5, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
+                                <boxGeometry args={[7, 4.5, 0.4]} />
+                                <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.25} side={THREE.DoubleSide} />
+                            </mesh>
+                        </group>
                         {/* Gun slit opening */}
                         <mesh position={[17, 11, 0]}>
                             <boxGeometry args={[2, 3, 16]} />
@@ -1582,12 +1341,18 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <cylinderGeometry args={[1.5, 1.5, 12]} />
                             <meshStandardMaterial color="#1f2937" />
                         </mesh>
-                        {/* Sandbags */}
-                        {[-12, 0, 12].map((z, i) => (
-                            <mesh key={i} position={[-20, 6, z]} castShadow>
-                                <sphereGeometry args={[5, 8, 6]} />
-                                <meshStandardMaterial color="#78350f" roughness={1} />
-                            </mesh>
+                        {/* Sandbag perimeter guarding the firing arc */}
+                        {([[22, -14], [24, -7], [25, 0], [24, 7], [22, 14], [14, -18], [14, 18]] as const).map(([sx, sz], i) => (
+                            <group key={i} position={[sx, 0, sz]} rotation={[0, (i * 37) % 7 * 0.15, 0]}>
+                                <mesh position={[0, 2.2, 0]} scale={[1, 0.55, 0.8]} castShadow>
+                                    <sphereGeometry args={[4.2, 8, 6]} />
+                                    <meshStandardMaterial color="#7c6142" roughness={1} />
+                                </mesh>
+                                <mesh position={[0.8, 5, 0]} scale={[0.85, 0.5, 0.7]} castShadow>
+                                    <sphereGeometry args={[4.2, 8, 6]} />
+                                    <meshStandardMaterial color="#6b5238" roughness={1} />
+                                </mesh>
+                            </group>
                         ))}
                         {unit.attackCooldown > (config.attackSpeed - 8) && (
                             <group position={[18, 11, 0]} rotation={[0, -Math.PI / 2, 0]}>
@@ -2222,20 +1987,11 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const rockSeed = Math.abs((item.x * 73856093) ^ (item.y * 19349663));
         return (
             <ClickableGroup position={[item.x, item.size / 2, item.y]} onCanvasClick={onCanvasClick}>
-                <mesh castShadow receiveShadow rotation={[item.size, item.x, item.y]}>
-                    <dodecahedronGeometry args={[item.size, 0]} />
-                    <meshStandardMaterial color="#57534e" />
-                </mesh>
+                <mesh castShadow receiveShadow rotation={[item.size, item.x, item.y]} scale={item.size} geometry={GEO_CLUMP} material={stdMat('#57534e')} />
                 {/* Smaller companion boulders */}
-                <mesh position={[item.size * 0.9, -item.size * 0.25, item.size * 0.4]} rotation={[rockSeed % 3, rockSeed % 5, 0]} castShadow>
-                    <dodecahedronGeometry args={[item.size * 0.45, 0]} />
-                    <meshStandardMaterial color="#4b4642" />
-                </mesh>
+                <mesh position={[item.size * 0.9, -item.size * 0.25, item.size * 0.4]} rotation={[rockSeed % 3, rockSeed % 5, 0]} scale={item.size * 0.45} castShadow geometry={GEO_CLUMP} material={stdMat('#4b4642')} />
                 {rockSeed % 2 === 0 && (
-                    <mesh position={[-item.size * 0.8, -item.size * 0.3, -item.size * 0.35]} rotation={[rockSeed % 4, 0, rockSeed % 3]} castShadow>
-                        <dodecahedronGeometry args={[item.size * 0.35, 0]} />
-                        <meshStandardMaterial color="#6b6560" />
-                    </mesh>
+                    <mesh position={[-item.size * 0.8, -item.size * 0.3, -item.size * 0.35]} rotation={[rockSeed % 4, 0, rockSeed % 3]} scale={item.size * 0.35} castShadow geometry={GEO_CLUMP} material={stdMat('#6b6560')} />
                 )}
             </ClickableGroup>
         );
@@ -2346,53 +2102,30 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         }
         const burningEmissive = item.state === 'burning' ? leavesColor : '#000000';
 
+        const leafMat = stdMat(leavesColor, burningEmissive);
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
-                <group rotation={rot} position={[0, yOffset, 0]}>
+                <group rotation={rot} position={[0, yOffset, 0]} scale={scaleMod}>
                     {/* Trunk */}
-                    <mesh position={[0, 15 * scaleMod, 0]} castShadow>
-                        <cylinderGeometry args={[5 * scaleMod, 8 * scaleMod, 30 * scaleMod]} />
-                        <meshStandardMaterial color={trunkColor} />
-                    </mesh>
+                    <mesh position={[0, 15, 0]} castShadow geometry={GEO_TRUNK} material={stdMat(trunkColor)} />
 
                     {/* Leaves */}
                     {type === 0 && ( // Pine — three stacked tiers
                         <group>
-                            <mesh position={[0, 34 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[22 * scaleMod, 28 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[16 * scaleMod, 24 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[0, 64 * scaleMod, 0]} castShadow>
-                                <coneGeometry args={[10 * scaleMod, 20 * scaleMod, 10]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
+                            <mesh position={[0, 34, 0]} castShadow geometry={GEO_PINE_1} material={leafMat} />
+                            <mesh position={[0, 50, 0]} castShadow geometry={GEO_PINE_2} material={leafMat} />
+                            <mesh position={[0, 64, 0]} castShadow geometry={GEO_PINE_3} material={leafMat} />
                         </group>
                     )}
                     {type === 1 && ( // Oak — clustered canopy
                         <group>
-                            <mesh position={[0, 50 * scaleMod, 0]} castShadow>
-                                <dodecahedronGeometry args={[22 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[12 * scaleMod, 42 * scaleMod, 6 * scaleMod]} castShadow>
-                                <dodecahedronGeometry args={[14 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
-                            <mesh position={[-11 * scaleMod, 44 * scaleMod, -5 * scaleMod]} castShadow>
-                                <dodecahedronGeometry args={[13 * scaleMod, 0]} />
-                                <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                            </mesh>
+                            <mesh position={[0, 50, 0]} scale={22} castShadow geometry={GEO_CLUMP} material={leafMat} />
+                            <mesh position={[12, 42, 6]} scale={14} castShadow geometry={GEO_CLUMP} material={leafMat} />
+                            <mesh position={[-11, 44, -5]} scale={13} castShadow geometry={GEO_CLUMP} material={leafMat} />
                         </group>
                     )}
                     {type === 2 && ( // Poplar
-                        <mesh position={[0, 45 * scaleMod, 0]} castShadow>
-                            <cylinderGeometry args={[8 * scaleMod, 12 * scaleMod, 60 * scaleMod]} />
-                            <meshStandardMaterial color={leavesColor} emissive={burningEmissive} emissiveIntensity={1.4} />
-                        </mesh>
+                        <mesh position={[0, 45, 0]} castShadow geometry={GEO_POPLAR} material={leafMat} />
                     )}
 
                 </group>
@@ -2779,12 +2512,37 @@ const Clouds = () => {
     );
 };
 
+// Urban street furniture: faded dashed lane lines splitting the field into the
+// three spawn lanes, so the bare asphalt reads as a city street grid.
+const UrbanRoadMarkings = React.memo(({ mapType }: { mapType: MapType }) => {
+    if (mapType !== MapType.URBAN) return null;
+    const span = CANVAS_HEIGHT - HORIZON_Y;
+    const lanes = [HORIZON_Y + span / 3, HORIZON_Y + (2 * span) / 3];
+    const DASHES = 16;
+    return (
+        <group>
+            {lanes.map((y, li) => (
+                <group key={li}>
+                    {Array.from({ length: DASHES }, (_, i) => (
+                        <mesh key={i} position={[(i + 0.5) * (CANVAS_WIDTH / DASHES), 0.55, y]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <planeGeometry args={[26, 2.4]} />
+                            <meshBasicMaterial color="#eab308" transparent opacity={0.28} depthWrite={false} />
+                        </mesh>
+                    ))}
+                </group>
+            ))}
+        </group>
+    );
+});
+
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
 const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
     const ref = useRef<THREE.InstancedMesh>(null!);
     const COUNT = 140;
-    const active = mapType === MapType.COUNTRYSIDE || mapType === MapType.DESERT;
-    const color = mapType === MapType.DESERT ? '#a16207' : '#1a2e05';
+    const active = mapType !== MapType.URBAN; // city streets stay bare
+    const color =
+        mapType === MapType.DESERT      ? '#a16207' :
+        mapType === MapType.ARCHIPELAGO ? '#15803d' : '#1a2e05';
 
     useEffect(() => {
         if (!active || !ref.current) return;
@@ -2881,18 +2639,77 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, mapType, shake, capture, onUnitClick, focusIds, selectedIds }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+    // Must be set before children render — teamTint/eastColor read it
+    CB_MODE = cb;
+    MAT_RING_EAST.color.set(cb ? '#f59e0b' : '#ef4444');
 
-
+    // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
+    // the camera's offset from the target (OrbitControls' min/maxDistance
+    // clamp it on update); pan slides target + camera along the screen-right
+    // axis projected on the ground plane, with the target kept on the map.
+    const controlsRef = useRef<any>(null);
+    useEffect(() => {
+        const api = {
+            zoom: (factor: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const cam = c.object;
+                cam.position.sub(c.target).multiplyScalar(factor).add(c.target);
+                c.update();
+            },
+            pan: (dx: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const cam = c.object;
+                const right = new THREE.Vector3();
+                cam.getWorldDirection(right);
+                right.cross(cam.up).setY(0).normalize().multiplyScalar(dx);
+                const before = c.target.clone();
+                c.target.add(right);
+                c.target.x = Math.max(40, Math.min(CANVAS_WIDTH - 40, c.target.x));
+                c.target.z = Math.max(40, Math.min(CANVAS_HEIGHT - 40, c.target.z));
+                cam.position.add(c.target.clone().sub(before)); // apply the clamped delta
+                c.update();
+            },
+            reset: () => { controlsRef.current?.reset(); },
+            state: () => { const c = controlsRef.current; return c ? { dist: c.object.position.distanceTo(c.target), tx: c.target.x, tz: c.target.z } : null; },
+            // Jump the view to a world x (minimap click) — world-axis move, so it
+            // stays correct however the camera is orbited
+            panTo: (x: number) => {
+                const c = controlsRef.current;
+                if (!c) return;
+                const nx = Math.max(40, Math.min(CANVAS_WIDTH - 40, x));
+                const dx = nx - c.target.x;
+                c.target.x = nx;
+                c.object.position.x += dx;
+                c.update();
+            },
+        };
+        // Snapshot the initial framing so reset() returns exactly here.
+        // OrbitControls mounts async inside the R3F canvas, so retry briefly.
+        const save = setInterval(() => {
+            if (controlsRef.current) { controlsRef.current.saveState(); clearInterval(save); }
+        }, 100);
+        onCameraApi?.(api);
+        (window as any).__ewCam = api;
+        return () => clearInterval(save);
+    }, [onCameraApi]);
 
     // Day/night factor blended on top of the weather palette.
     const dayFactor = getDayFactor();
 
+    // Clear-weather sky carries each map's identity (fog inherits it, so the
+    // desert reads as dust haze and the city as smog); weather overrides it.
+    const clearSky =
+        mapType === MapType.DESERT      ? '#dfc08f' :
+        mapType === MapType.URBAN       ? '#9fb2c0' :
+        mapType === MapType.ARCHIPELAGO ? '#6fd0e8' : '#87CEEB';
     const weatherSky =
         weather === 'rain'  ? '#334155' :
         weather === 'snow'  ? '#cbd5e1' :
         weather === 'fog'   ? '#94a3b8' :
-        weather === 'storm' ? '#1e293b' : '#87CEEB';
+        weather === 'storm' ? '#1e293b' : clearSky;
     const skyColor = TMP_SKY_COLOR.set(weatherSky).lerp(NIGHT_SKY_COLOR, 1 - dayFactor).getHex();
     const sunColor = TMP_SUN_COLOR.set('#ffffff').lerp(MOON_COLOR, 1 - dayFactor).getHex();
 
@@ -2902,7 +2719,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'snow'  ? 0.5 : 0.6;
 
     return (
-        <Canvas shadows dpr={[1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }}>
+        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}
@@ -2931,11 +2748,12 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
             <Backdrop mapType={mapType} />
-            <Clouds />
+            {fx !== 'low' && <Clouds />}
 
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
                 <GroundScatter mapType={mapType} />
+                <UrbanRoadMarkings mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
                 {/* Dirt roads leading up to each bridge */}
                 {terrain.filter(t => t.type === 'bridge').map(b => (
@@ -2949,6 +2767,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 ))}
                 <BorderLine onCanvasClick={onCanvasClick} />
                 {capture && <CapturePoint3D cap={capture} />}
+                {flanks?.map((f, i) => <CapturePoint3D key={i} cap={f} small />)}
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments
@@ -2973,13 +2792,27 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {crates?.map(c => <SupplyCrate3D key={c.id} crate={c} />)}
             </ShakeRig>
 
-            <OrbitControls target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} maxPolarAngle={Math.PI / 2.1} />
+            {/* Camera can tilt and swing across the front 180° arc, but never
+                orbit behind the battlefield — from the far side West/East would
+                appear mirrored and disorient the player. */}
+            <OrbitControls
+                ref={controlsRef}
+                target={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]}
+                maxPolarAngle={Math.PI / 2.1}
+                minAzimuthAngle={-Math.PI / 2}
+                maxAzimuthAngle={Math.PI / 2}
+                minDistance={220}
+                maxDistance={1250}
+                onChange={(e) => { if (e) (window as any).__ewCamAz = (e.target as any).getAzimuthalAngle(); }}
+            />
 
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
-            <EffectComposer>
-                <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
-            </EffectComposer>
+            {fx !== 'low' && (
+                <EffectComposer>
+                    <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+                </EffectComposer>
+            )}
         </Canvas>
     );
 };
