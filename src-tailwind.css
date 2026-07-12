@@ -1,0 +1,5 @@
+@import "tailwindcss";
+
+/* The unit-button team color is built dynamically (`bg-${colorClass}-800`),
+   which build-time scanning can't see — force-include both variants. */
+@source inline("bg-blue-800 bg-red-800");
