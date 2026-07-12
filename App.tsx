@@ -136,6 +136,15 @@ const REMATCH = (() => {
   return false;
 })();
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
+
+// Number-row hotkeys spawn for the player's side (badge shown in the tooltip)
+const SPAWN_HOTKEYS: Record<string, UnitType> = {
+  '1': UnitType.SOLDIER, '2': UnitType.SNIPER, '3': UnitType.FLAMETHROWER, '4': UnitType.MEDIC,
+  '5': UnitType.MORTAR, '6': UnitType.JEEP, '7': UnitType.TANK, '8': UnitType.APC,
+  '9': UnitType.HELICOPTER, '0': UnitType.ANTI_AIR,
+};
+const HOTKEY_OF: Partial<Record<UnitType, string>> =
+  Object.fromEntries(Object.entries(SPAWN_HOTKEYS).map(([k, t]) => [t, k]));
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
 // Last-used menu choices survive reloads (URL params still win)
@@ -287,6 +296,24 @@ const App: React.FC = () => {
     }
   };
 
+  // Keyboard spawning: number row buys for the player's side. Ref keeps the
+  // listener stable while handleSpawnRequest is recreated every render.
+  const spawnReqRef = useRef(handleSpawnRequest);
+  spawnReqRef.current = handleSpawnRequest;
+  useEffect(() => {
+    if (showSplash) return; // armed once the battle starts
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+      const type = SPAWN_HOTKEYS[e.key];
+      if (!type) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      spawnReqRef.current(playerSide, type);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSplash, playerSide]);
+
   const processSpawn = (team: Team, type: UnitType, absolutePos?: { x: number, y: number }) => {
     const cost = UNIT_CONFIG[type].cost;
     const squadId = Math.random().toString(36).substr(2, 5);
@@ -428,10 +455,25 @@ const App: React.FC = () => {
               {/* Tooltip Popup */}
               <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
                 <div className="text-[9px] font-bold text-white uppercase whitespace-nowrap">{label} — ${UNIT_CONFIG[type].cost}</div>
+                {(() => {
+                  const c = UNIT_CONFIG[type] as any;
+                  if (!c.health || !c.damage) return null; // strikes/mines have no combat statline
+                  return (
+                    <div className="flex gap-2 text-[8px] font-mono text-stone-300 whitespace-nowrap">
+                      <span title="Hit points">♥ {c.health}</span>
+                      <span title="Damage per shot">⚔ {c.damage}</span>
+                      <span title="Range">➶ {c.range}</span>
+                      <span title="Speed">» {c.speed >= 1.1 ? 'fast' : c.speed >= 0.5 ? 'med' : 'slow'}</span>
+                    </div>
+                  );
+                })()}
                 <div className="text-[8px] font-bold text-stone-500 uppercase whitespace-nowrap">Effective Vs</div>
                 <div className="flex gap-2 text-stone-300">
                   {UNIT_COUNTERS[type as UnitType]}
                 </div>
+                {team === playerSide && HOTKEY_OF[type] && (
+                  <div className="text-[8px] text-stone-500 whitespace-nowrap">Hotkey: <span className="text-stone-300 font-mono">{HOTKEY_OF[type]}</span></div>
+                )}
               </div>
             </button>
           ))}

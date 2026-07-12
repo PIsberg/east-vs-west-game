@@ -150,6 +150,46 @@ class SoundService {
   }
 
   // ── Rocket / AA missile ──────────────────────────────────────────────────
+  // ── Helicopter rotor ambience — one shared loop while any heli is fielded ─
+  private rotorSrc: AudioBufferSourceNode | null = null;
+  private rotorGain: GainNode | null = null;
+
+  public setRotorLoop(on: boolean) {
+    if (!this.ctx || !this.dest) return;
+    if (on && !this.rotorSrc) {
+      this.ensureContext();
+      // Looped noise pulsed at ~13Hz through a lowpass reads as distant rotor chop
+      const dur = 2;
+      const n = Math.floor(this.ctx.sampleRate * dur);
+      const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) {
+        const t = i / this.ctx.sampleRate;
+        const chop = 0.55 + 0.45 * Math.sin(2 * Math.PI * 13 * t);
+        d[i] = (Math.random() * 2 - 1) * chop;
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 320;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0, this.ctx.currentTime);
+      g.gain.linearRampToValueAtTime(0.045, this.ctx.currentTime + 0.8);
+      src.connect(f); f.connect(g); g.connect(this.dest);
+      src.start();
+      this.rotorSrc = src;
+      this.rotorGain = g;
+    } else if (!on && this.rotorSrc) {
+      const src = this.rotorSrc, g = this.rotorGain!;
+      this.rotorSrc = null;
+      this.rotorGain = null;
+      g.gain.linearRampToValueAtTime(0, this.ctx.currentTime + 0.5);
+      setTimeout(() => { try { src.stop(); } catch { /* already stopped */ } }, 600);
+    }
+  }
+
   // Mortar launch — hollow tube "thoonk", much lighter than the artillery boom
   public playMortarThunk() {
     if (!this.ctx || !this.canPlay('mortar', 200)) return;

@@ -339,10 +339,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // a somber sting when the CPU takes it. Both stop the battle music.
   useEffect(() => {
     if (!gameOver) return;
+    soundService.setRotorLoop(false);
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
   }, [gameOver]);
+
+  // Rotor ambience while any helicopter is fielded (single shared loop)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const heliUp = !gameOverRef.current && !speedRef.current.paused &&
+        unitsRef.current.some(u => u.type === UnitType.HELICOPTER && !u.boarded);
+      soundService.setRotorLoop(heliUp);
+    }, 1000);
+    return () => { window.clearInterval(id); soundService.setRotorLoop(false); };
+  }, []);
   // Latest selection callback for use inside the stale tick closure (debug hook)
   const onSelectUnitsRef = useRef(onSelectUnits);
   useEffect(() => { onSelectUnitsRef.current = onSelectUnits; }, [onSelectUnits]);

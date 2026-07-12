@@ -2483,6 +2483,29 @@ const Clouds = () => {
     );
 };
 
+// Urban street furniture: faded dashed lane lines splitting the field into the
+// three spawn lanes, so the bare asphalt reads as a city street grid.
+const UrbanRoadMarkings = React.memo(({ mapType }: { mapType: MapType }) => {
+    if (mapType !== MapType.URBAN) return null;
+    const span = CANVAS_HEIGHT - HORIZON_Y;
+    const lanes = [HORIZON_Y + span / 3, HORIZON_Y + (2 * span) / 3];
+    const DASHES = 16;
+    return (
+        <group>
+            {lanes.map((y, li) => (
+                <group key={li}>
+                    {Array.from({ length: DASHES }, (_, i) => (
+                        <mesh key={i} position={[(i + 0.5) * (CANVAS_WIDTH / DASHES), 0.55, y]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <planeGeometry args={[26, 2.4]} />
+                            <meshBasicMaterial color="#eab308" transparent opacity={0.28} depthWrite={false} />
+                        </mesh>
+                    ))}
+                </group>
+            ))}
+        </group>
+    );
+});
+
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
 const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
     const ref = useRef<THREE.InstancedMesh>(null!);
@@ -2686,6 +2709,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
                 <GroundScatter mapType={mapType} />
+                <UrbanRoadMarkings mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
                 {/* Dirt roads leading up to each bridge */}
                 {terrain.filter(t => t.type === 'bridge').map(b => (
