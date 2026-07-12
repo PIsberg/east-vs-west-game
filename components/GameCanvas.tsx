@@ -247,7 +247,7 @@ interface GameCanvasProps {
   // mount only) and a completion callback when the human wins
   startMoneyMult?: number;
   challengeId?: string | null;
-  onChallengeWon?: (id: string) => void;
+  onChallengeWon?: (id: string, durSec: number) => void;
   // Measured canvas size from App's layout observer. When provided these win
   // over the internal window-based estimate, making the battlefield fit the
   // real space between header, side panels and command bar exactly.
@@ -440,7 +440,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
-    if (humanWon && challengeId && cpuRef.current.teams.length === 1) onChallengeWon?.(challengeId);
+    if (humanWon && challengeId && cpuRef.current.teams.length === 1) onChallengeWon?.(challengeId, Math.round((Date.now() - matchStartRef.current) / 1000));
     // Record the result for the splash screen's Recent Battles panel
     try {
       const rec = {

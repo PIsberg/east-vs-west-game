@@ -139,11 +139,25 @@ const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
 
 // Preset challenge missions: fixed settings + optional handicap, completion
 // badges persist in ewv-challenges
-const CHALLENGES = [
-  { id: 'first-blood', name: 'First Blood', desc: 'Win a battle against an Easy CPU', map: MapType.COUNTRYSIDE, mode: 'points' as GameMode, cpu: 'easy' as const, moneyMult: 1 },
-  { id: 'underdog', name: 'Underdog', desc: 'Beat a Normal CPU starting with half the money', map: MapType.URBAN, mode: 'points' as GameMode, cpu: 'normal' as const, moneyMult: 0.5 },
-  { id: 'iron-wall', name: 'Iron Wall', desc: 'Raze a Hard CPU\'s base before it razes yours', map: MapType.DESERT, mode: 'basehp' as GameMode, cpu: 'hard' as const, moneyMult: 1 },
+interface Challenge {
+  id: string; name: string; desc: string;
+  map: MapType; mode: GameMode; cpu: 'easy' | 'normal' | 'hard';
+  moneyMult?: number;    // handicap on the human side's starting funds
+  maxDurSec?: number;    // must win within this time
+  infantryOnly?: boolean; // human may only buy foot units
+}
+const CHALLENGES: Challenge[] = [
+  { id: 'first-blood', name: 'First Blood', desc: 'Win a battle against an Easy CPU', map: MapType.COUNTRYSIDE, mode: 'points', cpu: 'easy' },
+  { id: 'underdog', name: 'Underdog', desc: 'Beat a Normal CPU starting with half the money', map: MapType.URBAN, mode: 'points', cpu: 'normal', moneyMult: 0.5 },
+  { id: 'blitzkrieg', name: 'Blitzkrieg', desc: 'Beat a Normal CPU in under 5 minutes', map: MapType.COUNTRYSIDE, mode: 'points', cpu: 'normal', maxDurSec: 300 },
+  { id: 'boots-only', name: 'Boots Only', desc: 'Beat a Normal CPU buying only infantry', map: MapType.DESERT, mode: 'points', cpu: 'normal', infantryOnly: true },
+  { id: 'iron-wall', name: 'Iron Wall', desc: 'Raze a Hard CPU\'s base before it razes yours', map: MapType.DESERT, mode: 'basehp', cpu: 'hard' },
 ];
+// Foot units allowed under the Boots Only restriction
+const INFANTRY_ALLOWED = new Set([
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.MINE_PERSONAL,
+]);
 
 // Number-row hotkeys spawn for the player's side (badge shown in the tooltip)
 const SPAWN_HOTKEYS: Record<string, UnitType> = {
@@ -191,9 +205,11 @@ const App: React.FC = () => {
   );
   // Active challenge (null = free play) + persisted completion badges
   const [challenge, setChallenge] = useState<string | null>(null);
+  const challengeStartRef = useRef(0);
   const [challengesDone, setChallengesDone] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('ewv-challenges') || '[]'); } catch { return []; }
   });
+  const activeChallenge = CHALLENGES.find(c => c.id === challenge) ?? null;
   // Recent battle results, written by GameCanvas at game over
   const [history] = useState<{ when: number, map: string, mode: string, winner: string, w: number, e: number, dur: number, spectate?: boolean }[]>(() => {
     try { return JSON.parse(localStorage.getItem('ewv-history') || '[]'); } catch { return []; }
@@ -310,11 +326,15 @@ const App: React.FC = () => {
     setCpuLevel(c.cpu);
     setPlayerSide(Team.WEST);
     setChallenge(c.id);
+    challengeStartRef.current = Date.now();
     setGameKey(prev => prev + 1);
     handleStartClick();
   };
-  // GameCanvas reports a human challenge win back up
-  const onChallengeWon = useCallback((id: string) => {
+  // GameCanvas reports a human challenge win back up; timed challenges only
+  // count when the win landed inside the limit
+  const onChallengeWon = useCallback((id: string, durSec: number) => {
+    const c = CHALLENGES.find(ch => ch.id === id);
+    if (c?.maxDurSec && durSec > c.maxDurSec) return;
     setChallengesDone(prev => {
       if (prev.includes(id)) return prev;
       const next = [...prev, id];
@@ -332,6 +352,7 @@ const App: React.FC = () => {
 
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
+    if (activeChallenge?.infantryOnly && team === playerSide && !INFANTRY_ALLOWED.has(type)) return; // Boots Only
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
       if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE, UnitType.SMOKE].includes(type)) setTargetingInfo({ team, type });
@@ -506,7 +527,7 @@ const App: React.FC = () => {
               title={label}
               className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
               onClick={() => handleSpawnRequest(team, type)}
-              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type))}
             >
               <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
               <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
@@ -834,6 +855,15 @@ const App: React.FC = () => {
             <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
             <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
             <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
+            {activeChallenge && !showSplash && (
+              <div data-testid="challenge-chip" className="flex items-center gap-1 text-amber-300" title={activeChallenge.desc}>
+                <Target size={12} />
+                <span className="text-[10px] font-bold uppercase">
+                  {activeChallenge.name}
+                  {activeChallenge.maxDurSec ? ` ${Math.max(0, activeChallenge.maxDurSec - Math.floor((Date.now() - challengeStartRef.current) / 1000))}s` : ''}
+                </span>
+              </div>
+            )}
             {gameState.weather === 'rain'  && <div className="flex items-center gap-1 text-blue-300 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">RAIN</span></div>}
             {gameState.weather === 'snow'  && <div className="flex items-center gap-1 text-slate-200 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">SNOW</span></div>}
             {gameState.weather === 'fog'   && <div className="flex items-center gap-1 text-slate-400 animate-pulse"><Wind size={14} /><span className="text-[10px] font-bold">FOG</span></div>}
