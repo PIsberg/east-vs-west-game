@@ -503,6 +503,7 @@ const MODEL_URL = {
     helicopter: 'models/helicopter.glb',
     fighter: 'models/fighter.glb',
     drone: 'models/drone.glb',
+    gunboat: 'models/gunboat.glb',
 };
 Object.values(MODEL_URL).forEach(u => useGLTF.preload(u));
 
@@ -756,37 +757,22 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.GUNBOAT && (
                         <group position={[0, 1.5 + Math.sin(Date.now() * 0.0022 + unit.position.x) * 0.7, 0]} rotation={[Math.sin(Date.now() * 0.0017 + unit.position.y) * 0.03, 0, 0]}>
-                            {/* Hull */}
-                            <mesh position={[0, 3, 0]} castShadow>
-                                <boxGeometry args={[30, 6, 13]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Bow taper */}
-                            <mesh position={[17, 3, 0]} rotation={[0, 0, -Math.PI / 2]} castShadow>
-                                <coneGeometry args={[6.5, 8, 4]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Deck house */}
-                            <mesh position={[-6, 8.5, 0]} castShadow>
-                                <boxGeometry args={[10, 5, 9]} />
-                                <meshStandardMaterial color="#334155" />
-                            </mesh>
-                            {/* Mast */}
-                            <mesh position={[-6, 13, 0]}>
-                                <cylinderGeometry args={[0.4, 0.4, 6]} />
-                                <meshStandardMaterial color="#1e293b" />
-                            </mesh>
-                            {/* Bow gun: mount + barrel with recoil */}
-                            <mesh position={[6, 8, 0]} castShadow>
-                                <cylinderGeometry args={[3, 3.5, 4, 10]} />
-                                <meshStandardMaterial color="#374151" />
-                            </mesh>
-                            <mesh position={[12 - recoil, 8.5, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                                <cylinderGeometry args={[1, 1.2, 14]} />
-                                <meshStandardMaterial color="#1f2937" />
-                            </mesh>
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.gunboat} targetLen={36} axis="x" yaw={0} tints={[{ materials: ['PaletteMaterial001', 'PaletteMaterial002'], color: teamTint(unit.team), strength: 0.6 }]} />
+                            </Suspense>
+                            {/* Team pennant — the textured hull resists tinting, so fly the colors */}
+                            <group position={[-13, 13, 0]}>
+                                <mesh>
+                                    <cylinderGeometry args={[0.3, 0.3, 10]} />
+                                    <meshStandardMaterial color="#57534e" />
+                                </mesh>
+                                <mesh position={[2.6, 3.4, 0]} rotation={[0, Math.sin(Date.now() * 0.003) * 0.25, 0]}>
+                                    <boxGeometry args={[5, 3.2, 0.3]} />
+                                    <meshStandardMaterial color={isWest ? '#3b82f6' : '#ef4444'} emissive={isWest ? '#3b82f6' : '#ef4444'} emissiveIntensity={0.3} side={THREE.DoubleSide} />
+                                </mesh>
+                            </group>
                             {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                <group position={[20, 8.5, 0]}>
+                                <group position={[20, 10, 0]}>
                                     <MuzzleFlash size={3} />
                                 </group>
                             )}
