@@ -1397,6 +1397,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 <MuzzleFlash size={1.2} />
                             </group>
                         )}
+                        {/* Rider pip: the jeep's single seat, same cue as the truck's */}
+                        {(unit.passengers?.length || 0) > 0 && (
+                            <mesh position={[-2, 15.5, 0]}>
+                                <sphereGeometry args={[1.3, 6, 6]} />
+                                <meshBasicMaterial color="#fbbf24" toneMapped={false} />
+                            </mesh>
+                        )}
                     </group>
                 )}
 

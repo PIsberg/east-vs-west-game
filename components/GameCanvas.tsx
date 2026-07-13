@@ -1751,10 +1751,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // TRANSPORT: board nearby foot soldiers in your own half, unload at the front
-      if (unit.type === UnitType.TRANSPORT) {
+      // TRANSPORT / JEEP: board nearby foot soldiers in your own half, unload at
+      // the front. The jeep is the same taxi with a single seat — it is the
+      // quickest way to get an engineer (speed 0.5) up to the armor that needs him.
+      if (unit.type === UnitType.TRANSPORT || unit.type === UnitType.JEEP) {
         unit.passengers = unit.passengers || [];
-        const cap = (UNIT_CONFIG[UnitType.TRANSPORT] as any).capacity || 6;
+        const cap = (UNIT_CONFIG[unit.type] as any).capacity || 6;
         const inOwnHalf = unit.team === Team.WEST ? unit.position.x < CANVAS_WIDTH * 0.5 : unit.position.x > CANVAS_WIDTH * 0.5;
 
         if (unit.passengers.length < cap && inOwnHalf) {
@@ -1762,6 +1764,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (unit.passengers!.length >= cap) return;
             if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
             if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return; // still descending
+            // An engineer already working a job stays on it — a jeep driving past
+            // must not abduct the mechanic mid-weld.
+            if (o.type === UnitType.ENGINEER && o.jobX !== undefined) return;
             o.boarded = true;
             o.isInCover = false;
             unit.passengers!.push(o);

@@ -63,7 +63,7 @@ The first team to reach **100 Points** wins.
 ### Vehicles
 | Unit | Role | Weakness |
 | :--- | :--- | :--- |
-| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
+| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. Has **one seat** — it will pick up a foot soldier in your half and run him to the front (the quickest way to get a slow Engineer to the armor that needs him). | Tanks, Mines. |
 | **Truck** | **Troop transport**. Scoops up 6 foot soldiers in your half, delivers them to the front. Unarmed; survivors bail out if it dies. | Everything. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
 | **Tesla** | Chain-lightning vehicle. Melts infantry, ignores vehicles entirely. | Tanks, Helicopters. |

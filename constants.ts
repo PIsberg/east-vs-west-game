@@ -333,6 +333,8 @@ export const UNIT_CONFIG = {
     speed: 1.15,
     range: 150,
     attackSpeed: 14,
+    capacity: 1, // one seat: the fastest way to get an engineer (or any foot unit) forward
+
     width: 32,
     height: 20,
     colorWest: '#1d4ed8',
