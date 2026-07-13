@@ -5,7 +5,9 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(() => {
   return {
-    base: '/east-vs-west-game/',
+    // Capacitor serves the bundle from the filesystem root, so the GitHub Pages
+    // subpath would 404 every asset. Build the app shell with BUILD_TARGET=capacitor.
+    base: process.env.BUILD_TARGET === 'capacitor' ? './' : '/east-vs-west-game/',
     server: {
       port: 3000,
       host: '0.0.0.0',
