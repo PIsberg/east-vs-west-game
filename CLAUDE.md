@@ -81,7 +81,23 @@ Weather cycle (rain/snow/fog/storm with combat penalties + lightning strikes; th
 
 ### Rendering performance
 
-Regular particles and projectiles render through two `InstancedMesh`es updated imperatively in `useFrame` (`InstancedParticles`/`InstancedProjectiles` in `GameScene.tsx`); only rare special particles (beams, bolts, text, decals, corpses, missiles) are individual React components. Keep new high-count effects in the instanced path or flag them via `isSpecialParticle`.
+Regular particles and projectiles render through two `InstancedMesh`es updated imperatively in `useFrame` (`InstancedParticles`/`InstancedProjectiles` in `GameScene.tsx`); only rare special particles (beams, bolts, corpses, missiles) are individual React components. Keep new high-count effects in the instanced path or flag them via `isSpecialParticle`.
+
+Two more instanced paths carry everything that scales with battle size — as loose meshes they each cost a draw call plus a fresh geometry and material on every mount:
+- `InstancedDecals` — scorch decals, crater rims and vehicle tread marks (the highest-count objects on a busy field).
+- `InstancedUnitOverlays` — team ring, health bar and the shadow blob under aircraft. Four draw calls for the whole army instead of ~4 per unit. Note these read `units`/`terrain` directly each frame, so a unit's overlay is positioned from `unit.position`, not from its React tree.
+
+Three has no per-instance opacity: `withInstanceAlpha(material)` patches the shader to multiply in an `aAlpha` instanced attribute, and `useAlphaGeometry` allocates it. Use those when a new instanced effect needs to fade.
+
+Floating bounty text ("+$110") is a **cached canvas-texture sprite** (`bountyMaterial`), not drei's `<Text>`: troika allocated a geometry and a texture per popup and never freed them.
+
+**Cloned GLBs must dispose their skeleton.** A clone gets its own `Skeleton`, and a skeleton allocates a bone texture on the GPU. Clones are mounted through `<primitive>`, which R3F deliberately never disposes — so every unit that died used to leave its bone textures behind (~8 per spawn; 1,400+ GPU textures inside 40 seconds, which is what made long matches degrade). `useTintedClone` now disposes the skeleton on unmount. Geometry and materials are shared with the template and must *not* be disposed there.
+
+**The model pack's tint rules are name-based and every GLB ships one atlas material** (`PaletteMaterial001`). Rules naming `Swat`/`Main`/`DarkGreen` matched nothing, so units rendered untinted — both sides identical. Tint rules now use `'*'` (match every material); `tintedMaterial` caches the result so all units of a side share one material.
+
+**The soldier GLB is unarmed** — its clips are named `Idle_Gun`/`Run` but the mesh is only body/head/legs/feet. `InfantryModel` bolts a shared low-poly rifle onto the `Wrist.R` bone. The armature bakes a large scale into its bones, so anything parented to one inherits it: cancel the bone's world scale (`RIFLE_LENGTH / boneScale`) or the rifle renders hundreds of units long.
+
+**Merging the soldier's meshes**: the GLB is four skinned meshes over ~11 primitives. Primitives *within* a mesh share its skin and can be merged safely (`soldierTemplate`, 11 → 4 draw calls). Merging across the four meshes is **not** safe — each skin bakes its own node scale into its inverse bind matrices (feet 0.26, legs 0.50, head 0.18), so binding them to one skeleton tears the model apart. The merge is guarded: bone indices must stay in range or it falls back to the unmerged meshes.
 
 GLB unit models (`public/models/*.glb`, CC0/CC-BY — credits in README): loaded via drei `useGLTF` + preload, cloned per unit with `SkeletonUtils.clone`, materials recolored through `useTintedClone(url, TintRule[])`. All foot units share the animated Quaternius soldier via `InfantryModel` — `Swat` material carries the team color, `Grey`/`Black` take a per-role accent (`INFANTRY_ACCENT`), clips keyed off `unit.state` (Run/Idle_Gun/Idle_Gun_Shoot; sniper idles with Idle_Gun_Pointing). `TankModel` keeps Tank_Forward playing-but-paused when stationary (a stopped action reverts skinned tracks to a coiled bind pose). Vehicles/aircraft (jeep, truck=TRANSPORT, apc, antiair, helicopter, fighter, drone) are static GLBs rendered by `StaticModel` — runtime Box3 auto-fit (reliable ONLY for unskinned models; the armature-driven soldier/tank use empirical `SOLDIER_SCALE`/`TANK_SCALE` because their bind-pose boxes lie), `yaw` maps native forward onto +X (Zsky vehicles face +X → yaw 0 via prop where needed; the fighter needed π), and `spinNodes` spins the drone's `Rotor_*` nodes. Muzzle flashes, parachutes, rotor blur discs, passenger pips, flame/heal/defuse effects survive as primitive overlays. Artillery, Tesla, Bunker and the mines still use primitive builds.
 

@@ -1,8 +1,8 @@
 
 import React, { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, Text, useGLTF, useAnimations } from '@react-three/drei';
-import { SkeletonUtils } from 'three-stdlib';
+import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, useGLTF, useAnimations } from '@react-three/drei';
+import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
@@ -478,16 +478,7 @@ const InfantryLegs = ({ walking, phase, color = '#333', transparent, opacity }: 
 };
 
 // Shared Assets
-const MAT_HEALTH_BG = new THREE.MeshBasicMaterial({ color: '#1c1917' });
-const MAT_HEALTH_HI = new THREE.MeshBasicMaterial({ color: '#22c55e' });
-const MAT_HEALTH_MID = new THREE.MeshBasicMaterial({ color: '#eab308' });
-const MAT_HEALTH_LOW = new THREE.MeshBasicMaterial({ color: '#ef4444' });
 const GEO_HEALTH_BAR = new THREE.BoxGeometry(1, 3, 1);
-const GEO_TEAM_RING = new THREE.RingGeometry(0.85, 1, 24);
-const MAT_RING_WEST = new THREE.MeshBasicMaterial({ color: '#3b82f6', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
-const MAT_RING_EAST = new THREE.MeshBasicMaterial({ color: '#ef4444', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
-const MAT_AO_BLOB = new THREE.MeshBasicMaterial({ color: 'black', transparent: true, opacity: 0.25, depthWrite: false });
-const GEO_AO_BLOB = new THREE.CircleGeometry(1, 16);
 
 // ── GLB unit models (Quaternius, CC0 — see README credits) ──────────────────
 // Loaded once via useGLTF; every unit gets a SkeletonUtils clone (required for
@@ -517,28 +508,213 @@ let CB_MODE = false;
 const eastColor = (normal: string, cbAlt = '#f59e0b') => CB_MODE ? cbAlt : normal;
 const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : eastColor(TEAM_TINT_EAST, '#fbbf24');
 
-// Clone a GLB per unit (SkeletonUtils handles skinned meshes) and recolor
-// named materials: each rule lerps matching materials toward a color.
+// Clone a GLB per unit (SkeletonUtils handles skinned meshes) and recolor its
+// materials: each rule lerps matching materials toward a color. `'*'` matches
+// every material — which is what the current model pack needs, since all of its
+// GLBs ship a single atlas material (`PaletteMaterial001`) rather than the named
+// `Swat`/`Main` slots the rules were originally written against. Matching by
+// those old names silently tinted nothing, so both sides rendered identical.
 type TintRule = { materials: string[], color: string, strength: number };
-function useTintedClone(url: string, rules: TintRule[]) {
+
+// Tinted materials are shared across every unit that wants the same look —
+// a battle of 80 units used to allocate ~4 cloned materials each.
+const TINT_CACHE = new Map<string, THREE.Material>();
+const tintedMaterial = (base: THREE.Material, color: string, strength: number): THREE.Material => {
+    const key = `${base.uuid}|${color}|${strength}`;
+    let m = TINT_CACHE.get(key);
+    if (!m) {
+        m = base.clone();
+        const c = (m as any).color;
+        if (c) (m as any).color = c.clone().lerp(new THREE.Color(color), strength);
+        TINT_CACHE.set(key, m);
+    }
+    return m;
+};
+
+function useTintedClone(url: string, rules: TintRule[], template?: THREE.Object3D) {
     const { scene } = useGLTF(url);
+    const src = template ?? scene;
     const key = rules.map(r => r.materials.join('.') + r.color + r.strength).join('|');
-    return useMemo(() => {
-        const root = SkeletonUtils.clone(scene);
+    const obj = useMemo(() => {
+        const root = SkeletonUtils.clone(src);
         root.traverse((o: any) => {
             if (o.isMesh || o.isSkinnedMesh) {
                 o.castShadow = true;
                 o.frustumCulled = false; // skinned bounds lag the armature
                 if (o.material) {
-                    o.material = o.material.clone();
-                    const rule = rules.find(r => r.materials.some(m => o.material.name.includes(m)));
-                    if (rule) o.material.color = o.material.color.clone().lerp(new THREE.Color(rule.color), rule.strength);
+                    const rule = rules.find(r => r.materials.some(m => m === '*' || o.material.name.includes(m)));
+                    if (rule) o.material = tintedMaterial(o.material, rule.color, rule.strength);
                 }
             }
         });
         return root;
-    }, [scene, key]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [src, key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Every clone of a skinned model gets its own Skeleton, and a Skeleton
+    // allocates a bone texture on the GPU. Clones are mounted through
+    // <primitive>, which R3F deliberately never disposes — so each unit that
+    // died left its bone texture behind and GPU memory climbed for the whole
+    // match (measured: ~8 textures leaked per spawn, 1400+ in 40 seconds).
+    // Geometry and materials are shared with the template, so only the skeleton
+    // is ours to free.
+    useEffect(() => () => {
+        obj.traverse((o: any) => { if (o.isSkinnedMesh && o.skeleton?.dispose) o.skeleton.dispose(); });
+    }, [obj]);
+
+    return obj;
 }
+
+// One shared soldier template, merged. The GLB is four skinned meshes
+// (body/head/legs/feet) split across ~8 primitives, each carrying its own skin —
+// so a cloned soldier used to bring 8 skeletons, 8 bone textures and 8 draw
+// calls with it. All four skins list the same joints in the same order and share
+// a skeleton root, so the geometry can be merged and bound to a single skeleton:
+// one mesh, one skeleton, one draw call per soldier.
+const SOLDIER_TEMPLATE = new WeakMap<THREE.Object3D, THREE.Object3D>();
+
+// Normalize a skinned primitive so several of them can be merged: the pack's
+// primitives disagree on index/attribute types (skinIndex arrives as Uint8 on
+// some, Uint16 on others), and merging those straight produces a geometry whose
+// bone indices are nonsense.
+const normalizeSkinned = (g: THREE.BufferGeometry): THREE.BufferGeometry | null => {
+    const src = g.index ? g.toNonIndexed() : g;
+    const pos = src.getAttribute('position'), nrm = src.getAttribute('normal');
+    const uv = src.getAttribute('uv');
+    const si = src.getAttribute('skinIndex'), sw = src.getAttribute('skinWeight');
+    if (!pos || !nrm || !uv || !si || !sw) return null;
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.Float32BufferAttribute(Array.from(pos.array as ArrayLike<number>), 3));
+    out.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from(nrm.array as ArrayLike<number>), 3));
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from(uv.array as ArrayLike<number>), 2));
+    out.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(Array.from(si.array as ArrayLike<number>), 4));
+    out.setAttribute('skinWeight', new THREE.Float32BufferAttribute(Array.from(sw.array as ArrayLike<number>), 4));
+    return out;
+};
+
+const soldierTemplate = (scene: THREE.Object3D): THREE.Object3D => {
+    let t = SOLDIER_TEMPLATE.get(scene);
+    if (t) return t;
+    t = SkeletonUtils.clone(scene);
+    const skinned: THREE.SkinnedMesh[] = [];
+    t.traverse((o: any) => { if (o.isSkinnedMesh) skinned.push(o); });
+
+    // The GLB splits the soldier into four skinned meshes (body/head/legs/feet)
+    // across ~11 primitives — 11 draw calls per soldier, doubled by the shadow
+    // pass. Every primitive of a given mesh shares that mesh's skin and material,
+    // so their geometry can be merged safely: 11 meshes become 4.
+    //
+    // Merging across the four *meshes* is NOT safe: each skin bakes its own node
+    // scale into its inverse bind matrices (feet 0.26, legs 0.50, head 0.18), so
+    // binding them all to one skeleton tears the model apart. Left alone.
+    const byParent = new Map<THREE.Object3D, THREE.SkinnedMesh[]>();
+    for (const m of skinned) {
+        if (!m.parent) continue;
+        const group = byParent.get(m.parent) ?? [];
+        group.push(m);
+        byParent.set(m.parent, group);
+    }
+    for (const [parent, group] of byParent) {
+        if (group.length < 2) continue;
+        const first = group[0];
+        // Same skin only — different skins have incompatible bind matrices.
+        const sameSkin = group.every(m => m.skeleton === first.skeleton || m.skeleton.boneInverses[0].equals(first.skeleton.boneInverses[0]));
+        if (!sameSkin) continue;
+        const parts = group.map(m => normalizeSkinned(m.geometry));
+        if (!parts.every(Boolean)) continue;
+        const merged = mergeBufferGeometries(parts as THREE.BufferGeometry[], false);
+        if (!merged) continue;
+
+        // A bad merge silently deforms the model rather than failing, so only
+        // adopt it when every bone index still addresses a real bone.
+        const bones = first.skeleton.bones.length;
+        const idx = merged.getAttribute('skinIndex');
+        const arr = idx?.array as ArrayLike<number> | undefined;
+        let sane = !!arr && Number.isInteger(merged.getAttribute('position').count);
+        if (sane && arr) for (let i = 0; i < arr.length; i++) if (arr[i] >= bones) { sane = false; break; }
+        if (!sane) continue;
+
+        const one = new THREE.SkinnedMesh(merged, first.material);
+        one.name = `${first.name}_merged`;
+        one.castShadow = true;
+        one.frustumCulled = false;
+        parent.add(one);
+        one.bind(first.skeleton, first.bindMatrix);
+        for (const m of group) m.removeFromParent();
+    }
+    SOLDIER_TEMPLATE.set(scene, t);
+    return t;
+};
+
+// GLTF sanitizes node names ('Wrist.R' can arrive as 'Wrist_R'), so match loosely.
+const findBone = (root: THREE.Object3D, want: string): THREE.Object3D | undefined => {
+    const norm = (s: string) => s.replace(/[._\s]/g, '').toLowerCase();
+    const target = norm(want);
+    let hit: THREE.Object3D | undefined;
+    root.traverse(o => { if (!hit && norm(o.name) === target) hit = o; });
+    return hit;
+};
+
+// The Quaternius soldier ships unarmed — its clips are named Idle_Gun/Run but
+// the mesh is only body/head/legs/feet. Bolt a low-poly rifle onto the right
+// wrist bone so the squad actually holds what it's firing. One merged geometry
+// and a shared material per accent colour: one extra draw call per soldier.
+const GEO_RIFLE = (() => {
+    const parts: THREE.BufferGeometry[] = [];
+    const push = (g: THREE.BufferGeometry, x: number, y: number, z: number, rz = 0) => {
+        g.rotateZ(rz); g.translate(x, y, z); parts.push(g);
+    };
+    push(new THREE.BoxGeometry(0.62, 0.05, 0.05), 0.1, 0, 0);      // receiver + barrel
+    push(new THREE.BoxGeometry(0.20, 0.10, 0.05), -0.20, -0.01, 0); // stock
+    push(new THREE.BoxGeometry(0.05, 0.13, 0.04), 0.02, -0.09, 0);  // magazine
+    push(new THREE.BoxGeometry(0.16, 0.04, 0.04), 0.30, 0.05, 0);   // fore sight rail
+    return mergeBufferGeometries(parts, false)!;
+})();
+// Floating bounty labels ("+$110") as sprites off a cached canvas texture. The
+// set of distinct amounts in a match is tiny, so each one is rasterized once and
+// reused — unlike drei's <Text>, which allocated (and leaked) a geometry plus a
+// texture per popup.
+const BOUNTY_CACHE = new Map<string, THREE.SpriteMaterial>();
+const bountyMaterial = (text: string): THREE.SpriteMaterial => {
+    let m = BOUNTY_CACHE.get(text);
+    if (!m) {
+        const pad = 8, font = 44;
+        const c = document.createElement('canvas');
+        const ctx = c.getContext('2d')!;
+        ctx.font = `bold ${font}px sans-serif`;
+        c.width = Math.ceil(ctx.measureText(text).width) + pad * 2;
+        c.height = font + pad * 2;
+        const g = c.getContext('2d')!;
+        g.font = `bold ${font}px sans-serif`;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 6;
+        g.strokeStyle = '#000000';
+        g.strokeText(text, c.width / 2, c.height / 2);
+        g.fillStyle = '#22c55e';
+        g.fillText(text, c.width / 2, c.height / 2);
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false });
+        // World size for the sprite, scaled off the canvas aspect
+        m.userData = { w: (c.width / c.height) * 26, h: 26 };
+        BOUNTY_CACHE.set(text, m);
+    }
+    return m;
+};
+
+// Rifle length in the soldier's own units (he stands ~1.8 tall), before the
+// wrist bone's baked armature scale is cancelled out.
+const RIFLE_LENGTH = 0.85;
+
+const RIFLE_MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const rifleMaterial = (color: string): THREE.MeshStandardMaterial => {
+    let m = RIFLE_MAT_CACHE.get(color);
+    if (!m) {
+        m = new THREE.MeshStandardMaterial({ color, roughness: 0.65, metalness: 0.35 });
+        RIFLE_MAT_CACHE.set(color, m);
+    }
+    return m;
+};
 
 // Static (unskinned) model: runtime bounding-box auto-fit IS reliable here
 // (unlike the armature-driven soldier/tank), plus optional spinning rotor
@@ -590,12 +766,41 @@ const INFANTRY_ACCENT: Partial<Record<UnitType, string>> = {
 // Animated infantry (all foot units reuse the rifleman): runs, aims and
 // fires using the model's own clips.
 const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: number }) => {
-    const { animations } = useGLTF(MODEL_URL.soldier);
+    const { scene, animations } = useGLTF(MODEL_URL.soldier);
     const accent = INFANTRY_ACCENT[unit.type];
-    const obj = useTintedClone(MODEL_URL.soldier, [
-        { materials: ['Swat'], color: teamTint(unit.team), strength: 0.75 },
-        ...(accent ? [{ materials: ['Grey', 'Black'], color: accent, strength: 0.85 }] : []),
-    ]);
+    // The model has one atlas material, so the team colour rides on it directly;
+    // the role accent goes on the rifle, which keeps specialists readable up
+    // close without costing an extra mesh.
+    const obj = useTintedClone(
+        MODEL_URL.soldier,
+        [{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }],
+        soldierTemplate(scene),
+    );
+    // Arm the clone once: hang a rifle off the right wrist so the weapon tracks
+    // the hand through the run/aim/fire clips.
+    useMemo(() => {
+        if (obj.getObjectByName('Rifle')) return;
+        const wrist = findBone(obj, 'Wrist.R');
+        if (!wrist) return;
+        // The armature bakes a large scale into its bones, so anything parented
+        // to a bone inherits it — a naively-sized rifle came out ~780 world units
+        // long, i.e. slabs flying across the battlefield. Cancel the bone's scale
+        // and size the weapon against the soldier itself (~1.8 units tall).
+        obj.updateWorldMatrix(false, true);
+        const s = new THREE.Vector3();
+        wrist.getWorldScale(s);
+        const boneScale = (s.x + s.y + s.z) / 3 || 1;
+        const k = RIFLE_LENGTH / boneScale;
+
+        const rifle = new THREE.Mesh(GEO_RIFLE, rifleMaterial(accent ?? '#2f3437'));
+        rifle.name = 'Rifle';
+        rifle.castShadow = true;
+        rifle.frustumCulled = false;
+        rifle.scale.setScalar(k);
+        rifle.position.set(0.05 * k, 0.02 * k, 0);
+        rifle.rotation.set(0, 0, -Math.PI / 2);
+        wrist.add(rifle);
+    }, [obj, accent]);
     const group = useRef<THREE.Group>(null!);
     const { actions } = useAnimations(animations, group);
     const clip = unit.state === UnitState.ATTACKING ? 'CharacterArmature|Idle_Gun_Shoot'
@@ -621,7 +826,7 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
 // Tank with animated tracks while rolling.
 const TankModel = ({ unit }: { unit: Unit }) => {
     const { animations } = useGLTF(MODEL_URL.tank);
-    const obj = useTintedClone(MODEL_URL.tank, [{ materials: ['Main'], color: teamTint(unit.team), strength: 0.45 }]);
+    const obj = useTintedClone(MODEL_URL.tank, [{ materials: ['*'], color: teamTint(unit.team), strength: 0.45 }]);
     const group = useRef<THREE.Group>(null!);
     const { actions } = useAnimations(animations, group);
     useEffect(() => {
@@ -693,40 +898,9 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
             onCanvasClick={onUnitClick ? () => onUnitClick(unit) : onCanvasClick}
         >
             <group receiveShadow castShadow rotation={[0, 0, bobTilt]}>
-                {/* Health Bar — hidden at full health, color shifts as damage mounts */}
-                {unit.health < unit.maxHealth && (
-                    <group>
-                        <mesh position={[0, 20, 0]} scale={[20, 1, 1]} geometry={GEO_HEALTH_BAR} material={MAT_HEALTH_BG} />
-                        <mesh
-                            position={[-10 + 10 * (unit.health / unit.maxHealth), 20, 0.5]}
-                            scale={[Math.max(0.01, 20 * (unit.health / unit.maxHealth)), 1, 1]}
-                            geometry={GEO_HEALTH_BAR}
-                            material={unit.health / unit.maxHealth > 0.6 ? MAT_HEALTH_HI : unit.health / unit.maxHealth > 0.3 ? MAT_HEALTH_MID : MAT_HEALTH_LOW}
-                        />
-                    </group>
-                )}
-
-                {/* Team ring on the ground (skip hidden traps) */}
-                {unit.type !== UnitType.MINE_PERSONAL && unit.type !== UnitType.MINE_TANK && unit.type !== UnitType.NAPALM && (
-                    <mesh
-                        position={[0, -yOffset - bobY + 0.5, 0]}
-                        rotation={[-Math.PI / 2, 0, 0]}
-                        scale={[unit.width * 0.75 + 6, unit.width * 0.75 + 6, 1]}
-                        geometry={GEO_TEAM_RING}
-                        material={isWest ? MAT_RING_WEST : MAT_RING_EAST}
-                    />
-                )}
-
-                {/* Soft shadow blob under aircraft */}
-                {config.isFlying && (
-                    <mesh
-                        position={[0, -yOffset - bobY - terrainH + 0.3, 0]}
-                        rotation={[-Math.PI / 2, 0, 0]}
-                        scale={[unit.width * 0.5, unit.width * 0.5, 1]}
-                        geometry={GEO_AO_BLOB}
-                        material={MAT_AO_BLOB}
-                    />
-                )}
+                {/* Health bar, team ring and aircraft shadow blob are drawn by
+                    <InstancedUnitOverlays> — one draw call each for the whole
+                    field instead of ~4 per unit. */}
 
                 {/* Geometry based on Type */}
                 {
@@ -764,7 +938,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     unit.type === UnitType.GUNBOAT && (
                         <group position={[0, 1.5 + Math.sin(Date.now() * 0.0022 + unit.position.x) * 0.7, 0]} rotation={[Math.sin(Date.now() * 0.0017 + unit.position.y) * 0.03, 0, 0]}>
                             <Suspense fallback={null}>
-                                <StaticModel url={MODEL_URL.gunboat} targetLen={36} axis="x" yaw={0} tints={[{ materials: ['PaletteMaterial001', 'PaletteMaterial002'], color: teamTint(unit.team), strength: 0.6 }]} />
+                                <StaticModel url={MODEL_URL.gunboat} targetLen={36} axis="x" yaw={0} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.6 }]} />
                             </Suspense>
                             {/* Team pennant — the textured hull resists tinting, so fly the colors */}
                             <group position={[-13, 13, 0]}>
@@ -974,7 +1148,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     unit.type === UnitType.ANTI_AIR && (
                         <group>
                             <Suspense fallback={null}>
-                                <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['YellowBaseMissileTurret1', 'YellowMiddleMissileTurret1', 'YellowGunsMissileTurret1'], color: teamTint(unit.team), strength: 0.55 }]} />
+                                <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.55 }]} />
                             </Suspense>
                             {unit.attackCooldown > 35 && (
                                 <group position={[8, 26, 0]} rotation={[0, 0, Math.PI / 4]}>
@@ -1044,7 +1218,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         <group position={[0, 15, 0]} rotation={[0, (unit.rotation || 0) - Math.PI / 2, 0]}>
                             <group position={[0, -12, 0]} rotation={[0, -Math.PI / 2, 0]}>
                                 <Suspense fallback={null}>
-                                    <StaticModel url={MODEL_URL.helicopter} targetLen={38} axis="x" yaw={0} tints={[{ materials: ['DarkGreen'], color: teamTint(unit.team), strength: 0.5 }]} />
+                                    <StaticModel url={MODEL_URL.helicopter} targetLen={38} axis="x" yaw={0} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
                                 </Suspense>
                             </group>
                             {/* Rotor blur disc (the model's rotor is static) */}
@@ -1223,7 +1397,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.JEEP && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.jeep} targetLen={28} tints={[{ materials: ['DarkGreen_Jeep', 'LightGreen_Jeep'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.jeep} targetLen={28} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
                         </Suspense>
                         {firing && (
                             <group position={[12, 14, 0]}>
@@ -1237,7 +1411,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.TRANSPORT && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.truck} targetLen={40} tints={[{ materials: ['DarkGreen_ScoutCar', 'Orange_ScoutCar'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.truck} targetLen={40} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
                         </Suspense>
                         {/* Passenger pips over the canvas */}
                         {Array.from({ length: unit.passengers?.length || 0 }).map((_, i) => (
@@ -1274,7 +1448,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.APC && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['Green_LightTank', 'Yellow_LightTank'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
                         </Suspense>
                         {unit.attackCooldown > (config.attackSpeed - 10) && (
                             <group position={[22, 14, 0]}>
@@ -1561,6 +1735,229 @@ const MAX_PARTICLE_INSTANCES = 2048;
 const INST_PARTICLE_GEO = new THREE.BoxGeometry(1, 1, 1);
 const INST_PARTICLE_MAT = new THREE.MeshStandardMaterial({ color: 'white', transparent: true, opacity: 0.9 });
 
+// ── Instanced ground flats ────────────────────────────────────────────────────
+// Scorch decals, crater rims and tread marks are the highest-count objects on a
+// busy field (~270 meshes at 37 units). As individual React meshes they each
+// allocated a geometry and a material on mount and cost a draw call; now they
+// ride in three instanced meshes. Three has no per-instance opacity, so alpha
+// comes in as an instanced attribute the shader multiplies into the fragment.
+const withInstanceAlpha = <T extends THREE.Material>(mat: T): T => {
+    mat.onBeforeCompile = (shader) => {
+        shader.vertexShader = 'attribute float aAlpha;\nvarying float vAlpha;\n' +
+            shader.vertexShader.replace('void main() {', 'void main() {\n\tvAlpha = aAlpha;');
+        shader.fragmentShader = 'varying float vAlpha;\n' +
+            shader.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n\tdiffuseColor.a *= vAlpha;');
+    };
+    return mat;
+};
+
+const MAX_FLATS = 220;
+const GEO_FLAT_DISC = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
+const GEO_FLAT_RIM = new THREE.TorusGeometry(1, 0.098, 6, 24).rotateX(-Math.PI / 2);
+const GEO_FLAT_STRIP = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+const MAT_FLAT_LIT = withInstanceAlpha(new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 1 }));
+const MAT_FLAT_UNLIT = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+
+const useAlphaGeometry = (base: THREE.BufferGeometry, max: number) => useMemo(() => {
+    const g = base.clone();
+    g.setAttribute('aAlpha', new THREE.InstancedBufferAttribute(new Float32Array(max), 1));
+    return g;
+}, [base, max]);
+
+const InstancedDecals = ({ particles }: { particles: Particle[] }) => {
+    const discRef = useRef<THREE.InstancedMesh>(null!);
+    const rimRef = useRef<THREE.InstancedMesh>(null!);
+    const stripRef = useRef<THREE.InstancedMesh>(null!);
+    const discGeo = useAlphaGeometry(GEO_FLAT_DISC, MAX_FLATS);
+    const rimGeo = useAlphaGeometry(GEO_FLAT_RIM, MAX_FLATS);
+    const stripGeo = useAlphaGeometry(GEO_FLAT_STRIP, MAX_FLATS);
+    const dummy = useMemo(() => new THREE.Object3D(), []);
+    const col = useMemo(() => new THREE.Color(), []);
+
+    useFrame(() => {
+        const disc = discRef.current, rim = rimRef.current, strip = stripRef.current;
+        if (!disc || !rim || !strip) return;
+        const discA = disc.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
+        const rimA = rim.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
+        const stripA = strip.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
+        let d = 0, r = 0, s = 0;
+
+        const put = (mesh: THREE.InstancedMesh, i: number, color: string, alpha: number, attr: THREE.InstancedBufferAttribute) => {
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+            mesh.setColorAt(i, col.set(color));
+            attr.setX(i, alpha);
+        };
+
+        for (const p of particles) {
+            if (p.isGroundDecal) {
+                const alpha = Math.min(0.85, p.life / 600);
+                if (d < MAX_FLATS) {
+                    dummy.position.set(p.position.x, 0.2, p.position.y);
+                    dummy.rotation.set(0, 0, 0);
+                    dummy.scale.set(p.size, 1, p.size);
+                    put(disc, d++, p.color, alpha, discA);
+                }
+                if (p.size >= 30) {
+                    if (d < MAX_FLATS) { // burnt core
+                        dummy.position.set(p.position.x, 0.35, p.position.y);
+                        dummy.scale.set(p.size * 0.45, 1, p.size * 0.45);
+                        put(disc, d++, '#0c0a09', alpha, discA);
+                    }
+                    if (r < MAX_FLATS) { // raised earth rim
+                        dummy.position.set(p.position.x, 0.6, p.position.y);
+                        dummy.rotation.set(0, 0, 0);
+                        dummy.scale.setScalar(p.size * 0.92);
+                        put(rim, r++, '#44403c', alpha, rimA);
+                    }
+                }
+            } else if (p.isSkid) {
+                const alpha = Math.min(0.14, p.life / 2800);
+                for (const side of [-1, 1]) {
+                    if (s >= MAX_FLATS) break;
+                    const rot = p.rot ?? 0;
+                    const off = side * p.size * 0.34;
+                    dummy.position.set(
+                        p.position.x - Math.sin(-rot) * off,
+                        0.15,
+                        p.position.y + Math.cos(-rot) * off,
+                    );
+                    dummy.rotation.set(0, -rot, 0);
+                    dummy.scale.set(p.size * 1.8, 1, p.size * 0.22);
+                    put(strip, s++, p.color, alpha, stripA);
+                }
+            }
+        }
+
+        for (const [mesh, count, attr] of [[disc, d, discA], [rim, r, rimA], [strip, s, stripA]] as const) {
+            mesh.count = count;
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+            attr.needsUpdate = true;
+        }
+    });
+
+    return (
+        <>
+            <instancedMesh ref={discRef} args={[discGeo, MAT_FLAT_LIT, MAX_FLATS]} frustumCulled={false} receiveShadow />
+            <instancedMesh ref={rimRef} args={[rimGeo, MAT_FLAT_LIT, MAX_FLATS]} frustumCulled={false} receiveShadow />
+            <instancedMesh ref={stripRef} args={[stripGeo, MAT_FLAT_UNLIT, MAX_FLATS]} frustumCulled={false} />
+        </>
+    );
+};
+
+// Per-unit overlays — team ring, health bar, shadow blob under aircraft. These
+// are pure decoration but there is one set per unit, so as loose meshes they
+// grew the draw call count linearly with army size (~4 per unit, doubled by the
+// shadow pass). Instanced, the whole field costs four draw calls no matter how
+// many units are fighting.
+const MAX_UNIT_INSTANCES = 400;
+const GEO_RING_FLAT = new THREE.RingGeometry(0.85, 1, 24).rotateX(-Math.PI / 2);
+const GEO_BLOB_FLAT = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
+const MAT_INST_RING = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide }));
+const MAT_INST_BLOB = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+const MAT_INST_BAR = new THREE.MeshBasicMaterial();
+
+// Airborne units hang under a parachute on the way in; drones and fighters fly.
+const unitYOffset = (unit: Unit) => {
+    if (unit.type === UnitType.AIRBORNE) {
+        const t = Date.now() - (unit.spawnTime || 0);
+        return t < 3000 ? 200 * (1 - Math.min(1, t / 3000)) : 0;
+    }
+    if (unit.type === UnitType.DRONE) return 25;
+    if (unit.type === UnitType.FIGHTER) return 42;
+    return 0;
+};
+
+const InstancedUnitOverlays = ({ units, terrain, cbMode }: { units: Unit[], terrain: TerrainObject[], cbMode: boolean }) => {
+    const ringRef = useRef<THREE.InstancedMesh>(null!);
+    const blobRef = useRef<THREE.InstancedMesh>(null!);
+    const barRef = useRef<THREE.InstancedMesh>(null!);
+    const ringGeo = useAlphaGeometry(GEO_RING_FLAT, MAX_UNIT_INSTANCES);
+    const blobGeo = useAlphaGeometry(GEO_BLOB_FLAT, MAX_UNIT_INSTANCES);
+    const dummy = useMemo(() => new THREE.Object3D(), []);
+    const col = useMemo(() => new THREE.Color(), []);
+
+    useFrame(() => {
+        const ring = ringRef.current, blob = blobRef.current, bar = barRef.current;
+        if (!ring || !blob || !bar) return;
+        const ringA = ring.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
+        const blobA = blob.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
+        let r = 0, b = 0, h = 0;
+
+        for (const u of units) {
+            const cfg = UNIT_CONFIG[u.type] as any;
+            const groundY = getTerrainHeight(u.position.x, u.position.y, terrain);
+            const yOff = unitYOffset(u);
+
+            // Team ring (hidden traps have none)
+            if (r < MAX_UNIT_INSTANCES &&
+                u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM) {
+                const s = u.width * 0.75 + 6;
+                dummy.position.set(u.position.x, groundY + 0.5, u.position.y);
+                dummy.rotation.set(0, 0, 0);
+                dummy.scale.set(s, 1, s);
+                dummy.updateMatrix();
+                ring.setMatrixAt(r, dummy.matrix);
+                ring.setColorAt(r, col.set(u.team === Team.WEST ? '#3b82f6' : (cbMode ? '#f59e0b' : '#ef4444')));
+                ringA.setX(r, 0.35);
+                r++;
+            }
+
+            // Shadow blob under aircraft
+            if (b < MAX_UNIT_INSTANCES && cfg.isFlying) {
+                const s = u.width * 0.5;
+                dummy.position.set(u.position.x, 0.3, u.position.y);
+                dummy.rotation.set(0, 0, 0);
+                dummy.scale.set(s, 1, s);
+                dummy.updateMatrix();
+                blob.setMatrixAt(b, dummy.matrix);
+                blob.setColorAt(b, col.set('#000000'));
+                blobA.setX(b, 0.25);
+                b++;
+            }
+
+            // Health bar: background + fill, only once damaged
+            if (u.health < u.maxHealth && h + 1 < MAX_UNIT_INSTANCES) {
+                const frac = Math.max(0, Math.min(1, u.health / u.maxHealth));
+                const y = groundY + yOff + 20;
+                dummy.rotation.set(0, 0, 0);
+
+                dummy.position.set(u.position.x, y, u.position.y);
+                dummy.scale.set(20, 1, 1);
+                dummy.updateMatrix();
+                bar.setMatrixAt(h, dummy.matrix);
+                bar.setColorAt(h, col.set('#1c1917'));
+                h++;
+
+                dummy.position.set(u.position.x - 10 + 10 * frac, y, u.position.y + 0.5);
+                dummy.scale.set(Math.max(0.01, 20 * frac), 1, 1);
+                dummy.updateMatrix();
+                bar.setMatrixAt(h, dummy.matrix);
+                bar.setColorAt(h, col.set(frac > 0.6 ? '#22c55e' : frac > 0.3 ? '#eab308' : '#ef4444'));
+                h++;
+            }
+        }
+
+        ring.count = r; blob.count = b; bar.count = h;
+        for (const [m, a] of [[ring, ringA], [blob, blobA]] as const) {
+            m.instanceMatrix.needsUpdate = true;
+            if (m.instanceColor) m.instanceColor.needsUpdate = true;
+            a.needsUpdate = true;
+        }
+        bar.instanceMatrix.needsUpdate = true;
+        if (bar.instanceColor) bar.instanceColor.needsUpdate = true;
+    });
+
+    return (
+        <>
+            <instancedMesh ref={ringRef} args={[ringGeo, MAT_INST_RING, MAX_UNIT_INSTANCES]} frustumCulled={false} />
+            <instancedMesh ref={blobRef} args={[blobGeo, MAT_INST_BLOB, MAX_UNIT_INSTANCES]} frustumCulled={false} />
+            <instancedMesh ref={barRef} args={[GEO_HEALTH_BAR, MAT_INST_BAR, MAX_UNIT_INSTANCES]} frustumCulled={false} />
+        </>
+    );
+};
+
 const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null!);
     const dummy = useMemo(() => new THREE.Object3D(), []);
@@ -1698,67 +2095,27 @@ const Particle3D = ({ p }: { p: Particle }) => {
         );
     }
 
-    // Floating Text (Dollar Sign)
+    // Floating bounty text ("+$110"). Drawn as a cached canvas-texture sprite
+    // rather than drei's <Text>: troika allocates a geometry and a texture per
+    // instance and they were never freed, so a long match bled GPU memory
+    // (geometries and textures climbed without bound as kills piled up). There
+    // are only a handful of distinct amounts, so one texture each covers a
+    // whole match.
     if (p.text) {
+        const mat = bountyMaterial(p.text);
         return (
-            <group position={[p.position.x, 20 + (90 - p.life) * 0.5, p.position.y]}>
-                <Text
-                    fontSize={24}
-                    color="#22c55e"
-                    anchorX="center"
-                    anchorY="middle"
-                    outlineWidth={1}
-                    outlineColor="black"
-                    rotation={[-Math.PI / 2, 0, 0]} // Face camera (top down-ish) or Billboard? Use Billboard logic if needed, but simple rotation works for top-down game
-                >
-                    {p.text}
-                </Text>
-            </group>
+            <sprite
+                position={[p.position.x, 20 + (90 - p.life) * 0.5, p.position.y]}
+                scale={[mat.userData.w, mat.userData.h, 1]}
+                material={mat}
+            />
         );
     }
 
-    // Vehicle tread marks: two faint parallel strips aligned with travel.
-    // Deliberately near-invisible — they read as wear, not markings.
-    if (p.isSkid) {
-        const opacity = Math.min(0.14, p.life / 2800);
-        return (
-            <group position={[p.position.x, 0.15, p.position.y]} rotation={[0, -(p.rot ?? 0), 0]}>
-                {[-1, 1].map(s => (
-                    <mesh key={s} position={[0, 0, s * p.size * 0.34]} rotation={[-Math.PI / 2, 0, 0]}>
-                        <planeGeometry args={[p.size * 1.8, p.size * 0.22]} />
-                        <meshBasicMaterial color={p.color} transparent opacity={opacity} depthWrite={false} />
-                    </mesh>
-                ))}
-            </group>
-        );
-    }
-
-    // Scorch Mark / Ground Decal — large ones get a raised earth rim (crater look)
-    if (p.isGroundDecal) {
-        const opacity = Math.min(0.85, p.life / 600);
-        return (
-            <group position={[p.position.x, 0, p.position.y]}>
-                <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <circleGeometry args={[p.size, 16]} />
-                    <meshStandardMaterial color={p.color} transparent opacity={opacity} depthWrite={false} />
-                </mesh>
-                {p.size >= 30 && (
-                    <>
-                        {/* Inner burnt core */}
-                        <mesh position={[0, 0.35, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                            <circleGeometry args={[p.size * 0.45, 16]} />
-                            <meshStandardMaterial color="#0c0a09" transparent opacity={opacity} depthWrite={false} />
-                        </mesh>
-                        {/* Raised earth rim */}
-                        <mesh position={[0, 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                            <torusGeometry args={[p.size * 0.92, p.size * 0.09, 6, 24]} />
-                            <meshStandardMaterial color="#44403c" transparent opacity={opacity} roughness={1} />
-                        </mesh>
-                    </>
-                )}
-            </group>
-        );
-    }
+    // Tread marks and scorch decals are drawn by <InstancedDecals>: they are the
+    // highest-count objects in a battle and cost a draw call (plus a fresh
+    // geometry and material on every mount) as loose meshes.
+    if (p.isSkid || p.isGroundDecal) return null;
 
     return (
         <mesh position={[p.position.x, 10 + (30 - p.life), p.position.y]}>
@@ -2642,7 +2999,6 @@ const MOON_COLOR = new THREE.Color('#93c5fd');
 export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
-    MAT_RING_EAST.color.set(cb ? '#f59e0b' : '#ef4444');
 
     // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
     // the camera's offset from the target (OrbitControls' min/maxDistance
@@ -2781,6 +3137,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
                 {particles.map(p => isSpecialParticle(p) ? <Particle3D key={p.id} p={p} /> : null)}
                 <InstancedParticles particles={particles} />
+                <InstancedDecals particles={particles} />
+                <InstancedUnitOverlays units={units} terrain={terrain} cbMode={cb} />
 
                 {flyovers.map(f => <Flyover3D key={f.id} fly={f} />)}
 
