@@ -6,7 +6,7 @@ import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx } from '../constants';
 
 
 interface GameSceneProps {
@@ -444,22 +444,61 @@ const ClickableGroup = ({ onCanvasClick, children, ...props }: any) => {
 // -- Reusable Geometries & Materials --
 const GEO_FLASH_CORE = new THREE.ConeGeometry(0.6, 3, 8);
 const GEO_FLASH_OUTER = new THREE.ConeGeometry(1, 4.5, 8, 1, true);
+const GEO_FLASH_BALL = new THREE.SphereGeometry(1, 8, 6);          // gas ball at the bore of a big gun
+const GEO_FLASH_SPIKE = new THREE.PlaneGeometry(3.4, 0.4);         // star-flare blade (scaled by flash size — keep it short or it smears)
 const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: 'yellow', transparent: true, opacity: 0.9, toneMapped: false });
 // Note: Outer material depends on color prop, so we might need to keep it dynamic or cache by color.
 // But mostly it's yellow/orange.
+const FLASH_MAT_CACHE = new Map<string, THREE.Material>();
+const flashMaterial = (color: string, opacity: number) => {
+    const key = `${color}|${opacity}`;
+    let m = FLASH_MAT_CACHE.get(key);
+    if (!m) {
+        m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, toneMapped: false });
+        FLASH_MAT_CACHE.set(key, m);
+    }
+    return m;
+};
 
+// A muzzle flash is burning gas, not a decal: it flickers hard, it is never the
+// same shape twice, and on a big bore it blooms into a star. Anything at or
+// above `size` 2 (tank, artillery, gunboat, AA, bunker) gets the gas ball and
+// the flare blades; a rifle keeps the plain cone.
+// Still no pointLight — dynamic lights are expensive per-fragment, so bloom on
+// the toneMapped-off geometry sells the light instead.
 const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: string }) => {
-    // Memoize outer material if color changes infrequent
-    // No pointLight: dynamic lights are expensive per-fragment; bloom on the
-    // toneMapped-off cones sells the flash instead.
-    const outerMat = useMemo(() => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, side: THREE.DoubleSide, toneMapped: false }), [color]);
+    const grp = useRef<THREE.Group>(null);
+    const seed = useMemo(() => Math.random(), []);
+    const outerMat = useMemo(() => flashMaterial(color, 0.6), [color]);
+    const flareMat = useMemo(() => flashMaterial(color, 0.3), [color]);   // blades stay faint, or they read as a smear
+    const heavy = size >= 2;
+
+    useFrame(() => {
+        const g = grp.current;
+        if (!g) return;
+        // Flicker + roll: consecutive shots from the same gun must not stamp an
+        // identical sprite, which is what made sustained fire look static.
+        const t = Date.now() * 0.045 + seed * 12;
+        g.scale.setScalar(size * (0.72 + Math.abs(Math.sin(t)) * 0.5));
+        g.rotation.x = seed * Math.PI * 2 + t * 0.25;
+    });
 
     return (
-        <group scale={[size, size, size]}>
+        <group ref={grp}>
             {/* Core */}
             <mesh position={[1.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_CORE} material={MAT_FLASH_CORE} />
             {/* Outer */}
             <mesh position={[2, 0, 0]} rotation={[0, 0, -Math.PI / 2]} geometry={GEO_FLASH_OUTER} material={outerMat} />
+            {heavy && (
+                <group>
+                    {/* Gas ball hanging at the bore */}
+                    <mesh position={[1.8, 0, 0]} scale={0.75} geometry={GEO_FLASH_BALL} material={outerMat} />
+                    {/* Star flare: blades crossing the muzzle */}
+                    {[0, Math.PI / 2].map((r, i) => (
+                        <mesh key={i} position={[1.8, 0, 0]} rotation={[r, 0, 0]} geometry={GEO_FLASH_SPIKE} material={flareMat} />
+                    ))}
+                </group>
+            )}
         </group>
     );
 };
@@ -951,9 +990,11 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
     const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
     const bobTilt = walking ? Math.sin(Date.now() * 0.012 + walkPhase) * 0.05 : 0;
 
-    // Turret recoil right after firing (mirrors the muzzle-flash window)
+    // Turret recoil right after firing (mirrors the muzzle-flash window), scaled
+    // by the unit's firing signature so a howitzer heaves and a rifle twitches.
     const firing = unit.attackCooldown > (config.attackSpeed - 8);
-    const recoil = firing ? (unit.attackCooldown - (config.attackSpeed - 8)) * 0.45 : 0;
+    const fireFx = getFireFx(unit.type);
+    const recoil = firing ? (unit.attackCooldown - (config.attackSpeed - 8)) * 0.11 * fireFx.recoil : 0;
 
     // Visual cue for Cover
     const opacity = (unit as any).isInCover ? 0.6 : 1.0;
@@ -1073,7 +1114,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     unit.type === UnitType.ARTILLERY && (
                         <group>
                             {/* Towed gun (GLB), rolled back along its firing line by recoil */}
-                            <group position={[-recoil * 1.5, 0, 0]}>
+                            <group position={[-recoil, 0, 0]}>
                                 <Suspense fallback={null}>
                                     <StaticModel url={MODEL_URL.artillery} targetLen={54} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
                                 </Suspense>
@@ -1145,7 +1186,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             </Suspense>
                             {unit.attackCooldown > 35 && (
                                 <group position={[8, 26, 0]} rotation={[0, 0, Math.PI / 4]}>
-                                    <MuzzleFlash size={3} />
+                                    <MuzzleFlash size={3} color={fireFx.flashColor} />
                                 </group>
                             )}
                             {/* Spinning search radar */}
@@ -1255,7 +1296,8 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             )}
                             {unit.attackCooldown > (config.attackSpeed - 6) && (
                                 <group position={[11, 12, 1]}>
-                                    <MuzzleFlash size={1} />
+                                    {/* A pale crack, not a fireball — his tell is the dust it lifts */}
+                                    <MuzzleFlash size={1.5} color={fireFx.flashColor} />
                                 </group>
                             )}
                         </group>

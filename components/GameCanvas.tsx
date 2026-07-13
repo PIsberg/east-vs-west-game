@@ -27,6 +27,7 @@ import {
   ENGINEER_REPAIR,
   ENGINEER_REPAIR_RANGE,
   isMechanical,
+  getFireFx,
   getMoveClass,
   CLASS_PROFILE,
   AVOID_LOOKAHEAD,
@@ -970,6 +971,79 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             size: 2.5 + Math.random() * 2.5, alt: 3 + Math.random() * 6, altVel: 0.6,
           });
         }
+      }
+    };
+
+    // Everything that leaves the barrel when a unit shoots, per its FIRE_FX
+    // signature (constants.ts). All of it rides the instanced particle path —
+    // fast weapons fire many times a second, so nothing here may be a special
+    // particle (those cost a React component and a draw call each).
+    const fireFx = (unit: Unit, angle: number) => {
+      const fx = getFireFx(unit.type);
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const mx = unit.position.x + cos * 16;   // roughly at the muzzle
+      const my = unit.position.y + sin * 16;
+
+      if (fx.shake > 0) shakeRef.current = Math.max(shakeRef.current, fx.shake);
+
+      // Smoke: shoved out of the bore, slows fast and drifts up
+      for (let i = 0; i < fx.smoke; i++) {
+        const s = 0.5 + Math.random();
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx + (Math.random() - 0.5) * 6, y: my + (Math.random() - 0.5) * 6 },
+          velocity: { x: cos * s + (Math.random() - 0.5) * 0.5, y: sin * s + (Math.random() - 0.5) * 0.5 },
+          drag: 0.86,
+          life: 24 + Math.random() * 16,
+          color: Math.random() < 0.5 ? '#9ca3af' : '#d1d5db',
+          size: 3 + Math.random() * 4,
+          alt: 9, altVel: 0.22,
+        });
+      }
+      // Dust: the blast slaps the ground and throws a low, wide sheet forward
+      for (let i = 0; i < fx.dust; i++) {
+        const spread = (Math.random() - 0.5) * 1.1;
+        const s = 0.7 + Math.random() * 1.3;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx, y: my },
+          velocity: { x: Math.cos(angle + spread) * s, y: Math.sin(angle + spread) * s },
+          drag: 0.88,
+          life: 18 + Math.random() * 14,
+          color: Math.random() < 0.5 ? '#b9a476' : '#8a7a58',
+          size: 2.5 + Math.random() * 3.5,
+          alt: 2, altVel: 0.06,
+        });
+      }
+      // Brass: ejected sideways, tumbling down out of the breech
+      for (let i = 0; i < fx.brass; i++) {
+        const side = (Math.random() < 0.5 ? 1 : -1) * (Math.PI / 2);
+        const s = 0.4 + Math.random() * 0.5;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: unit.position.x, y: unit.position.y },
+          velocity: { x: Math.cos(angle + side) * s, y: Math.sin(angle + side) * s },
+          drag: 0.93,
+          life: 14 + Math.random() * 8,
+          color: '#facc15',
+          size: 1 + Math.random(),
+          alt: 11, altVel: -0.55,   // falls
+        });
+      }
+      // Sparks: burning propellant, straight out of the muzzle and gone
+      for (let i = 0; i < fx.sparks; i++) {
+        const spread = (Math.random() - 0.5) * 0.7;
+        const s = 1.6 + Math.random() * 1.6;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx, y: my },
+          velocity: { x: Math.cos(angle + spread) * s, y: Math.sin(angle + spread) * s },
+          drag: 0.8,
+          life: 7 + Math.random() * 5,
+          color: Math.random() < 0.5 ? '#fed7aa' : '#fb923c',
+          size: 1.2 + Math.random() * 1.6,
+          alt: 10, altVel: 0,
+        });
       }
     };
 
@@ -2733,6 +2807,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
                   projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                   unit.attackCooldown = config.attackSpeed; soundService.playSniperShot();
+                  fireFx(unit, a);   // a miss still throws dust and gives his hide away
                   return;
                 }
               }
@@ -2761,6 +2836,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 isMissile
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
+              fireFx(unit, a + spread);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
               else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
@@ -3441,6 +3517,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
         smokes: smokesRef.current.length,
+        particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },

@@ -416,6 +416,46 @@ export const RALLY_COOLDOWN_MS = 50000;      // measured from activation
 export const RALLY_RELOAD_MULT = 1.45;       // cooldowns tick 45% faster
 export const RALLY_SPEED_MULT = 1.25;
 
+// ── Firing signatures ───────────────────────────────────────────────────────
+// What actually leaves the barrel. Every gun used to emit the same orange cone,
+// so a tank's main gun read like a rifle. Now the weight of a shot is in the
+// muzzle: heavy bores blow smoke, kick dust off the ground and shove the
+// camera; automatics spit brass; the sniper barely disturbs the air (a wisp of
+// dust is the only tell). Counts are per shot — keep them small, every one of
+// these is an instanced particle and fast weapons fire many times a second.
+export interface FireFx {
+  flash: number;        // muzzle-flash scale
+  flashColor?: string;  // default is the hot orange of burning propellant
+  smoke: number;        // puffs shoved out of the bore
+  dust: number;         // ground kicked up by the muzzle blast
+  brass: number;        // ejected casings
+  sparks: number;       // burning propellant flecks
+  shake: number;        // camera kick
+  recoil: number;       // how far the whole weapon rocks back (GameScene)
+}
+
+export const FIRE_FX: Partial<Record<UnitType, FireFx>> = {
+  // Heavy bores: the shot is an event
+  [UnitType.ARTILLERY]: { flash: 7, smoke: 7, dust: 9, brass: 0, sparks: 5, shake: 3.4, recoil: 5 },
+  [UnitType.TANK]:      { flash: 4, smoke: 5, dust: 6, brass: 0, sparks: 4, shake: 2.0, recoil: 4 },
+  [UnitType.GUNBOAT]:   { flash: 3.4, smoke: 4, dust: 0, brass: 0, sparks: 3, shake: 1.4, recoil: 3 },
+  [UnitType.MORTAR]:    { flash: 1.6, smoke: 5, dust: 3, brass: 0, sparks: 2, shake: 0.6, recoil: 2 },
+  [UnitType.BUNKER]:    { flash: 2.2, smoke: 2, dust: 1, brass: 2, sparks: 2, shake: 0.7, recoil: 1.5 },
+  // Automatics: brass, not thunder
+  [UnitType.ANTI_AIR]:  { flash: 2.2, flashColor: '#fde68a', smoke: 1, dust: 0, brass: 4, sparks: 3, shake: 0.4, recoil: 1 },
+  [UnitType.APC]:       { flash: 1.8, smoke: 1, dust: 0, brass: 3, sparks: 2, shake: 0.3, recoil: 1 },
+  [UnitType.JEEP]:      { flash: 1.3, smoke: 0, dust: 0, brass: 3, sparks: 1, shake: 0.15, recoil: 0.8 },
+  [UnitType.SPECIAL_FORCES]: { flash: 1.5, smoke: 0, dust: 0, brass: 4, sparks: 2, shake: 0.15, recoil: 0.8 },
+  [UnitType.SOLDIER]:   { flash: 1, smoke: 0, dust: 0, brass: 2, sparks: 1, shake: 0, recoil: 0.6 },
+  // The sniper's tell is dust lifted off the ground, not a flash
+  [UnitType.SNIPER]:    { flash: 1.5, flashColor: '#fff7ed', smoke: 1, dust: 3, brass: 1, sparks: 0, shake: 0.25, recoil: 1.2 },
+  // Aircraft: nothing to kick dust off, and rockets leave their own trail
+  [UnitType.HELICOPTER]: { flash: 2, smoke: 1, dust: 0, brass: 0, sparks: 2, shake: 0.35, recoil: 1 },
+  [UnitType.FIGHTER]:   { flash: 2, smoke: 1, dust: 0, brass: 0, sparks: 2, shake: 0.3, recoil: 1 },
+};
+export const DEFAULT_FIRE_FX: FireFx = { flash: 1, smoke: 0, dust: 0, brass: 1, sparks: 1, shake: 0, recoil: 0.5 };
+export const getFireFx = (t: UnitType): FireFx => FIRE_FX[t] ?? DEFAULT_FIRE_FX;
+
 // Field repairs: units near their own edge patch up slowly when not under fire
 export const REPAIR_ZONE = 90;               // distance from own edge
 export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
