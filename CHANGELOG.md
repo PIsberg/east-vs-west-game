@@ -1,5 +1,12 @@
 # Changelog
 
+## Bunkers, box-select, and a tank that faces the right way (July 2026)
+
+- **Tanks drove backwards.** The tank model faces −X, but the code assumed +X and gave it no yaw, so both sides rolled into battle with the barrel pointing at their own base (measured: the gun sat 5.1 units *behind* the hull centre relative to the advance). Yawed by π — the gun now leads.
+- **Drag-select works** because it now exists: left-drag draws a marquee and selects every unit of yours inside it. Previously left-drag orbited the camera and there was no box-select at all, so "select all your units with the mouse" simply had nothing behind it. The camera now orbits on right-drag; touch is unchanged.
+- **Bunkers are built, not dropped.** A bunker spends ~9s as a building site — scaffolded, gunless, and starting at 35% HP while the concrete cures — so placing one on top of the enemy is a way to lose $155.
+- **Infantry can man a bunker.** Foot troops told to *hold* near one walk over and climb in: each soldier inside adds +25% damage and 7% faster reload, capped at four (the firing slits run out). If the bunker falls, ~60% of the garrison scrambles out of the rubble at half health; the rest are lost with it.
+
 ## Soldiers get rifles; the renderer stops leaking (July 2026)
 
 - **The squad is armed.** The soldier model shipped without a weapon — its animations are named `Idle_Gun`, but there was no gun. Every foot unit now carries a rifle on its right hand, tracked to the wrist bone through the run/aim/fire clips, tinted with the unit's role colour.

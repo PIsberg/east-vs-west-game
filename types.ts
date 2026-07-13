@@ -109,6 +109,10 @@ export interface Unit {
   lastProgressPos?: Vector2D; // sampled periodically for stuck detection
   stuckSamples?: number;  // consecutive samples with no meaningful progress
   deployed?: boolean;     // APC has already put its squad on the ground
+  // Bunkers
+  buildUntil?: number;    // under construction until this timestamp: can't fire, HP still rising
+  garrison?: number;      // infantry manning it — more guns in the slits, capped
+  buildHp?: number;       // integrity gained from curing so far (kept separate from battle damage)
 }
 
 export interface Projectile {

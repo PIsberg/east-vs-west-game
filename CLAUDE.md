@@ -115,6 +115,18 @@ The world is a 2D plane (`x`, `y` = 0–800 × 0–450, see `CANVAS_WIDTH`/`CANV
 
 Terrain modifies combat: hills grant `HILL_RANGE_BONUS`/`HILL_RELOAD_BONUS`, cover (trees/rocks) reduces incoming damage, rivers slow infantry and penalize range; vehicles must cross via bridges.
 
+### Selection and camera
+
+Left-drag on the battlefield is the **selection marquee** (`BoxSelect` in `GameScene.tsx` — it lives inside the Canvas because picking projects each unit's field position through the live camera). The camera therefore orbits on **right-drag** (`OrbitControls` `mouseButtons`); touch is unchanged, one finger still orbits. Releasing a marquee also lands as a click on open ground, which would clear the selection you just made — `GameCanvas` swallows exactly one click after a drag (a *flag*, not a time window: R3F dispatches the click on the next frame, and a slow frame is hundreds of ms wide).
+
+Clicking a unit still selects it plus its squad; a second click within 400ms selects all units of that type.
+
+### Bunkers
+
+A bunker is poured, not dropped: `BUNKER_BUILD_MS` (~9s) as a building site with `unit.buildUntil` set — it cannot fire, and its HP cures from `BUNKER_BUILD_START_HP` to full. The cure applies the *delta* of progress each tick (`unit.buildHp`), not a nudge toward a target — a per-tick nudge never catches up at a low frame rate and the bunker finishes half-built.
+
+Infantry told to **hold** within `BUNKER_CALL_RANGE` of a finished friendly bunker walk to it and man it (holding otherwise freezes a unit where it stands, so without this they could never reach the door). Each of up to `BUNKER_GARRISON_MAX` soldiers adds `BUNKER_GARRISON_DAMAGE` damage and `BUNKER_GARRISON_RELOAD` reload speed; they ride in `unit.passengers` and partly survive its destruction.
+
 ### Movement model
 
 Every ground unit has a locomotion class (`MOVE_CLASS`/`getMoveClass` in `constants.ts`: `foot`, `wheeled`, `tracked`) whose `CLASS_PROFILE` sets its hill penalty, whether it can ford an unbridged river (`wade: 0` = it can't), its turn rate, body radius and separation. Speeds in `UNIT_CONFIG` are tuned *within* a class, not across classes.
