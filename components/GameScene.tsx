@@ -669,6 +669,27 @@ const GEO_RIFLE = (() => {
     push(new THREE.BoxGeometry(0.16, 0.04, 0.04), 0.30, 0.05, 0);   // fore sight rail
     return mergeBufferGeometries(parts, false)!;
 })();
+
+// Rambo carries a squad machine gun instead: longer barrel, drum magazine and
+// an ammo belt hanging off it. He also stands 18% taller than a rifleman, so at
+// a glance he reads as the heavy.
+const GEO_HMG = (() => {
+    const parts: THREE.BufferGeometry[] = [];
+    const push = (g: THREE.BufferGeometry, x: number, y: number, z: number) => { g.translate(x, y, z); parts.push(g); };
+    push(new THREE.BoxGeometry(0.95, 0.08, 0.08), 0.22, 0, 0);        // heavy receiver + long barrel
+    push(new THREE.BoxGeometry(0.26, 0.13, 0.07), -0.26, -0.02, 0);   // stock
+    push(new THREE.CylinderGeometry(0.11, 0.11, 0.07, 10).rotateX(Math.PI / 2), 0.02, -0.12, 0); // drum mag
+    push(new THREE.BoxGeometry(0.22, 0.05, 0.03), 0.30, -0.14, 0.03); // ammo belt
+    push(new THREE.BoxGeometry(0.10, 0.06, 0.06), 0.68, 0.06, 0);     // muzzle brake
+    return mergeBufferGeometries(parts, false)!;
+})();
+
+// Red headband — a flat ring around the skull, the one silhouette cue that
+// still reads when the camera is pulled back.
+const GEO_BANDANA = new THREE.CylinderGeometry(0.115, 0.115, 0.05, 12, 1, true);
+const MAT_BANDANA = new THREE.MeshStandardMaterial({ color: '#dc2626', roughness: 0.9, side: THREE.DoubleSide });
+// Trailing tail of the knot, so it's visible from behind too.
+const GEO_BANDANA_TAIL = new THREE.BoxGeometry(0.03, 0.14, 0.02);
 // Floating bounty labels ("+$110") as sprites off a cached canvas texture. The
 // set of distinct amounts in a match is tiny, so each one is rasterized once and
 // reused — unlike drei's <Text>, which allocated (and leaked) a geometry plus a
@@ -776,31 +797,59 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
         [{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }],
         soldierTemplate(scene),
     );
-    // Arm the clone once: hang a rifle off the right wrist so the weapon tracks
-    // the hand through the run/aim/fire clips.
+    // Kit the clone out once: a weapon on the right wrist (so it tracks the hand
+    // through the run/aim/fire clips), and Rambo's headband on the skull.
+    const isRambo = unit.type === UnitType.RAMBO;
     useMemo(() => {
         if (obj.getObjectByName('Rifle')) return;
-        const wrist = findBone(obj, 'Wrist.R');
-        if (!wrist) return;
         // The armature bakes a large scale into its bones, so anything parented
         // to a bone inherits it — a naively-sized rifle came out ~780 world units
         // long, i.e. slabs flying across the battlefield. Cancel the bone's scale
-        // and size the weapon against the soldier itself (~1.8 units tall).
+        // and size the kit against the soldier himself (~1.8 units tall).
         obj.updateWorldMatrix(false, true);
-        const s = new THREE.Vector3();
-        wrist.getWorldScale(s);
-        const boneScale = (s.x + s.y + s.z) / 3 || 1;
-        const k = RIFLE_LENGTH / boneScale;
+        const boneScale = (bone: THREE.Object3D) => {
+            const s = new THREE.Vector3();
+            bone.getWorldScale(s);
+            return (s.x + s.y + s.z) / 3 || 1;
+        };
 
-        const rifle = new THREE.Mesh(GEO_RIFLE, rifleMaterial(accent ?? '#2f3437'));
-        rifle.name = 'Rifle';
-        rifle.castShadow = true;
-        rifle.frustumCulled = false;
-        rifle.scale.setScalar(k);
-        rifle.position.set(0.05 * k, 0.02 * k, 0);
-        rifle.rotation.set(0, 0, -Math.PI / 2);
-        wrist.add(rifle);
-    }, [obj, accent]);
+        const wrist = findBone(obj, 'Wrist.R');
+        if (wrist) {
+            // The HMG's geometry is already ~1.4x the rifle's, and Rambo's body is
+            // scaled up 18% on top — so no extra length multiplier beyond a nudge,
+            // or the gun ends up longer than he is tall.
+            const k = (isRambo ? RIFLE_LENGTH * 1.05 : RIFLE_LENGTH) / boneScale(wrist);
+            const gun = new THREE.Mesh(isRambo ? GEO_HMG : GEO_RIFLE, rifleMaterial(accent ?? '#2f3437'));
+            gun.name = 'Rifle';
+            gun.castShadow = true;
+            gun.frustumCulled = false;
+            gun.scale.setScalar(k);
+            gun.position.set(0.05 * k, 0.02 * k, 0);
+            gun.rotation.set(0, 0, -Math.PI / 2);
+            wrist.add(gun);
+        }
+
+        // Red bandana: the silhouette cue that survives a pulled-back camera.
+        const head = isRambo ? findBone(obj, 'Head') : undefined;
+        if (head) {
+            const k = 1 / boneScale(head);
+            const band = new THREE.Mesh(GEO_BANDANA, MAT_BANDANA);
+            band.name = 'Bandana';
+            band.castShadow = true;
+            band.frustumCulled = false;
+            band.scale.setScalar(k);
+            band.position.set(0, 0.10 * k, 0);
+            head.add(band);
+
+            const tail = new THREE.Mesh(GEO_BANDANA_TAIL, MAT_BANDANA);
+            tail.name = 'BandanaTail';
+            tail.frustumCulled = false;
+            tail.scale.setScalar(k);
+            tail.position.set(-0.10 * k, 0.06 * k, 0);
+            tail.rotation.set(0, 0, 0.35);
+            head.add(tail);
+        }
+    }, [obj, accent, isRambo]);
     const group = useRef<THREE.Group>(null!);
     const { actions } = useAnimations(animations, group);
     const clip = unit.state === UnitState.ATTACKING ? 'CharacterArmature|Idle_Gun_Shoot'
