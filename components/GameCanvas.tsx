@@ -24,6 +24,9 @@ import {
   REPAIR_ZONE,
   REPAIR_PER_TICK,
   REPAIR_COMBAT_LOCKOUT_MS,
+  ENGINEER_REPAIR,
+  ENGINEER_REPAIR_RANGE,
+  isMechanical,
   getMoveClass,
   CLASS_PROFILE,
   AVOID_LOOKAHEAD,
@@ -2038,28 +2041,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           // ENGINEER: walk to the nearest job — mines within 260px, broken
-          // bridges from anywhere on the map (repair is his headline job)
-          if (!movingToHill && unit.type === UnitType.ENGINEER && isSearchTick(unit)) {
-            let jobX: number | null = null, jobY = 0, jobDist = Infinity;
-            for (const m of unitsRef.current) {
-              if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
-              const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
-              if (d < 260 && d < jobDist) { jobDist = d; jobX = m.position.x; jobY = m.position.y; }
+          // bridges from anywhere on the map, and hurt friendly machines within
+          // 260px. Jobs compete on `score` (lower wins); `jobDist` stays a real
+          // distance because it also decides whether he still has to walk.
+          if (!movingToHill && unit.type === UnitType.ENGINEER) {
+            // Re-pick the job only on search ticks (the scans are O(units+terrain))...
+            if (isSearchTick(unit)) {
+              let jobX: number | null = null, jobY = 0, best = Infinity;
+              const consider = (x: number, y: number, score: number) => {
+                if (score >= best) return;
+                best = score; jobX = x; jobY = y;
+              };
+              for (const m of unitsRef.current) {
+                if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
+                const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
+                if (d < 260) consider(m.position.x, m.position.y, d);
+              }
+              for (const b of terrainRef.current) {
+                if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
+                // Fully broken bridges attract engineers map-wide; partial damage only nearby
+                const cap = b.state === 'broken' ? 4000 : 300;
+                const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
+                if (d < cap) consider(b.x, b.y, d);
+              }
+              // Hurt friendly machines: scored by distance weighted by how healthy
+              // they still are, so a nearly-dead tank outranks a lightly scratched
+              // jeep standing closer.
+              for (const m of unitsRef.current) {
+                if (m.team !== unit.team || m.id === unit.id || !isMechanical(m.type)) continue;
+                if (m.health <= 0 || m.health >= m.maxHealth) continue;
+                if (m.buildUntil && Date.now() < m.buildUntil) continue;
+                const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
+                if (d < 260) consider(m.position.x, m.position.y, d * (m.health / m.maxHealth));
+              }
+              if (jobX !== null) { unit.jobX = jobX; unit.jobY = jobY; }
+              else { delete unit.jobX; delete unit.jobY; }
             }
-            for (const b of terrainRef.current) {
-              if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
-              // Fully broken bridges attract engineers map-wide; partial damage only nearby
-              const cap = b.state === 'broken' ? 4000 : 300;
-              const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
-              if (d < cap && d < jobDist) { jobDist = d; jobX = b.x; jobY = b.y; }
-            }
-            if (jobX !== null && jobDist > 45) {
-              const a = Math.atan2(jobY - unit.position.y, jobX - unit.position.x);
-              moveX = Math.cos(a) * config.speed;
-              moveY = Math.sin(a) * config.speed;
+            // ...but steer to the job EVERY tick. Steering only on the search tick
+            // let the advance stance push him back toward the enemy in between,
+            // so he never closed on a job that lay behind him.
+            if (unit.jobX !== undefined && unit.jobY !== undefined) {
+              const jd = Math.sqrt((unit.jobX - unit.position.x) ** 2 + (unit.jobY - unit.position.y) ** 2);
+              if (jd > 45) {
+                const a = Math.atan2(unit.jobY - unit.position.y, unit.jobX - unit.position.x);
+                moveX = Math.cos(a) * config.speed;
+                moveY = Math.sin(a) * config.speed;
+              } else {
+                moveX = 0; moveY = 0;   // on station: work
+              }
               movingToHill = true; // skip cover logic while on the job
-            } else if (jobX !== null) {
-              moveX = 0; moveY = 0; movingToHill = true;
             }
           }
 
@@ -2534,6 +2564,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   alt: 4, altVel: 0.4
                 });
                 unit.attackCooldown = Math.round(config.attackSpeed * 0.5);
+              } else {
+                // No mine, no broken bridge: patch up the most badly damaged
+                // machine alongside him. A bunker still curing its build HP is
+                // not "damaged" — leave that to the build cure.
+                const wrecks = spatialHash.current.query(unit.position.x, unit.position.y, ENGINEER_REPAIR_RANGE)
+                  .filter(m => m.team === unit.team && m.id !== unit.id && isMechanical(m.type) &&
+                    m.health > 0 && m.health < m.maxHealth &&
+                    !(m.buildUntil && Date.now() < m.buildUntil) &&
+                    Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2) < ENGINEER_REPAIR_RANGE);
+                if (wrecks.length > 0) {
+                  const patient = wrecks.reduce((a, b) => (a.health / a.maxHealth) < (b.health / b.maxHealth) ? a : b);
+                  patient.health = Math.min(patient.maxHealth, patient.health + ENGINEER_REPAIR);
+                  // Welding sparks, so a repair reads at a glance
+                  for (let s = 0; s < 3; s++) {
+                    particlesRef.current.push({
+                      id: generateId(),
+                      position: { x: patient.position.x + (Math.random() - 0.5) * 14, y: patient.position.y + (Math.random() - 0.5) * 10 },
+                      velocity: { x: (Math.random() - 0.5) * 1.4, y: -Math.random() * 1.1 },
+                      drag: 0.9,
+                      life: 20,
+                      color: '#fbbf24',
+                      size: 2 + Math.random() * 2,
+                      alt: 5, altVel: 0.35,
+                    });
+                  }
+                  soundService.playHealSound();
+                  unit.attackCooldown = config.attackSpeed;
+                }
               }
             }
           } else if (unit.type === UnitType.MEDIC) {
@@ -3171,6 +3229,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           (ME === Team.WEST ? b.x < CANVAS_WIDTH / 2 + 60 : b.x > CANVAS_WIDTH / 2 - 60)
         ).length;
         if (brokenBridgesMySide > 0 && !myHasEngineer) add(UnitType.ENGINEER, 6);
+        // A banged-up armored column is worth a mechanic: he is the only way to
+        // put HP back into a tank without walking it home.
+        const myHurtArmor = myActive.filter(u => isMechanical(u.type) && u.health < u.maxHealth * 0.7).length;
+        if (myHurtArmor >= 2 && !myHasEngineer) add(UnitType.ENGINEER, 5);
+        else if (myHurtArmor >= 1 && !myHasEngineer) add(UnitType.ENGINEER, 2);
 
         // --- General composition ---
         add(UnitType.TANK, 3);
@@ -3395,6 +3458,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // not the ordnance.
         stance: (t: 'WEST' | 'EAST', order: 'advance' | 'hold' | 'retreat') => {
           stancesRef.current[t === 'WEST' ? Team.WEST : Team.EAST] = order;
+        },
+        // Test hook: wound a team's units to a fraction of max HP, so repair and
+        // healing behavior can be probed without staging a firefight to cause it.
+        hurt: (t: 'WEST' | 'EAST', frac: number) => {
+          const team = t === 'WEST' ? Team.WEST : Team.EAST;
+          let n = 0;
+          unitsRef.current.forEach(u => {
+            if (u.team !== team || u.health <= 0) return;
+            u.health = Math.max(1, Math.round(u.maxHealth * frac));
+            n++;
+          });
+          return n;
         },
         // Test hook: simulate clicking a unit (goes through real selection logic)
         clickUnit: (id: string) => {

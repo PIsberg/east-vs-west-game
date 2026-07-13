@@ -57,7 +57,7 @@ The first team to reach **100 Points** wins.
 | **Flamer** | Short-range cone of fire that ignores cover. | Snipers, anything with range. |
 | **Medic** | Heals nearby wounded troops. Unarmed. | Everything that shoots. |
 | **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
-| **Engineer** | Detects & defuses enemy mines, repairs bridges. Unarmed. | Everything that shoots. |
+| **Engineer** | Detects & defuses enemy mines, repairs bridges, and welds damaged vehicles & bunkers back to health anywhere on the map. Unarmed. | Everything that shoots. |
 | **Mortar** | Indirect splash fire at long range. Stops to shoot. | Rushes, Snipers. |
 
 ### Vehicles

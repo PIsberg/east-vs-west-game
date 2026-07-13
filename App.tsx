@@ -1010,6 +1010,7 @@ const App: React.FC = () => {
             <div><strong className="text-white">Special Forces:</strong> Rapid fire hero unit.</div>
             <div><strong className="text-white">AA Unit:</strong> <span className="text-red-400">Essential</span> vs Drones & Air.</div>
             <div><strong className="text-white">Drone:</strong> Flying Bomb. Immune to Ground Fire.</div>
+            <div><strong className="text-white">Engineer:</strong> Defuses mines, repairs bridges, and <span className="text-amber-400">welds damaged vehicles & bunkers</span> back to health in the field.</div>
           </div>
         </div>
 

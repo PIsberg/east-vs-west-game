@@ -419,6 +419,16 @@ export const REPAIR_ZONE = 90;               // distance from own edge
 export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
 export const REPAIR_COMBAT_LOCKOUT_MS = 2500;
 
+// Engineer field repairs: he is the only way to put HP back into armor out in
+// the field (the edge-zone trickle above means dragging a hurt tank all the way
+// home). Works under fire and anywhere on the map — that is what you pay for.
+export const ENGINEER_REPAIR = 12;           // HP per repair action (~9 HP/s at his 80-tick cadence)
+export const ENGINEER_REPAIR_RANGE = 70;     // must be alongside the machine
+// A machine is anything with an engine or poured out of concrete: every vehicle,
+// plus the two emplacements. Aircraft are excluded — he cannot reach them.
+export const isMechanical = (t: UnitType): boolean =>
+  MOVE_CLASS[t] !== undefined || t === UnitType.BUNKER || t === UnitType.GUNBOAT;
+
 // ── Locomotion ───────────────────────────────────────────────────────────────
 // Every ground unit belongs to a movement class. The class decides how it takes
 // terrain (hills, water) and how it handles: tracks turn slowly but shrug off

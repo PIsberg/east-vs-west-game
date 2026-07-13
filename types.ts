@@ -109,6 +109,12 @@ export interface Unit {
   lastProgressPos?: Vector2D; // sampled periodically for stuck detection
   stuckSamples?: number;  // consecutive samples with no meaningful progress
   deployed?: boolean;     // APC has already put its squad on the ground
+  // Engineer: the job he is currently walking to (mine, bridge or hurt machine).
+  // Held between search ticks — recomputing it only every Nth tick but steering
+  // only on those ticks let him drift back toward the enemy in between, so he
+  // never actually reached a job that was behind him.
+  jobX?: number;
+  jobY?: number;
   // Bunkers
   buildUntil?: number;    // under construction until this timestamp: can't fire, HP still rising
   garrison?: number;      // infantry manning it — more guns in the slits, capped
