@@ -33,11 +33,19 @@ import {
   STUCK_ESCALATE,
   APC_SQUAD,
   APC_DEPLOY_RANGE,
-  APC_DEPLOY_HP
+  APC_DEPLOY_HP,
+  MILLISECONDS_PER_FRAME,
+  BUNKER_BUILD_MS,
+  BUNKER_BUILD_START_HP,
+  BUNKER_GARRISON_MAX,
+  BUNKER_GARRISON_DAMAGE,
+  BUNKER_GARRISON_RELOAD,
+  BUNKER_GARRISON_RANGE,
+  BUNKER_CALL_RANGE
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
-import { GameScene } from './GameScene';
+import { GameScene, type Marquee } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
 import { useState } from 'react';
 
@@ -401,6 +409,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.WEST]: { targetId: null, until: 0 },
     [Team.EAST]: { targetId: null, until: 0 },
   });
+
+  // Drag-select: the side you actually command (spectator matches have none)
+  const humanTeam = ([Team.WEST, Team.EAST] as Team[]).find(t => !cpuTeams.includes(t)) ?? null;
+  const [marquee, setMarquee] = useState<Marquee>(null);
+  // Releasing a marquee also lands as a click on open ground, and that click
+  // clears the selection we just made. Swallow exactly one click after a drag —
+  // a time window is no good, because R3F dispatches the click on the next frame
+  // and a slow frame can be hundreds of milliseconds wide. The flag is re-armed
+  // by the drag and cleared by the next press, so it can never eat a stray click.
+  const swallowClickRef = useRef(false);
+  const handleBoxSelect = useCallback((team: Team, ids: string[]) => {
+    swallowClickRef.current = true;
+    onSelectUnits?.(team, ids);
+    if (ids.length) soundService.playSpawnSound(team === Team.EAST);
+  }, [onSelectUnits]);
+  const handleDragStart = useCallback(() => { swallowClickRef.current = false; }, []);
+  const handleCanvasClickGuarded = useCallback((x: number, y: number) => {
+    if (swallowClickRef.current) { swallowClickRef.current = false; return; }
+    onCanvasClick(x, y);
+  }, [onCanvasClick]);
 
   const handleUnitClick = (clicked: Unit) => {
     // Strike targeting takes priority — drop the strike on the clicked unit
@@ -827,16 +855,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (options?.absolutePos) { xPos = options.absolutePos.x; yPos = options.absolutePos.y; }
     else if (options?.offset) { xPos += options.offset.x; yPos += options.offset.y; }
 
+    // A bunker is poured, not dropped: it spends BUNKER_BUILD_MS as a building
+    // site — no guns, and only a fraction of its concrete — so placing one on
+    // top of the enemy is a way to lose $155.
+    const isBunker = type === UnitType.BUNKER;
+
     const newUnit: Unit = {
       id: generateId(), team, type,
       position: { x: xPos, y: yPos },
       state: UnitState.MOVING,
-      health: config.health,
+      health: isBunker ? config.health * BUNKER_BUILD_START_HP : config.health,
       maxHealth: config.health,
       attackCooldown: 0, targetId: null,
       width: config.width, height: config.height,
       spawnTime: Date.now(), isInCover: false,
-      squadId: options?.squadId
+      squadId: options?.squadId,
+      ...(isBunker ? { buildUntil: Date.now() + BUNKER_BUILD_MS, garrison: 0 } : {}),
     };
 
     unitsRef.current.push(newUnit);
@@ -1747,6 +1781,60 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // BUNKER: cures for a few seconds (no guns, HP still rising), then takes
+      // a garrison. Every foot soldier standing at the door under 'hold' orders
+      // climbs in and mans a firing slit — more guns, but only up to the number
+      // of slits (BUNKER_GARRISON_MAX). Holding is the switch: troops told to
+      // advance walk past, so a bunker never swallows an attack.
+      if (unit.type === UnitType.BUNKER) {
+        if (unit.buildUntil) {
+          const cfg = UNIT_CONFIG[UnitType.BUNKER];
+          const left = unit.buildUntil - Date.now();
+          if (left <= 0) {
+            unit.buildUntil = undefined;
+            pushEvent('command', `${teamName(unit.team)} bunker is manned and ready`, unit.team);
+            soundService.playSpawnSound(unit.team === Team.EAST);
+          } else {
+            // Concrete sets: HP climbs from BUNKER_BUILD_START_HP to full over the
+            // build. Apply the *delta* of the cure each tick rather than nudging
+            // toward a target — at a low frame rate a per-tick nudge never catches
+            // up, and the bunker finishes half-built. Damage taken meanwhile stays
+            // taken; curing adds integrity, it doesn't repair shell holes.
+            const done = 1 - left / BUNKER_BUILD_MS;
+            const cured = (1 - BUNKER_BUILD_START_HP) * cfg.health * done;
+            const applied = unit.buildHp ?? 0;
+            if (cured > applied) {
+              unit.health = Math.min(unit.maxHealth, unit.health + (cured - applied));
+              unit.buildHp = cured;
+            }
+            if (tickCountRef.current % 12 === 0) {
+              particlesRef.current.push({
+                id: generateId(),
+                position: { x: unit.position.x + (Math.random() - 0.5) * 26, y: unit.position.y + (Math.random() - 0.5) * 18 },
+                velocity: { x: 0, y: -0.4 }, drag: 0.94, life: 24, color: '#a8a29e', size: 3 + Math.random() * 3,
+                alt: 4 + Math.random() * 6, altVel: 0.4,
+              });
+            }
+          }
+        }
+
+        unit.garrison = unit.garrison || 0;
+        if (!unit.buildUntil && unit.garrison < BUNKER_GARRISON_MAX) {
+          unit.passengers = unit.passengers || [];
+          spatialHash.current.queryCallback(unit.position.x, unit.position.y, BUNKER_GARRISON_RANGE, o => {
+            if ((unit.garrison || 0) >= BUNKER_GARRISON_MAX) return;
+            if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
+            if ((o.orders ?? stancesRef.current[o.team]) !== 'hold') return; // only troops told to dig in man it
+            o.boarded = true;
+            o.isInCover = false;
+            o.isEntrenched = false;
+            unit.passengers!.push(o);
+            unit.garrison = (unit.garrison || 0) + 1;
+            soundService.playSpawnSound(unit.team === Team.EAST);
+          });
+        }
+      }
+
       // APC: it rides in with a squad and drops the ramp on contact. Waiting
       // for the wreck to spill them meant the squad usually died in the box.
       if (unit.type === UnitType.APC && !unit.deployed) {
@@ -1849,6 +1937,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const _uid = (unit.id.charCodeAt(0) * 7 + unit.id.charCodeAt(unit.id.length - 1) * 31) % 1000;
         const _phase = (_uid / 1000) * Math.PI * 2;
         let moveY = (Math.sin(time * 0.0018 + _phase) * 0.6 + Math.sin(time * 0.0007 + _phase * 1.9) * 0.35) * 0.18;
+
+        // Infantry told to hold near one of your bunkers walks over and mans it.
+        // Holding freezes a unit where it stands, so without this they could
+        // never actually reach the door — which is what garrisoning has to mean.
+        if (stance === 'hold' && TRANSPORTABLE.has(unit.type) && !unit.boarded) {
+          const home = unitsRef.current.find(o =>
+            o.type === UnitType.BUNKER && o.team === unit.team && o.health > 0 && !o.buildUntil &&
+            (o.garrison || 0) < BUNKER_GARRISON_MAX &&
+            Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) < BUNKER_CALL_RANGE);
+          if (home) {
+            const a = Math.atan2(home.position.y - unit.position.y, home.position.x - unit.position.x);
+            moveX = Math.cos(a) * config.speed;
+            moveY = Math.sin(a) * config.speed;
+          }
+        }
 
         // Suppression: units recently hit slow to a crawl (infantry only)
         const isUnderFire = !config.isFlying && !!unit.lastHitTime && (Date.now() - unit.lastHitTime) < 650;
@@ -2307,7 +2410,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      if (!isDescent && unit.attackCooldown <= 0) {
+      // A bunker under construction is a building site, not a gun position
+      if (!isDescent && unit.attackCooldown <= 0 && !unit.buildUntil) {
         // Water Penalty Check
         // Re-find river (efficient enough as terrain array is small)
         const inWater = !config.isFlying && terrainRef.current.some(r => {
@@ -2322,8 +2426,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         const fogPenalty = weatherRef.current === 'fog' ? 0.45 : weatherRef.current === 'storm' ? 0.70 : 1.0;
         const range = (unit.isOnHill ? config.range * HILL_RANGE_BONUS : (inWater ? config.range * 0.4 : config.range)) * currentScale * fogPenalty;
-        const vetMult = 1 + 0.1 * (unit.veterancy || 0);
-        const vetReload = 1 - 0.06 * (unit.veterancy || 0); // veterans reload up to 18% faster
+        // Each soldier manning the bunker adds a gun in a slit — capped, so
+        // stuffing the whole army in there buys nothing past the fourth man.
+        const manned = Math.min(unit.garrison || 0, BUNKER_GARRISON_MAX);
+        const vetMult = (1 + 0.1 * (unit.veterancy || 0)) * (1 + BUNKER_GARRISON_DAMAGE * manned);
+        const vetReload = (1 - 0.06 * (unit.veterancy || 0)) * (1 - BUNKER_GARRISON_RELOAD * manned); // veterans reload up to 18% faster
 
         if (unit.type === UnitType.ANTI_AIR) {
           // AA targets Drones AND Descending Paratroopers
@@ -2785,6 +2892,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Check for vehicle deaths for explosions
     const deadUnits = unitsRef.current.filter(u => u.health <= 0);
     deadUnits.forEach(u => {
+      // A bunker that falls buries part of its garrison; the rest scramble out
+      // of the rubble, hurt.
+      if (u.type === UnitType.BUNKER && u.passengers?.length) {
+        const survivors = u.passengers.filter(() => Math.random() < 0.6);
+        survivors.forEach((p, idx) => {
+          p.boarded = false;
+          p.health = Math.max(1, Math.floor(p.health * 0.45));
+          p.lastHitTime = Date.now();
+          p.state = UnitState.MOVING;
+          p.position.x = u.position.x + ((idx % 2) === 0 ? -1 : 1) * (14 + idx * 4);
+          p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + (idx - 1) * 12));
+          if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
+        });
+        // Anyone who didn't make it out counts as a loss
+        statsRef.current[u.team].lost += u.passengers.length - survivors.length;
+        u.passengers = [];
+        u.garrison = 0;
+      }
+
       // Destroyed transports spill their passengers, shaken but alive
       if (u.type === UnitType.TRANSPORT && u.passengers?.length) {
         u.passengers.forEach((p, idx) => {
@@ -3245,6 +3371,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
+        selectedCount: (selectedIds ?? []).length,
         // Test hook: select the first n units of the first human team
         selectOwn: (n: number) => {
           const human = [Team.WEST, Team.EAST].find(t => !cpuRef.current.teams.includes(t));
@@ -3252,6 +3379,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const ids = unitsRef.current.filter(u => u.team === human && u.health > 0 && !u.boarded).slice(0, n).map(u => u.id);
           onSelectUnitsRef.current?.(human, ids);
           return ids;
+        },
+        // Test hook: place a unit directly (skips the click-to-place ray, which is
+        // fiddly to drive headlessly). Goes through the real spawn path.
+        spawn: (team: 'WEST' | 'EAST', type: string, x?: number, y?: number) => {
+          const t = team === 'WEST' ? Team.WEST : Team.EAST;
+          const ut = UnitType[type as keyof typeof UnitType];
+          if (!ut) return false;
+          return spawnUnit(t, ut, x !== undefined && y !== undefined ? { absolutePos: { x, y } } : undefined) !== false;
         },
         // Test hook: end the match immediately (drives the real gameOver path)
         winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
@@ -3263,13 +3398,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         unitList: unitsRef.current.map(u => ({
           id: u.id, type: u.type, team: u.team, squadId: u.squadId,
-          position: { ...u.position }, health: u.health, isInCover: !!u.isInCover,
+          position: { ...u.position }, health: u.health, maxHealth: u.maxHealth, isInCover: !!u.isInCover,
           stuckSamples: u.stuckSamples || 0, deployed: !!u.deployed,
+          buildUntil: u.buildUntil, garrison: u.garrison || 0,
         })),
         gameOver: gameOverRef.current,
       };
     }
-  }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit]);
+  }, [spawnQueue, clearSpawnQueue, onGameStateChange, spawnUnit, selectedIds]);
 
   // Stable Loop references
   const updateRef = useRef(update);
@@ -3325,7 +3461,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         selectedIds={selectedIds}
         fx={fx}
         onCameraApi={handleCameraApi}
-        onCanvasClick={onCanvasClick}
+        onCanvasClick={handleCanvasClickGuarded}
         targetingInfo={targetingInfo}
         weather={weatherRef.current}
         mapType={mapType}
@@ -3333,10 +3469,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         capture={captureRef.current}
         flanks={flankCapsRef.current}
         onUnitClick={handleUnitClick}
+        selectTeam={humanTeam}
+        onBoxSelect={handleBoxSelect}
+        onDragStart={handleDragStart}
+        onMarquee={setMarquee}
         focusIds={[focusRef.current[Team.WEST], focusRef.current[Team.EAST]]
           .filter(f => f.targetId && Date.now() < f.until)
           .map(f => f.targetId as string)}
       />
+
+      {/* Selection marquee. Client coords, so it is positioned fixed. */}
+      {marquee && (
+        <div
+          style={{
+            position: 'fixed',
+            left: Math.min(marquee.x1, marquee.x2),
+            top: Math.min(marquee.y1, marquee.y2),
+            width: Math.abs(marquee.x2 - marquee.x1),
+            height: Math.abs(marquee.y2 - marquee.y1),
+            border: '1px solid #fbbf24',
+            background: 'rgba(251, 191, 36, 0.12)',
+            pointerEvents: 'none',
+            zIndex: 60,
+          }}
+        />
+      )}
 
       {flashOpacity.current > 0 && (
         <div style={{
