@@ -18,7 +18,7 @@ export const UNIT_CONFIG = {
     cost: 110,
     health: 240,
     damage: 95,
-    speed: 0.45,
+    speed: 0.62,
     range: 220,
     attackSpeed: 90,
     width: 40,
@@ -44,7 +44,7 @@ export const UNIT_CONFIG = {
     health: 45,
     damage: 38,
     explosionRadius: 65,
-    speed: 0.2,
+    speed: 0.22,
     deployDistance: 80,
     range: 700,
     attackSpeed: 460,
@@ -57,7 +57,7 @@ export const UNIT_CONFIG = {
     cost: 150,
     health: 80,
     damage: 20,
-    speed: 0.65,
+    speed: 0.72,
     range: 180,
     attackSpeed: 20,
     width: 24,
@@ -194,7 +194,7 @@ export const UNIT_CONFIG = {
     cost: 80,
     health: 55,
     damage: 60,
-    speed: 0.5,
+    speed: 0.58,
     range: 400,
     attackSpeed: 50,
     width: 30,
@@ -218,7 +218,7 @@ export const UNIT_CONFIG = {
     cost: 165,
     health: 165,
     damage: 110,
-    speed: 0.5,
+    speed: 0.44,
     range: 150,
     attackSpeed: 200,
     width: 32,
@@ -243,7 +243,7 @@ export const UNIT_CONFIG = {
     cost: 70,
     health: 32,
     damage: 8,
-    speed: 0.42,
+    speed: 0.44,
     range: 88,
     attackSpeed: 10,
     width: 18,
@@ -256,7 +256,7 @@ export const UNIT_CONFIG = {
     health: 22,
     damage: 0,
     healAmount: 9,
-    speed: 0.52,
+    speed: 0.58,
     range: 90,
     attackSpeed: 42,
     width: 16,
@@ -280,7 +280,7 @@ export const UNIT_CONFIG = {
     cost: 95,
     health: 150,
     damage: 24,
-    speed: 0.52,
+    speed: 0.80,
     range: 165,
     attackSpeed: 52,
     width: 44,
@@ -318,7 +318,7 @@ export const UNIT_CONFIG = {
     health: 24,
     damage: 26,
     explosionRadius: 40,
-    speed: 0.4,
+    speed: 0.34,
     range: 320,
     attackSpeed: 240,
     width: 16,
@@ -342,7 +342,7 @@ export const UNIT_CONFIG = {
     cost: 70,
     health: 160,
     damage: 0,
-    speed: 0.95,
+    speed: 0.90,
     range: 0,
     attackSpeed: 0,
     capacity: 6,
@@ -414,3 +414,50 @@ export const RALLY_SPEED_MULT = 1.25;
 export const REPAIR_ZONE = 90;               // distance from own edge
 export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
 export const REPAIR_COMBAT_LOCKOUT_MS = 2500;
+
+// ── Locomotion ───────────────────────────────────────────────────────────────
+// Every ground unit belongs to a movement class. The class decides how it takes
+// terrain (hills, water) and how it handles: tracks turn slowly but shrug off
+// slopes, wheels are quick on the flat and bog down on a hill, boots go
+// anywhere. Speeds in UNIT_CONFIG are tuned within the class, not against it.
+export type MoveClass = 'foot' | 'wheeled' | 'tracked';
+
+export const MOVE_CLASS: Partial<Record<UnitType, MoveClass>> = {
+  [UnitType.TANK]: 'tracked',
+  [UnitType.APC]: 'tracked',
+  [UnitType.ARTILLERY]: 'tracked',
+  [UnitType.TESLA]: 'tracked',
+  [UnitType.JEEP]: 'wheeled',
+  [UnitType.TRANSPORT]: 'wheeled',
+  [UnitType.ANTI_AIR]: 'wheeled',
+};
+// Everything else on the ground walks.
+export const getMoveClass = (t: UnitType): MoveClass => MOVE_CLASS[t] ?? 'foot';
+
+export const CLASS_PROFILE: Record<MoveClass, {
+  hill: number;     // speed multiplier while climbing a hill
+  wade: number;     // speed multiplier fording an unbridged river (0 = can't)
+  steer: number;    // heading lerp per tick — low = heavy, wide turns
+  radius: number;   // body radius used for obstacle clearance
+  sepRadius: number;
+  sepStr: number;
+}> = {
+  foot:    { hill: 0.85, wade: 0.45, steer: 0.55, radius: 9,  sepRadius: 32, sepStr: 0.09 },
+  wheeled: { hill: 0.55, wade: 0,    steer: 0.30, radius: 17, sepRadius: 56, sepStr: 0.065 },
+  tracked: { hill: 0.75, wade: 0,    steer: 0.20, radius: 21, sepRadius: 60, sepStr: 0.07 },
+};
+
+// Obstacle avoidance: units look ahead along their heading, and when something
+// blocks the path they commit to rounding it on one side for a while (flip-
+// flopping between sides every tick is what pinned tanks against buildings).
+export const AVOID_LOOKAHEAD = 74;      // px scanned ahead of a vehicle
+export const AVOID_COMMIT_MS = 1100;    // how long a chosen side sticks
+export const STUCK_SAMPLE_TICKS = 24;   // progress is sampled this often
+export const STUCK_MIN_PROGRESS = 3;    // px of travel expected per sample
+export const STUCK_ESCALATE = 2;        // stalled samples before flipping side
+
+// APC: an assault carrier, not a coffin. It puts its squad on the ground the
+// moment it makes contact rather than hauling them to their death.
+export const APC_SQUAD = 3;
+export const APC_DEPLOY_RANGE = 240;    // enemy within this → drop the ramp
+export const APC_DEPLOY_HP = 0.55;      // or when it's taken a beating

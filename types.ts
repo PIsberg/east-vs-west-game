@@ -101,6 +101,14 @@ export interface Unit {
   entrench?: number;      // ticks spent stationary under 'hold' orders
   isEntrenched?: boolean; // dug in: reduced incoming direct fire until the unit moves
   orders?: Stance;        // per-unit order override; undefined = follow the team stance
+  // Movement / obstacle avoidance
+  vel?: Vector2D;         // smoothed velocity — heavy units turn, they don't snap
+  avoidDir?: number;      // +1/-1: the side it committed to rounding an obstacle on
+  avoidUntil?: number;    // timestamp the commitment expires
+  avoidId?: string;       // the obstacle the commitment is about
+  lastProgressPos?: Vector2D; // sampled periodically for stuck detection
+  stuckSamples?: number;  // consecutive samples with no meaningful progress
+  deployed?: boolean;     // APC has already put its squad on the ground
 }
 
 export interface Projectile {
