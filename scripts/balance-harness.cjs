@@ -6,7 +6,7 @@
  *
  * Usage:
  *   npm run dev                      # note the port
- *   node scripts/balance-harness.js [matchSeconds] [baseUrl] [browserPath]
+ *   node scripts/balance-harness.cjs [matchSeconds] [baseUrl] [browserPath]
  *
  * Defaults: 70s per match, http://localhost:3000/east-vs-west-game/,
  * Edge at its standard Windows install path. Requires `puppeteer-core`
