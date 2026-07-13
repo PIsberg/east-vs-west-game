@@ -1,5 +1,14 @@
 # Changelog
 
+## Soldiers get rifles; the renderer stops leaking (July 2026)
+
+- **The squad is armed.** The soldier model shipped without a weapon — its animations are named `Idle_Gun`, but there was no gun. Every foot unit now carries a rifle on its right hand, tracked to the wrist bone through the run/aim/fire clips, tinted with the unit's role colour.
+- **Rambo looks the part**: a red bandana on his head and a squad machine gun — long barrel, drum magazine, ammo belt — twice the length of a rifleman's weapon. With his 18% height bonus he now reads as the heavy at a glance, not just a soldier who costs $150.
+- **Units are actually team-coloured again.** Every model in the pack ships a single atlas material, while the tint rules were still looking for material names (`Swat`, `Main`, `DarkGreen`) that no longer exist — so the tints silently applied to nothing and both sides rendered identically, distinguishable only by the ring on the ground. West now reads blue, East red (amber in colourblind mode).
+- **Fixed a GPU memory leak that made long matches degrade.** Each cloned unit model gets its own skeleton, and each skeleton allocates a bone texture that was never freed when the unit died — about 8 textures per spawn, over 1,400 GPU textures inside 40 seconds of battle. Clones now dispose their skeletons. GPU textures stay flat (43–83) where they used to climb without bound.
+- **Draw calls down ~30%** at the same unit count (1,240–1,590 → 880–1,110 at ~15 units): the soldier's 11 mesh primitives are merged to 4, and everything that scales with army size — scorch decals, crater rims, tread marks, team rings, health bars, aircraft shadows — moved into instanced meshes with per-instance alpha.
+- Bounty popups ("+$110") are cached sprites instead of drei `<Text>`, which allocated a geometry and a texture per popup and leaked both.
+
 ## Movement overhaul (July 2026)
 
 - **Units round obstacles instead of grinding into them.** Ground units scan a corridor ahead, pick the side with more room, and commit to it for a beat. The old code pushed a unit radially away from whatever it touched — for a tank nose-first against a building that meant pushing *backwards*, so it stalled and sawed in place. Measured over CPU-vs-CPU matches on all four maps: vehicles spent 22% of their time going nowhere before, 1% after; the worst single wedge fell from 16.5s to 1.5s.

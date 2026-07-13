@@ -54,17 +54,26 @@ const MAX_DWELL_SEC = 6;   // no vehicle should be pinned this long
         const h = hist.get(u.id) || { s: [], dwell: 0 };
         h.s.push({ x: u.x, y: u.y });
         if (h.s.length > WINDOW) h.s.shift();
-        if (h.s.length === WINDOW) {
-          const a = h.s[0], z = h.s[WINDOW - 1];
-          windows++;
-          if (Math.hypot(z.x - a.x, z.y - a.y) < MIN_TRAVEL) {
-            wedged++;
-            h.dwell += 0.5;
-            worstDwell = Math.max(worstDwell, h.dwell);
-          } else h.dwell = 0;
-        }
         hist.set(u.id, h);
       }
+
+      // Travel over the window, per vehicle with a full window of samples.
+      const ready = [...hist.entries()].filter(([id, h]) => h.s.length === WINDOW && live.has(id));
+      const travel = ready.map(([, h]) => Math.hypot(h.s[WINDOW - 1].x - h.s[0].x, h.s[WINDOW - 1].y - h.s[0].y));
+      // A loaded machine can starve the simulation, which looks exactly like
+      // every vehicle being stuck. Only judge a window when the army as a whole
+      // is moving — a real wedge is one unit going nowhere while the rest advance.
+      const median = travel.length ? [...travel].sort((a, b) => a - b)[Math.floor(travel.length / 2)] : 0;
+      if (travel.length >= 3 && median < MIN_TRAVEL) continue; // sim stalled, not the units
+
+      ready.forEach(([, h], i) => {
+        windows++;
+        if (travel[i] < MIN_TRAVEL) {
+          wedged++;
+          h.dwell += 0.5;
+          worstDwell = Math.max(worstDwell, h.dwell);
+        } else h.dwell = 0;
+      });
       for (const [id, a] of apcs) {
         if (!live.has(id) && !a.gone) { a.gone = true; if (!a.deployed) apcsDiedLoaded++; }
       }
