@@ -64,6 +64,12 @@ const TRANSPORTABLE = new Set([
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
+// Foot units that man a bunker's firing slits. The engineer is deliberately not
+// one of them: he is the only unit that can repair the bunker (and the armor
+// around it), and a bunker standing next to him would otherwise swallow him the
+// moment he was told to hold.
+const GARRISONS = (t: UnitType) => TRANSPORTABLE.has(t) && t !== UnitType.ENGINEER;
+
 // Foot units that can dig in while holding position
 const ENTRENCHABLE = new Set([
   UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
@@ -1826,7 +1832,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           unit.passengers = unit.passengers || [];
           spatialHash.current.queryCallback(unit.position.x, unit.position.y, BUNKER_GARRISON_RANGE, o => {
             if ((unit.garrison || 0) >= BUNKER_GARRISON_MAX) return;
-            if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
+            if (o.team !== unit.team || o.boarded || o.health <= 0 || !GARRISONS(o.type)) return;
             if ((o.orders ?? stancesRef.current[o.team]) !== 'hold') return; // only troops told to dig in man it
             o.boarded = true;
             o.isInCover = false;
@@ -1944,7 +1950,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Infantry told to hold near one of your bunkers walks over and mans it.
         // Holding freezes a unit where it stands, so without this they could
         // never actually reach the door — which is what garrisoning has to mean.
-        if (stance === 'hold' && TRANSPORTABLE.has(unit.type) && !unit.boarded) {
+        if (stance === 'hold' && GARRISONS(unit.type) && !unit.boarded) {
           const home = unitsRef.current.find(o =>
             o.type === UnitType.BUNKER && o.team === unit.team && o.health > 0 && !o.buildUntil &&
             (o.garrison || 0) < BUNKER_GARRISON_MAX &&
