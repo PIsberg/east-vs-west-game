@@ -456,6 +456,21 @@ export const STUCK_SAMPLE_TICKS = 24;   // progress is sampled this often
 export const STUCK_MIN_PROGRESS = 3;    // px of travel expected per sample
 export const STUCK_ESCALATE = 2;        // stalled samples before flipping side
 
+// ── Bunkers ──────────────────────────────────────────────────────────────────
+// A bunker isn't dropped ready-made: it goes up over a few seconds, and while
+// the concrete is curing it can't shoot and isn't at full strength. Place it
+// behind the line, or lose it.
+export const BUNKER_BUILD_MS = 9000;
+export const BUNKER_BUILD_START_HP = 0.35;  // fraction of max HP at the moment it's placed
+
+// Infantry can man it. Each soldier inside adds firepower, but only up to a
+// point — the firing slits run out.
+export const BUNKER_GARRISON_MAX = 4;
+export const BUNKER_GARRISON_DAMAGE = 0.25;  // +25% damage per soldier inside
+export const BUNKER_GARRISON_RELOAD = 0.07;  // and 7% faster reload each
+export const BUNKER_GARRISON_RANGE = 30;     // how close a soldier must be to climb in
+export const BUNKER_CALL_RANGE = 150;        // infantry told to hold within this walk over and man it
+
 // APC: an assault carrier, not a coffin. It puts its squad on the ground the
 // moment it makes contact rather than hauling them to their death.
 export const APC_SQUAD = 3;

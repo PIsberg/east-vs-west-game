@@ -6,7 +6,7 @@ import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX } from '../constants';
 
 
 interface GameSceneProps {
@@ -23,6 +23,11 @@ interface GameSceneProps {
     // Imperative camera controls for the on-screen zoom/scroll buttons
     onCameraApi?: (api: { zoom: (factor: number) => void; pan: (dx: number) => void; reset: () => void; state: () => { dist: number, tx: number, tz: number } | null; panTo: (x: number) => void }) => void;
     onCanvasClick: (x: number, y: number) => void;
+    // Drag-to-select: the human team's units can be boxed with a left-drag
+    selectTeam?: Team | null;
+    onBoxSelect?: (team: Team, ids: string[]) => void;
+    onMarquee?: (m: Marquee) => void;
+    onDragStart?: () => void;
     targetingInfo: { team: Team, type: UnitType } | null;
     weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
     fx?: 'high' | 'low'; // low: no shadows/bloom/clouds, dpr 1 — for weak GPUs
@@ -768,7 +773,7 @@ const StaticModel = ({ url, tints, targetLen, axis = 'z', yaw = Math.PI / 2, spi
 // (the Quaternius armatures carry large transforms), so these were calibrated
 // visually against the world's tree/rock/unit sizes.
 // (probe-measured: soldier is human-scale 1.8 units tall; the tank armature
-// bakes a large scale and natively faces +X, so it gets no extra yaw)
+// bakes a large scale; it faces -X, so TankModel yaws it by PI)
 const SOLDIER_SCALE = 11;
 const TANK_SCALE = 2.7;
 
@@ -886,8 +891,12 @@ const TankModel = ({ unit }: { unit: Unit }) => {
         a.play();
         a.paused = unit.state !== UnitState.MOVING;
     }, [actions, unit.state]);
+    // The tank GLB faces -X, not +X: its barrel sits on the model's -X side.
+    // Unit3D only rotates East by PI, so with no yaw of its own the tank drove
+    // gun-backwards on both sides (measured: barrel +5.1 on x from the hull
+    // centre while the unit advanced -x). Yaw by PI to put the gun up front.
     return (
-        <group ref={group} scale={TANK_SCALE}>
+        <group ref={group} scale={TANK_SCALE} rotation={[0, Math.PI, 0]}>
             <primitive object={obj} />
         </group>
     );
@@ -1508,8 +1517,38 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 )}
 
                 {/* BUNKER — concrete fortification */}
-                {unit.type === UnitType.BUNKER && (
-                    <group>
+                {unit.type === UnitType.BUNKER && (() => {
+                    // Under construction: the structure rises out of the ground over
+                    // the build time, wrapped in scaffolding, with no gun yet.
+                    const building = !!unit.buildUntil && Date.now() < unit.buildUntil;
+                    const progress = building
+                        ? Math.max(0.08, 1 - (unit.buildUntil! - Date.now()) / BUNKER_BUILD_MS)
+                        : 1;
+                    const manned = Math.min(unit.garrison || 0, BUNKER_GARRISON_MAX);
+                    return (
+                    <group scale={[1, progress, 1]}>
+                        {building && (
+                            <group>
+                                {/* Scaffold poles + a hazard banner, so a site reads as a site */}
+                                {([[-17, -15], [17, -15], [-17, 15], [17, 15]] as const).map(([sx, sz], i) => (
+                                    <mesh key={i} position={[sx, 11 / progress * 0.5, sz]} scale={[1, 1 / Math.max(progress, 0.08), 1]}>
+                                        <cylinderGeometry args={[0.5, 0.5, 22]} />
+                                        <meshStandardMaterial color="#a16207" roughness={0.9} />
+                                    </mesh>
+                                ))}
+                                <mesh position={[0, 20 / Math.max(progress, 0.08), 0]} scale={[1, 1 / Math.max(progress, 0.08), 1]}>
+                                    <boxGeometry args={[30, 2, 1]} />
+                                    <meshBasicMaterial color="#fbbf24" toneMapped={false} />
+                                </mesh>
+                            </group>
+                        )}
+                        {/* Garrison pips: one per soldier manning a firing slit */}
+                        {!building && manned > 0 && Array.from({ length: manned }).map((_, i) => (
+                            <mesh key={`g${i}`} position={[-9 + i * 6, 16.5 / progress, 12]}>
+                                <boxGeometry args={[3.6, 1.6, 1.6]} />
+                                <meshBasicMaterial color={isWest ? '#60a5fa' : eastColor('#f87171')} toneMapped={false} />
+                            </mesh>
+                        ))}
                         {/* Base slab */}
                         <mesh position={[0, 4, 0]} castShadow receiveShadow>
                             <boxGeometry args={[38, 8, 34]} />
@@ -1577,13 +1616,14 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 </mesh>
                             </group>
                         ))}
-                        {unit.attackCooldown > (config.attackSpeed - 8) && (
+                        {!building && unit.attackCooldown > (config.attackSpeed - 8) && (
                             <group position={[18, 11, 0]} rotation={[0, -Math.PI / 2, 0]}>
                                 <MuzzleFlash size={2} />
                             </group>
                         )}
                     </group>
-                )}
+                    );
+                })()}
 
                 {/* Hit flash overlay */}
                 {isHit && (
@@ -2005,6 +2045,86 @@ const InstancedUnitOverlays = ({ units, terrain, cbMode }: { units: Unit[], terr
             <instancedMesh ref={barRef} args={[GEO_HEALTH_BAR, MAT_INST_BAR, MAX_UNIT_INSTANCES]} frustumCulled={false} />
         </>
     );
+};
+
+// Drag a box over your own army to select it — the RTS gesture that was simply
+// missing (left-drag orbited the camera instead, so no marquee ever appeared).
+// Lives inside the Canvas because picking needs the live camera to project each
+// unit's field position to the screen.
+export type Marquee = { x1: number, y1: number, x2: number, y2: number } | null;
+
+const BoxSelect = ({ units, selectTeam, disabled, onBoxSelect, onMarquee, onDragStart }: {
+    units: Unit[],
+    selectTeam?: Team | null,
+    disabled?: boolean,
+    onBoxSelect?: (team: Team, ids: string[]) => void,
+    onMarquee?: (m: Marquee) => void,
+    onDragStart?: () => void,
+}) => {
+    const { camera, gl } = useThree();
+    // Units churn every frame; read them through a ref so the listeners below
+    // aren't torn down and re-attached 60 times a second.
+    const unitsRef = useRef(units);
+    unitsRef.current = units;
+    const stateRef = useRef({ selectTeam, disabled });
+    stateRef.current = { selectTeam, disabled };
+
+    const start = useRef<{ x: number, y: number } | null>(null);
+    const dragging = useRef(false);
+
+    useEffect(() => {
+        const el = gl.domElement;
+        const DRAG_SLOP = 6; // below this it's a click, and clicks still select single units
+
+        const down = (e: PointerEvent) => {
+            const { selectTeam: team, disabled: off } = stateRef.current;
+            if (e.button !== 0 || e.pointerType !== 'mouse' || !team || off) return;
+            start.current = { x: e.clientX, y: e.clientY };
+            dragging.current = false;
+            onDragStart?.();
+        };
+
+        const move = (e: PointerEvent) => {
+            if (!start.current) return;
+            if (!dragging.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) < DRAG_SLOP) return;
+            dragging.current = true;
+            onMarquee?.({ x1: start.current.x, y1: start.current.y, x2: e.clientX, y2: e.clientY });
+        };
+
+        const up = (e: PointerEvent) => {
+            const team = stateRef.current.selectTeam;
+            if (start.current && dragging.current && team) {
+                const rect = el.getBoundingClientRect();
+                const minX = Math.min(start.current.x, e.clientX), maxX = Math.max(start.current.x, e.clientX);
+                const minY = Math.min(start.current.y, e.clientY), maxY = Math.max(start.current.y, e.clientY);
+                const v = new THREE.Vector3();
+                const ids = unitsRef.current.filter(u => {
+                    if (u.team !== team || u.health <= 0 || u.boarded) return false;
+                    if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) return false;
+                    v.set(u.position.x, 8, u.position.y).project(camera);
+                    if (v.z > 1) return false; // behind the camera
+                    const sx = rect.left + (v.x * 0.5 + 0.5) * rect.width;
+                    const sy = rect.top + (-v.y * 0.5 + 0.5) * rect.height;
+                    return sx >= minX && sx <= maxX && sy >= minY && sy <= maxY;
+                }).map(u => u.id);
+                onBoxSelect?.(team, ids);
+            }
+            start.current = null;
+            dragging.current = false;
+            onMarquee?.(null);
+        };
+
+        el.addEventListener('pointerdown', down);
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+        return () => {
+            el.removeEventListener('pointerdown', down);
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+        };
+    }, [camera, gl, onBoxSelect, onMarquee, onDragStart]);
+
+    return null;
 };
 
 const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
@@ -3045,7 +3165,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3210,8 +3330,14 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 maxAzimuthAngle={Math.PI / 2}
                 minDistance={220}
                 maxDistance={1250}
+                // Left-drag is the selection marquee (RTS convention), so the
+                // camera orbits on right-drag. Touch is untouched: one finger
+                // still orbits, since a marquee needs a mouse.
+                mouseButtons={{ LEFT: undefined as any, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE }}
                 onChange={(e) => { if (e) (window as any).__ewCamAz = (e.target as any).getAzimuthalAngle(); }}
             />
+
+            <BoxSelect units={units} selectTeam={selectTeam} disabled={!!targetingInfo} onBoxSelect={onBoxSelect} onMarquee={onMarquee} onDragStart={onDragStart} />
 
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
