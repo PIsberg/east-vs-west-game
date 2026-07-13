@@ -1,5 +1,14 @@
 # Changelog
 
+## Movement overhaul (July 2026)
+
+- **Units round obstacles instead of grinding into them.** Ground units scan a corridor ahead, pick the side with more room, and commit to it for a beat. The old code pushed a unit radially away from whatever it touched — for a tank nose-first against a building that meant pushing *backwards*, so it stalled and sawed in place. Measured over CPU-vs-CPU matches on all four maps: vehicles spent 22% of their time going nowhere before, 1% after; the worst single wedge fell from 16.5s to 1.5s.
+- **A stuck watchdog** samples progress every ~0.4s: a unit that wants to move but hasn't gained ground takes the other way round the obstacle and shoulders sideways until it's free. Vehicles crush the crates and barrels pinning them.
+- **Speeds are relative to what a unit actually is.** Every ground unit now belongs to a locomotion class (foot / wheeled / tracked) that decides how it takes hills, whether it can ford a river, and how tightly it turns. Tanks no longer crawl slower than the infantry they escort (0.45 → 0.62); the APC is a proper assault carrier (0.52 → 0.80); crew-served weapons (mortar, artillery) stay slow.
+- **Heavy units have inertia** — tracks lean into a turn rather than snapping to a new heading each frame, which is also what stops the frame-to-frame jitter that let a vehicle vibrate against a wall.
+- **The APC drops its ramp on contact** (enemy within 240px, or at the front, or badly hurt) instead of only spilling survivors when it explodes. In testing, 14 of 15 APCs put their squad on the ground while still alive; none died with troops aboard.
+- **Vehicles stranded at a downed bridge** back out of the ford and stage on the crossing, where an engineer can reach them, instead of piling nose-first into the water.
+
 ## The Big Overhaul (July 2026, PR #13)
 
 The largest update since release — 21 improvement passes, every one verified headlessly before merging.

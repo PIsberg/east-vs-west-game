@@ -99,10 +99,24 @@ The world is a 2D plane (`x`, `y` = 0–800 × 0–450, see `CANVAS_WIDTH`/`CANV
 
 Terrain modifies combat: hills grant `HILL_RANGE_BONUS`/`HILL_RELOAD_BONUS`, cover (trees/rocks) reduces incoming damage, rivers slow infantry and penalize range; vehicles must cross via bridges.
 
+### Movement model
+
+Every ground unit has a locomotion class (`MOVE_CLASS`/`getMoveClass` in `constants.ts`: `foot`, `wheeled`, `tracked`) whose `CLASS_PROFILE` sets its hill penalty, whether it can ford an unbridged river (`wade: 0` = it can't), its turn rate, body radius and separation. Speeds in `UNIT_CONFIG` are tuned *within* a class, not across classes.
+
+Three pieces work together in the `tick()` movement block of `GameCanvas.tsx`:
+
+1. **`steerAroundObstacles`** — a lookahead scan along the unit's heading. The nearest blocker in the corridor picks a side (`unit.avoidDir`, committed for `AVOID_COMMIT_MS` so the unit doesn't re-decide every tick), and the unit keeps forward motion while sliding laterally around it. Vehicles treat trees/rocks/props as solid; infantry only has to clear buildings, since the rest is cover it wants to reach. **Never reintroduce a radial push-away here** — pushing a unit back along its own heading is exactly what used to wedge tanks against buildings.
+2. **Heading smoothing** (`unit.vel`, lerped by `profile.steer`) — inertia for heavy units, and it kills the per-tick jitter that let a wedged vehicle vibrate in place.
+3. **The stuck watchdog** — samples net progress every `STUCK_SAMPLE_TICKS`; a unit that wants to move but hasn't gained `STUCK_MIN_PROGRESS` flips its committed side and gets shouldered sideways until it's free (vehicles crush props in the way).
+
+The APC deploys its squad on contact (`APC_DEPLOY_RANGE`/`APC_DEPLOY_HP`, sets `unit.deployed`) rather than only spilling troops from the wreck; the death spill is skipped once `deployed`.
+
+Movement is regression-tested with a probe that samples unit positions over CPU-vs-CPU matches and counts 3-second windows where a vehicle went nowhere ("wedged"). Baseline before the overhaul was 22% of windows; healthy is ≤2%. `window.__ewDebug.unitList` exposes `position`, `health`, `isInCover`, `stuckSamples` and `deployed` for exactly this.
+
 ### Adding a new unit type
 
 1. Add the enum value to `UnitType` in `types.ts`.
-2. Add a config entry to `UNIT_CONFIG` in `constants.ts`.
+2. Add a config entry to `UNIT_CONFIG` in `constants.ts` (and a `MOVE_CLASS` entry if it's a vehicle — anything unlisted walks).
 3. Add spawn/AI handling in `GameCanvas.tsx` (search for how an existing similar unit is handled).
 4. Add a button in `App.tsx` `renderUnitButtons()`.
 5. Optionally add it to the CPU AI weights in `GameCanvas.tsx` so East's computer player can use it.

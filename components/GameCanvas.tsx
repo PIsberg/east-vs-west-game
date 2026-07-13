@@ -23,7 +23,17 @@ import {
   RALLY_SPEED_MULT,
   REPAIR_ZONE,
   REPAIR_PER_TICK,
-  REPAIR_COMBAT_LOCKOUT_MS
+  REPAIR_COMBAT_LOCKOUT_MS,
+  getMoveClass,
+  CLASS_PROFILE,
+  AVOID_LOOKAHEAD,
+  AVOID_COMMIT_MS,
+  STUCK_SAMPLE_TICKS,
+  STUCK_MIN_PROGRESS,
+  STUCK_ESCALATE,
+  APC_SQUAD,
+  APC_DEPLOY_RANGE,
+  APC_DEPLOY_HP
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -954,6 +964,78 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
     };
+    // ── Obstacle avoidance ────────────────────────────────────────────────
+    // The old behaviour pushed a unit radially away from whatever it touched,
+    // which for a tank driving straight into a wall meant pushing backwards —
+    // it stalled nose-first and never went around. Instead each unit scans a
+    // short corridor along its heading, picks the *side* with more clearance,
+    // and commits to that side for a beat: forward motion is kept, a lateral
+    // slide is added, so the unit drives around the obstacle instead of into it.
+    const obstacleRadius = (o: TerrainObject) =>
+      o.type === 'building' ? Math.max(o.width || o.size * 2.6, o.height || o.size * 2.0) / 2
+        : o.type === 'tree' ? 15
+        : o.type === 'rock' ? 13
+        : o.size * 0.8;
+
+    const steerAroundObstacles = (
+      unit: Unit, mx: number, my: number, speed: number, body: number, solidProps: boolean
+    ): Vector2D => {
+      const mag = Math.hypot(mx, my);
+      if (mag < 0.02) return { x: mx, y: my };
+      const dirX = mx / mag, dirY = my / mag;
+      const look = AVOID_LOOKAHEAD * (speed > 0 ? Math.min(1.4, 0.6 + speed) : 1);
+
+      // Nearest thing sitting in the corridor ahead
+      let block: TerrainObject | null = null;
+      let blockT = Infinity, blockLat = 0, blockClear = 0;
+      for (const o of terrainRef.current) {
+        const isSolid = o.type === 'building' ||
+          (solidProps && (o.type === 'tree' || o.type === 'rock' ||
+            ((o.type === 'crate' || o.type === 'barrel') && o.state !== 'broken')));
+        if (!isSolid) continue;
+        const dx = o.x - unit.position.x, dy = o.y - unit.position.y;
+        const along = dx * dirX + dy * dirY;          // distance ahead
+        if (along <= 0 || along > look) continue;
+        const lat = dx * -dirY + dy * dirX;           // signed offset from the path
+        const clear = obstacleRadius(o) + body;
+        if (Math.abs(lat) > clear) continue;          // we already miss it
+        if (along < blockT) { block = o; blockT = along; blockLat = lat; blockClear = clear; }
+      }
+      if (!block) {
+        if (unit.avoidUntil && time > unit.avoidUntil) { unit.avoidDir = undefined; unit.avoidId = undefined; }
+        return { x: mx, y: my };
+      }
+
+      // Which way round? An active commitment wins — re-deciding every tick is
+      // exactly how a tank ends up sawing back and forth against a wall. Fresh
+      // decisions slide toward the edge we're already nearer.
+      const committed = !!unit.avoidDir && !!unit.avoidUntil && time < unit.avoidUntil!;
+      let side = committed
+        ? unit.avoidDir!
+        : (blockLat !== 0 ? -Math.sign(blockLat) : (unit.position.y > CANVAS_HEIGHT / 2 ? -1 : 1));
+
+      // Reject a side that would run us off the field
+      const exitY = unit.position.y + (dirX * side) * (blockClear + 10);
+      if (exitY < HORIZON_Y + 24 || exitY > CANVAS_HEIGHT - 24) side = -side;
+
+      if (!committed || unit.avoidId !== block.id) {
+        unit.avoidDir = side;
+        unit.avoidId = block.id;
+        unit.avoidUntil = time + AVOID_COMMIT_MS;
+      }
+
+      // Urgency: full sidestep when the obstacle is right there, a gentle
+      // course correction when it's still at the edge of the scan.
+      const urgency = Math.max(0, Math.min(1, 1 - blockT / look));
+      const perpX = -dirY * side, perpY = dirX * side;
+      const fwd = 1 - 0.5 * urgency;                  // never negative: no reversing into a stall
+      const lateral = (0.85 + 0.55 * urgency) * urgency + 0.25;
+      return {
+        x: (dirX * fwd + perpX * lateral) * mag,
+        y: (dirY * fwd + perpY * lateral) * mag,
+      };
+    };
+
     // Smoke concealment: targeting into/out of a cloud is blocked beyond
     // point-blank range. Air units fly above the smoke and are unaffected.
     const inSmoke = (x: number, y: number) =>
@@ -1665,6 +1747,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // APC: it rides in with a squad and drops the ramp on contact. Waiting
+      // for the wreck to spill them meant the squad usually died in the box.
+      if (unit.type === UnitType.APC && !unit.deployed) {
+        const contact = spatialHash.current.query(unit.position.x, unit.position.y, APC_DEPLOY_RANGE)
+          .some(o => o.team !== unit.team && o.type !== UnitType.NAPALM &&
+            o.type !== UnitType.MINE_PERSONAL && o.type !== UnitType.MINE_TANK);
+        const atTheFront = unit.team === Team.WEST
+          ? unit.position.x > CANVAS_WIDTH * 0.55
+          : unit.position.x < CANVAS_WIDTH * 0.45;
+        const hurt = unit.health < unit.maxHealth * APC_DEPLOY_HP;
+        if (contact || atTheFront || hurt) {
+          unit.deployed = true;
+          const back = unit.team === Team.WEST ? -1 : 1; // troops file out of the rear ramp
+          const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
+          for (let si = 0; si < APC_SQUAD; si++) {
+            unitsRef.current.push({
+              id: generateId(), team: unit.team, type: UnitType.SOLDIER,
+              position: {
+                x: unit.position.x + back * (16 + si * 4),
+                y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, unit.position.y + (si - 1) * 16)),
+              },
+              state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
+              attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
+              spawnTime: Date.now(), isInCover: false, squadId: unit.id,
+            });
+            statsRef.current[unit.team].built++;
+          }
+          soundService.playSpawnSound(unit.team === Team.EAST);
+        }
+      }
+
       const config = UNIT_CONFIG[unit.type] as any;
       const currentScale = getScaleAt(unit.position.y);
       if (unit.isOnHill === undefined || isSearchTick(unit)) {
@@ -1673,6 +1786,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const isVehicle = unit.type === UnitType.TANK || unit.type === UnitType.ARTILLERY ||
         unit.type === UnitType.APC || unit.type === UnitType.ANTI_AIR || unit.type === UnitType.TESLA ||
         unit.type === UnitType.JEEP || unit.type === UnitType.TRANSPORT;
+      const moveClass = getMoveClass(unit.type);
+      const profile = CLASS_PROFILE[moveClass];
 
       // Field repairs: wounded units patch up slowly near their own edge when
       // they haven't been shot at recently — makes Fall Back worth ordering.
@@ -1900,8 +2015,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 .some(o => o.team !== unit.team);
               if (inRange) { moveX = 0; moveY = 0; movingToHill = true; }
             } else {
-              moveX *= 0.5; moveY *= 0.5; // others slow down / dig in
+              // Slopes cost each class differently — wheels bog down, tracks climb
+              moveX *= profile.hill * 0.7; moveY *= profile.hill * 0.7;
             }
+          } else if (unit.isOnHill) {
+            moveX *= profile.hill; moveY *= profile.hill;
           }
 
           // Suppression: infantry slows to a near-stop when recently hit
@@ -1961,48 +2079,22 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   }
                 }
               }
-            } else {
-              // Vehicles steer around trees and rocks
-              terrainRef.current.forEach(t => {
-                if (t.type === 'tree' || t.type === 'rock') {
-                  const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
-                  const avoidDist = t.type === 'tree' ? 38 : 28;
-                  if (dist < avoidDist) {
-                    const dx = unit.position.x - t.x;
-                    const dy = unit.position.y - t.y;
-                    moveX += (dx / dist) * 2;
-                    moveY += (dy / dist) * 2;
-                  }
-                }
-              });
-            }
-
-            // All ground units steer around buildings
-            if (!config.isFlying) {
-              terrainRef.current.forEach(bld => {
-                if (bld.type !== 'building') return;
-                const hw = ((bld.width || bld.size * 2.6) / 2) + 22;
-                const hd = ((bld.height || bld.size * 2.0) / 2) + 22;
-                const dx = unit.position.x - bld.x;
-                const dy = unit.position.y - bld.y;
-                if (Math.abs(dx) < hw && Math.abs(dy) < hd) {
-                  const overlapX = hw - Math.abs(dx);
-                  const overlapY = hd - Math.abs(dy);
-                  if (overlapX < overlapY) {
-                    moveX += Math.sign(dx || 1) * overlapX * 0.35;
-                  } else {
-                    moveY += Math.sign(dy || 1) * overlapY * 0.35;
-                  }
-                }
-              });
             }
           }
+
+          // Round obstacles rather than grinding into them. Vehicles treat
+          // trees, rocks and crates as solid; infantry only has to clear
+          // buildings (the rest is cover it wants to reach).
+          const steered = steerAroundObstacles(
+            unit, moveX, moveY, config.speed, profile.radius, isVehicle
+          );
+          moveX = steered.x; moveY = steered.y;
         }
 
         // Separation force — single tuned system, replaces old dual-system
         if (!unit.isInCover) {
-          const sepRadius = isVehicle ? 58 : 32;
-          const sepStr = isVehicle ? 0.065 : 0.09;
+          const sepRadius = profile.sepRadius;
+          const sepStr = profile.sepStr;
           spatialHash.current.queryCallback(unit.position.x, unit.position.y, sepRadius, (other) => {
             if (other.id !== unit.id && other.team === unit.team && !(UNIT_CONFIG[other.type] as any).isFlying) {
               const dx = unit.position.x - other.position.x;
@@ -2064,9 +2156,27 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     } else {
                       moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed;
                     }
+                  } else if (profile.wade > 0) {
+                    // Foot units ford the channel — slow, exposed, but they get across
+                    moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * profile.wade;
                   } else {
-                    // No intact bridge: infantry wade across slowly, vehicles wait
-                    moveX = isVehicle ? 0 : (unit.team === Team.WEST ? 1 : -1) * config.speed * 0.45;
+                    // No crossing for wheels or tracks: pull back onto the bank
+                    // and stage on the nearest downed bridge, so the column
+                    // waits in a queue an engineer can reach instead of piling
+                    // nose-first into the water.
+                    let staging: TerrainObject | null = null;
+                    let stagingDist = 10000;
+                    terrainRef.current.forEach(b => {
+                      if (b.type !== 'bridge' || Math.abs(b.x - river.x) > river.width! / 2 + 30) return;
+                      const d = Math.abs(unit.position.y - b.y);
+                      if (d < stagingDist) { stagingDist = d; staging = b; }
+                    });
+                    const back = unit.team === Team.WEST ? -1 : 1;
+                    moveX = back * config.speed * 0.5; // reverse out of the ford
+                    if (staging) {
+                      const dy = (staging as TerrainObject).y - unit.position.y;
+                      moveY += Math.sign(dy) * Math.min(config.speed, Math.abs(dy) * 0.08);
+                    }
                   }
                 }
               }
@@ -2074,10 +2184,68 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
-        if (rallyOn[unit.team]) moveX *= RALLY_SPEED_MULT; // rally surge
+        if (rallyOn[unit.team]) { moveX *= RALLY_SPEED_MULT; moveY *= RALLY_SPEED_MULT; } // rally surge
+
+        // Inertia: a tank leans into a turn, a soldier just turns. Smoothing the
+        // heading also kills the tick-to-tick jitter that let a vehicle vibrate
+        // in place against an obstacle instead of driving clear of it.
+        const intentX = moveX, intentY = moveY;
+        const intentMag = Math.hypot(intentX, intentY);
+        if (!config.isFlying) {
+          const vel = unit.vel || (unit.vel = { x: 0, y: 0 });
+          vel.x += (moveX - vel.x) * profile.steer;
+          vel.y += (moveY - vel.y) * profile.steer;
+          if (Math.abs(vel.x) < 0.005) vel.x = 0;
+          if (Math.abs(vel.y) < 0.005) vel.y = 0;
+          moveX = vel.x; moveY = vel.y;
+        }
 
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
+
+        // Stuck watchdog: a unit that wants to move but has gained no ground for
+        // a second is wedged — a building corner, a scrum of friendlies, a prop.
+        // Flip the side it's committed to and shoulder it sideways until it's
+        // free; vehicles simply crush whatever debris is pinning them.
+        if (!config.isFlying) {
+          const wantsToMove = intentMag > 0.08;
+          if ((tickCountRef.current + unit.id.charCodeAt(0)) % STUCK_SAMPLE_TICKS === 0) {
+            const prev = unit.lastProgressPos;
+            if (!wantsToMove) {
+              unit.stuckSamples = 0;
+            } else if (prev) {
+              const gained = Math.hypot(unit.position.x - prev.x, unit.position.y - prev.y);
+              if (gained < STUCK_MIN_PROGRESS) {
+                unit.stuckSamples = (unit.stuckSamples || 0) + 1;
+                if (unit.stuckSamples >= STUCK_ESCALATE) {
+                  // Whichever way we were going round isn't working — take the
+                  // other side, and hold it long enough to actually get there.
+                  unit.avoidDir = -(unit.avoidDir ?? 1);
+                  unit.avoidId = undefined;
+                  unit.avoidUntil = time + AVOID_COMMIT_MS * 2;
+                }
+              } else {
+                unit.stuckSamples = 0;
+              }
+            }
+            unit.lastProgressPos = { x: unit.position.x, y: unit.position.y };
+          }
+
+          if (wantsToMove && (unit.stuckSamples || 0) >= STUCK_ESCALATE) {
+            const side = unit.avoidDir ?? 1; // stable for the whole sample window
+            const iX = intentX / intentMag, iY = intentY / intentMag;
+            const shove = Math.min(1.2, 0.45 + 0.2 * ((unit.stuckSamples || 0) - STUCK_ESCALATE));
+            unit.position.x += -iY * side * shove;
+            unit.position.y += iX * side * shove;
+            unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
+            if (isVehicle) {
+              terrainRef.current.forEach(p => {
+                if ((p.type !== 'crate' && p.type !== 'barrel') || p.state === 'broken') return;
+                if (Math.hypot(p.x - unit.position.x, p.y - unit.position.y) < profile.radius + p.size + 6) breakProp(p);
+              });
+            }
+          }
+        }
 
         // Dust trail behind moving vehicles
         if (isVehicle && (Math.abs(moveX) > 0.05 || Math.abs(moveY) > 0.05) && Math.random() < 0.18) {
@@ -2669,10 +2837,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       if (u.type === UnitType.APC) {
-        // APC disgorges 3 soldiers on death
+        // Survivors bail out of the wreck — but only if the squad was still
+        // aboard; a deployed APC has already put them on the ground.
         soundService.playLargeExplosion();
         const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
-        for (let si = 0; si < 3; si++) {
+        for (let si = 0; si < (u.deployed ? 0 : APC_SQUAD); si++) {
           unitsRef.current.push({
             id: generateId(), team: u.team, type: UnitType.SOLDIER,
             position: { x: u.position.x + (si - 1) * 16, y: u.position.y + (Math.random() - 0.5) * 20 },
@@ -3092,7 +3261,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (u) handleUnitClickRef.current(u);
           return !!u;
         },
-        unitList: unitsRef.current.map(u => ({ id: u.id, type: u.type, team: u.team, squadId: u.squadId })),
+        unitList: unitsRef.current.map(u => ({
+          id: u.id, type: u.type, team: u.team, squadId: u.squadId,
+          position: { ...u.position }, health: u.health, isInCover: !!u.isInCover,
+          stuckSamples: u.stuckSamples || 0, deployed: !!u.deployed,
+        })),
         gameOver: gameOverRef.current,
       };
     }
