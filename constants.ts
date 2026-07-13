@@ -352,10 +352,14 @@ export const UNIT_CONFIG = {
     colorEast: '#7f1d1d',
   },
   [UnitType.SATELLITE]: {
-    cost: 350,
+    // Was $350 / radius 48: the priciest non-nuke strike with the SMALLEST
+    // footprint (cruise 90, napalm 100), so it killed fewer units than a $100
+    // napalm run — measured at 0.39 value-per-dollar against every other
+    // strike's 0.75-1.31. Widened the beam (area x2) and cut the price.
+    cost: 260,
     health: 0,
     damage: 3.5, // per tick while the beam is active
-    radius: 48,
+    radius: 68,
     speed: 0,
     range: 0,
     attackSpeed: 0,

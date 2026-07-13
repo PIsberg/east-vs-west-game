@@ -3390,6 +3390,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         // Test hook: end the match immediately (drives the real gameOver path)
         winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
+        // Test hook: set a team's army stance. Balance probes need a target that
+        // holds still — a strike aimed at a walking formation measures the lead,
+        // not the ordnance.
+        stance: (t: 'WEST' | 'EAST', order: 'advance' | 'hold' | 'retreat') => {
+          stancesRef.current[t === 'WEST' ? Team.WEST : Team.EAST] = order;
+        },
         // Test hook: simulate clicking a unit (goes through real selection logic)
         clickUnit: (id: string) => {
           const u = unitsRef.current.find(x => x.id === id);
