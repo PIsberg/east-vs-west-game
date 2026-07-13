@@ -56,7 +56,7 @@ const SPEED = 6;
   await browser.close();
 
   // Costs mirror constants.ts; SOLDIER spawns are individual models (cost 25 per squad of 3)
-  const COSTS = { TANK: 110, SOLDIER: 25 / 3, ARTILLERY: 80, RAMBO: 150, HELICOPTER: 155, SNIPER: 90, AIRBORNE: 70, MISSILE_STRIKE: 125, MINE_PERSONAL: 20, MINE_TANK: 45, DRONE: 45, ANTI_AIR: 80, TESLA: 165, FLAMETHROWER: 70, MEDIC: 45, ENGINEER: 55, APC: 95, BUNKER: 155, GUNSHIP: 225, NUKE: 2500, AIRSTRIKE: 100, MORTAR: 75, JEEP: 60, FIGHTER: 140, TRANSPORT: 70, SMOKE: 70, GUNBOAT: 145 };
+  const COSTS = { TANK: 110, SOLDIER: 25 / 3, ARTILLERY: 80, SPECIAL_FORCES: 150, HELICOPTER: 155, SNIPER: 90, AIRBORNE: 70, MISSILE_STRIKE: 125, MINE_PERSONAL: 20, MINE_TANK: 45, DRONE: 45, ANTI_AIR: 80, TESLA: 165, FLAMETHROWER: 70, MEDIC: 45, ENGINEER: 55, APC: 95, BUNKER: 155, GUNSHIP: 225, NUKE: 2500, AIRSTRIKE: 100, MORTAR: 75, JEEP: 60, FIGHTER: 140, TRANSPORT: 70, SMOKE: 70, GUNBOAT: 145 };
   console.log('\ntype              spawned  kills  killVal  lost  spent$  killVal/$');
   Object.entries(agg)
     .map(([t, a]) => ({ t, ...a, spent: a.spawned * (COSTS[t] ?? 0) }))

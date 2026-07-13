@@ -501,6 +501,9 @@ const MODEL_URL = {
     fighter: 'models/fighter.glb',
     drone: 'models/drone.glb',
     gunboat: 'models/gunboat.glb',
+    artillery: 'models/artillery.glb',
+    tesla: 'models/tesla.glb',
+    bunker: 'models/bunker.glb',
 };
 Object.values(MODEL_URL).forEach(u => useGLTF.preload(u));
 
@@ -520,6 +523,14 @@ const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : eastColor
 // `Swat`/`Main` slots the rules were originally written against. Matching by
 // those old names silently tinted nothing, so both sides rendered identical.
 type TintRule = { materials: string[], color: string, strength: number };
+
+// The turret pack (artillery/tesla/bunker) is the one set of models that ships
+// two named materials instead of a single atlas: 'Light' takes the team color,
+// 'Dark' is tinted far less so the shadowed plating stays readable as depth.
+const emplacementTint = (team: Team): TintRule[] => [
+    { materials: ['Light'], color: teamTint(team), strength: 0.55 },
+    { materials: ['Dark'], color: teamTint(team), strength: 0.22 },
+];
 
 // Tinted materials are shared across every unit that wants the same look —
 // a battle of 80 units used to allocate ~4 cloned materials each.
@@ -675,7 +686,7 @@ const GEO_RIFLE = (() => {
     return mergeBufferGeometries(parts, false)!;
 })();
 
-// Rambo carries a squad machine gun instead: longer barrel, drum magazine and
+// Special Forces carry a squad machine gun instead: longer barrel, drum magazine and
 // an ammo belt hanging off it. He also stands 18% taller than a rifleman, so at
 // a glance he reads as the heavy.
 const GEO_HMG = (() => {
@@ -781,7 +792,7 @@ const TANK_SCALE = 2.7;
 // color so specialists stay readable while 'Swat' (body) carries the team.
 const INFANTRY_ACCENT: Partial<Record<UnitType, string>> = {
     [UnitType.SNIPER]: '#3f6212',       // camo green
-    [UnitType.RAMBO]: '#dc2626',        // hero red
+    [UnitType.SPECIAL_FORCES]: '#dc2626',        // hero red
     [UnitType.FLAMETHROWER]: '#ea580c', // burn orange
     [UnitType.MEDIC]: '#f8fafc',        // white
     [UnitType.ENGINEER]: '#facc15',     // hi-vis yellow
@@ -803,8 +814,8 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
         soldierTemplate(scene),
     );
     // Kit the clone out once: a weapon on the right wrist (so it tracks the hand
-    // through the run/aim/fire clips), and Rambo's headband on the skull.
-    const isRambo = unit.type === UnitType.RAMBO;
+    // through the run/aim/fire clips), and the Special Forces headband on the skull.
+    const isSpecialForces = unit.type === UnitType.SPECIAL_FORCES;
     useMemo(() => {
         if (obj.getObjectByName('Rifle')) return;
         // The armature bakes a large scale into its bones, so anything parented
@@ -820,11 +831,11 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
 
         const wrist = findBone(obj, 'Wrist.R');
         if (wrist) {
-            // The HMG's geometry is already ~1.4x the rifle's, and Rambo's body is
+            // The HMG's geometry is already ~1.4x the rifle's, and the Special Forces body is
             // scaled up 18% on top — so no extra length multiplier beyond a nudge,
             // or the gun ends up longer than he is tall.
-            const k = (isRambo ? RIFLE_LENGTH * 1.05 : RIFLE_LENGTH) / boneScale(wrist);
-            const gun = new THREE.Mesh(isRambo ? GEO_HMG : GEO_RIFLE, rifleMaterial(accent ?? '#2f3437'));
+            const k = (isSpecialForces ? RIFLE_LENGTH * 1.05 : RIFLE_LENGTH) / boneScale(wrist);
+            const gun = new THREE.Mesh(isSpecialForces ? GEO_HMG : GEO_RIFLE, rifleMaterial(accent ?? '#2f3437'));
             gun.name = 'Rifle';
             gun.castShadow = true;
             gun.frustumCulled = false;
@@ -835,7 +846,7 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
         }
 
         // Red bandana: the silhouette cue that survives a pulled-back camera.
-        const head = isRambo ? findBone(obj, 'Head') : undefined;
+        const head = isSpecialForces ? findBone(obj, 'Head') : undefined;
         if (head) {
             const k = 1 / boneScale(head);
             const band = new THREE.Mesh(GEO_BANDANA, MAT_BANDANA);
@@ -854,7 +865,7 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
             tail.rotation.set(0, 0, 0.35);
             head.add(tail);
         }
-    }, [obj, accent, isRambo]);
+    }, [obj, accent, isSpecialForces]);
     const group = useRef<THREE.Group>(null!);
     const { actions } = useAnimations(animations, group);
     const clip = unit.state === UnitState.ATTACKING ? 'CharacterArmature|Idle_Gun_Shoot'
@@ -931,7 +942,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
     const rotation = [0, isWest ? 0 : Math.PI, 0];
 
     // Walk bob for infantry on the move
-    const isInfantry = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO || unit.type === UnitType.SNIPER ||
+    const isInfantry = unit.type === UnitType.SOLDIER || unit.type === UnitType.SPECIAL_FORCES || unit.type === UnitType.SNIPER ||
         unit.type === UnitType.FLAMETHROWER || unit.type === UnitType.MEDIC || unit.type === UnitType.AIRBORNE ||
         unit.type === UnitType.ENGINEER || unit.type === UnitType.MORTAR;
     const walkPhase = (unit.id.charCodeAt(0) * 13 + (unit.id.charCodeAt(1) || 0) * 7) % 100;
@@ -1025,27 +1036,17 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.TESLA && (
                         <group>
-                            <mesh position={[0, 8, 0]} castShadow>
-                                <boxGeometry args={[32, 16, 24]} />
-                                <meshStandardMaterial color={color} />
-                            </mesh>
-                            {/* Tesla Coil Base */}
-                            <mesh position={[0, 20, 0]} castShadow>
-                                <cylinderGeometry args={[8, 10, 4]} />
-                                <meshStandardMaterial color="#444" />
-                            </mesh>
-                            {/* Coil Rings */}
-                            <mesh position={[0, 26, 0]} castShadow>
-                                <cylinderGeometry args={[4, 4, 12]} />
-                                <meshStandardMaterial color="#0ea5e9" emissive="#0ea5e9" emissiveIntensity={2} />
-                            </mesh>
-                            {/* Top Sphere */}
-                            <mesh position={[0, 34, 0]} castShadow>
+                            {/* Emitter crown (GLB); the arc FX below sit above its spikes */}
+                            <Suspense fallback={null}>
+                                <StaticModel url={MODEL_URL.tesla} targetLen={34} axis="x" yaw={0} tints={emplacementTint(unit.team)} />
+                            </Suspense>
+                            {/* Charge core sitting in the crown */}
+                            <mesh position={[0, 30, 0]} castShadow>
                                 <sphereGeometry args={[5, 16, 16]} />
                                 <meshStandardMaterial color="#e0f2fe" emissive="#e0f2fe" emissiveIntensity={10} />
                             </mesh>
                             {/* Orbiting charge sparks */}
-                            <group position={[0, 34, 0]} rotation={[0, Date.now() * 0.008, 0]}>
+                            <group position={[0, 30, 0]} rotation={[0, Date.now() * 0.008, 0]}>
                                 {[0, Math.PI].map((a, i) => (
                                     <mesh key={i} position={[Math.cos(a) * 7.5, Math.sin(Date.now() * 0.01 + a) * 2, Math.sin(a) * 7.5]}>
                                         <sphereGeometry args={[0.9, 6, 6]} />
@@ -1055,7 +1056,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             </group>
                             {/* Stray arc crackling down the coil, flickers in and out */}
                             {Math.sin(Date.now() * 0.017) > 0.55 && (
-                                <mesh position={[3.5, 27, 3.5]} rotation={[0.5, Date.now() * 0.02 % (Math.PI * 2), 0.9]}>
+                                <mesh position={[3.5, 23, 3.5]} rotation={[0.5, Date.now() * 0.02 % (Math.PI * 2), 0.9]}>
                                     <cylinderGeometry args={[0.25, 0.25, 14]} />
                                     <meshBasicMaterial color="#bae6fd" toneMapped={false} transparent opacity={0.85} />
                                 </mesh>
@@ -1071,89 +1072,23 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {
                     unit.type === UnitType.ARTILLERY && (
                         <group>
-                            {/* Modern SPG Hull */}
-                            <mesh position={[0, 8, 0]} castShadow receiveShadow>
-                                <boxGeometry args={[32, 14, 38]} />
-                                <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Tracks */}
-                            <mesh position={[-17, 7, 0]}>
-                                <boxGeometry args={[6, 14, 34]} />
-                                <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            <mesh position={[17, 7, 0]}>
-                                <boxGeometry args={[6, 14, 34]} />
-                                <meshStandardMaterial color="#333" transparent={transparent} opacity={opacity} />
-                            </mesh>
-                            {/* Road wheels */}
-                            {[-13, -4.5, 4.5, 13].map(z => (
-                                <group key={z}>
-                                    <mesh position={[-17, 5, z]} rotation={[0, 0, Math.PI / 2]}>
-                                        <cylinderGeometry args={[4, 4, 7, 10]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                    <mesh position={[17, 5, z]} rotation={[0, 0, Math.PI / 2]}>
-                                        <cylinderGeometry args={[4, 4, 7, 10]} />
-                                        <meshStandardMaterial color="#111" />
-                                    </mesh>
-                                </group>
-                            ))}
-                            {/* Stowage on the rear deck */}
-                            <mesh position={[0, 16, -16]} castShadow>
-                                <boxGeometry args={[18, 5, 6]} />
-                                <meshStandardMaterial color="#3f3f2e" roughness={1} />
-                            </mesh>
-                            {/* Commander hatch + whip antenna */}
-                            <mesh position={[2, 25, -6]} castShadow>
-                                <cylinderGeometry args={[3, 3.4, 2.5, 10]} />
-                                <meshStandardMaterial color="#3a3a2c" roughness={0.9} />
-                            </mesh>
-                            <mesh position={[-12, 30, 7]} rotation={[0.12, 0, -0.1]}>
-                                <cylinderGeometry args={[0.22, 0.4, 16]} />
-                                <meshStandardMaterial color="#1c1917" />
-                            </mesh>
-                            <mesh position={[-8, 16, 14]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-                                <cylinderGeometry args={[2.5, 2.5, 12]} />
-                                <meshStandardMaterial color="#292524" />
-                            </mesh>
-
-                            {/* Turret Assembly (Rotated to face enemy) */}
-                            <group position={[0, 18, 0]} rotation={[0, Math.PI / 2, 0]}>
-                                {/* Muzzle Flash (Local coords to Turret) */}
-                                {unit.attackCooldown > (config.attackSpeed - 8) && (
-                                    <group position={[0, 20, 48]}>
-                                        <MuzzleFlash size={7} />
-                                    </group>
-                                )}
-                                {/* Turret Block */}
-                                <mesh position={[0, 0, -4]} castShadow>
-                                    <boxGeometry args={[22, 12, 24]} />
-                                    <meshStandardMaterial color={color} transparent={transparent} opacity={opacity} />
-                                </mesh>
-                                {/* Long Barrel Howitzer (Angled Up, recoils on firing) */}
-                                <group position={[0, 2, 10 - recoil * 1.5]} rotation={[Math.PI / 4, 0, 0]}>
-                                    <mesh position={[0, 10, 0]}>
-                                        <cylinderGeometry args={[2.5, 3, 35]} />
-                                        <meshStandardMaterial color="#444" transparent={transparent} opacity={opacity} />
-                                    </mesh>
-                                    {/* Muzzle Brake */}
-                                    <mesh position={[0, 28, 0]}>
-                                        <boxGeometry args={[5, 6, 5]} />
-                                        <meshStandardMaterial color="#222" transparent={transparent} opacity={opacity} />
-                                    </mesh>
-                                </group>
-                                {/* Radar/Antenna */}
-                                <mesh position={[8, 7, -10]}>
-                                    <cylinderGeometry args={[0.5, 0.5, 8]} />
-                                    <meshStandardMaterial color="#888" transparent={transparent} opacity={opacity} />
-                                </mesh>
+                            {/* Towed gun (GLB), rolled back along its firing line by recoil */}
+                            <group position={[-recoil * 1.5, 0, 0]}>
+                                <Suspense fallback={null}>
+                                    <StaticModel url={MODEL_URL.artillery} targetLen={54} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
+                                </Suspense>
                             </group>
+                            {firing && (
+                                <group position={[30, 26, 0]}>
+                                    <MuzzleFlash size={7} />
+                                </group>
+                            )}
                         </group>
                     )
                 }
 
                 {
-                    unit.type === UnitType.RAMBO && (
+                    unit.type === UnitType.SPECIAL_FORCES && (
                         <group position={[0, 0, 0]}>
                             {/* Hero unit runs slightly larger than the rank and file */}
                             <Suspense fallback={null}>
@@ -1549,30 +1484,10 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 <meshBasicMaterial color={isWest ? '#60a5fa' : eastColor('#f87171')} toneMapped={false} />
                             </mesh>
                         ))}
-                        {/* Base slab */}
-                        <mesh position={[0, 4, 0]} castShadow receiveShadow>
-                            <boxGeometry args={[38, 8, 34]} />
-                            <meshStandardMaterial color="#4b5563" roughness={0.95} />
-                        </mesh>
-                        {/* Upper parapet */}
-                        <mesh position={[0, 11, 0]} castShadow>
-                            <boxGeometry args={[34, 6, 30]} />
-                            <meshStandardMaterial color="#374151" roughness={0.9} />
-                        </mesh>
-                        {/* Roof lip */}
-                        <mesh position={[0, 14.5, 0]} castShadow>
-                            <boxGeometry args={[36, 1.5, 32]} />
-                            <meshStandardMaterial color="#4b5563" roughness={0.95} />
-                        </mesh>
-                        {/* Observation cupola */}
-                        <mesh position={[-6, 17, -6]} castShadow>
-                            <cylinderGeometry args={[4.5, 5, 4, 10]} />
-                            <meshStandardMaterial color="#374151" roughness={0.9} />
-                        </mesh>
-                        <mesh position={[-6, 19.5, -6]}>
-                            <sphereGeometry args={[4.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                            <meshStandardMaterial color="#2b3442" roughness={0.85} />
-                        </mesh>
+                        {/* Emplacement (GLB): the gun the garrison mans */}
+                        <Suspense fallback={null}>
+                            <StaticModel url={MODEL_URL.bunker} targetLen={46} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
+                        </Suspense>
                         {/* Radio mast with blinking tip */}
                         <mesh position={[-13, 22, 9]}>
                             <cylinderGeometry args={[0.35, 0.5, 14]} />
@@ -1593,16 +1508,6 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.25} side={THREE.DoubleSide} />
                             </mesh>
                         </group>
-                        {/* Gun slit opening */}
-                        <mesh position={[17, 11, 0]}>
-                            <boxGeometry args={[2, 3, 16]} />
-                            <meshStandardMaterial color="#111" />
-                        </mesh>
-                        {/* Gun barrel */}
-                        <mesh position={[20, 11, 0]} rotation={[0, 0, -Math.PI / 2]}>
-                            <cylinderGeometry args={[1.5, 1.5, 12]} />
-                            <meshStandardMaterial color="#1f2937" />
-                        </mesh>
                         {/* Sandbag perimeter guarding the firing arc */}
                         {([[22, -14], [24, -7], [25, 0], [24, 7], [22, 14], [14, -18], [14, 18]] as const).map(([sx, sz], i) => (
                             <group key={i} position={[sx, 0, sz]} rotation={[0, (i * 37) % 7 * 0.15, 0]}>

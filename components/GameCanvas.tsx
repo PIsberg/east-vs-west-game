@@ -57,13 +57,13 @@ export const BRIDGE_HP = 320;
 
 // Foot units a Transport can carry
 const TRANSPORTABLE = new Set([
-  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
 // Foot units that can dig in while holding position
 const ENTRENCHABLE = new Set([
-  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
@@ -2560,7 +2560,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Tesla Targeting: STRICTLY Infantry Only
             target = potentialTargets.find(o =>
               o.team !== unit.team &&
-              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.RAMBO || o.type === UnitType.AIRBORNE) &&
+              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.SPECIAL_FORCES || o.type === UnitType.AIRBORNE) &&
               !smokeBlocked(unit, o) &&
               Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
             );
@@ -2607,7 +2607,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const ft = unitsRef.current.find(o => o.id === focus.targetId && o.team !== unit.team && o.health > 0);
               if (ft) {
                 const ftIsAir = !!(UNIT_CONFIG[ft.type] as any).isFlying;
-                const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+                const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.SPECIAL_FORCES ||
                   unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
                 const fd = Math.sqrt((ft.position.x - unit.position.x) ** 2 + (ft.position.y - unit.position.y) ** 2);
                 if ((!ftIsAir || canEngageAirFocus) && fd < range && !smokeBlocked(unit, ft)) target = ft;
@@ -2644,7 +2644,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Secondary pass: air targets — only infantry, snipers, and helicopters can engage air
             // Tanks and Artillery are strictly ground-only weapons
             if (!target) {
-              const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+              const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.SPECIAL_FORCES ||
                 unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
               if (canEngageAir) {
                 target = potentialTargets.find(o => {
@@ -2786,9 +2786,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (target.type === UnitType.HELICOPTER) damage *= 3;
             else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
           }
-          // Small arms (soldiers, rambo) are 30% effective against aircraft
+          // Small arms (soldiers, special forces) are 30% effective against aircraft
           if ((UNIT_CONFIG[target.type] as any).isFlying &&
-            (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.RAMBO)) {
+            (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.SPECIAL_FORCES)) {
             damage *= 0.3;
           }
 
@@ -2796,7 +2796,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           target.lastHitTime = Date.now();
           if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
           // Blood or Sparks
-          if (target.type === UnitType.SOLDIER || target.type === UnitType.RAMBO) {
+          if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
             particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
           }
         }
@@ -2993,7 +2993,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             alt: 4 + Math.random() * 16, altVel: 0.5 + Math.random() * 0.7
           });
         }
-      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE ||
                  u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
                  u.type === UnitType.MORTAR) {
         // Troops Scream & Blood (flat pool at ground level)
@@ -3010,7 +3010,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Corpse / wreck left on the battlefield
       const cfg = UNIT_CONFIG[u.type] as any;
-      const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+      const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE ||
         u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
         u.type === UnitType.MORTAR;
       const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP || u.type === UnitType.TRANSPORT;
@@ -3128,7 +3128,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const foeUnits = unitsRef.current.filter(u => u.team === FOE);
         const airThreats    = foeUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER).length;
         const armorThreats  = foeUnits.filter(u => u.type === UnitType.TANK || u.type === UnitType.APC).length;
-        const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
+        const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
         // Foe front line: their furthest advance toward the CPU's edge
         const foeFrontX     = foeUnits.length > 0
           ? (FOE === Team.WEST ? Math.max(...foeUnits.map(u => u.position.x)) : Math.min(...foeUnits.map(u => u.position.x)))
@@ -3137,7 +3137,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const myHasAA     = myActive.some(u => u.type === UnitType.ANTI_AIR);
         const myHasMedic  = myActive.some(u => u.type === UnitType.MEDIC);
         const myHasTesla  = myActive.some(u => u.type === UnitType.TESLA);
-        const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO).length;
+        const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES).length;
 
         // Helper: add weight only if affordable
         const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost;
@@ -3181,7 +3181,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         add(UnitType.ARTILLERY, 1);
         add(UnitType.ANTI_AIR, 1);
         add(UnitType.DRONE, 1);
-        add(UnitType.RAMBO, 1);
+        add(UnitType.SPECIAL_FORCES, 1);
         add(UnitType.FLAMETHROWER, 1);
         add(UnitType.JEEP, 2);
         add(UnitType.MORTAR, 1);

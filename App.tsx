@@ -156,7 +156,7 @@ const CHALLENGES: Challenge[] = [
 ];
 // Foot units allowed under the Boots Only restriction
 const INFANTRY_ALLOWED = new Set([
-  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.MINE_PERSONAL,
 ]);
 
@@ -452,7 +452,7 @@ const App: React.FC = () => {
       if (e.key === 'Escape') { setSelection(null); setTargetingInfo(null); return; }
       // Unit Order (Top to Bottom as rendered)
       const unitOrder = [
-        UnitType.SOLDIER, UnitType.RAMBO, UnitType.MINE_PERSONAL, // Infantry
+        UnitType.SOLDIER, UnitType.SPECIAL_FORCES, UnitType.MINE_PERSONAL, // Infantry
         UnitType.TANK, UnitType.ARTILLERY, UnitType.ANTI_AIR, UnitType.DRONE, UnitType.MINE_TANK, // Vehicles
         UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.NUKE // Airstrikes
       ];
@@ -496,7 +496,7 @@ const App: React.FC = () => {
 
     const UNIT_COUNTERS: Record<UnitType, React.ReactNode[]> = {
       [UnitType.SOLDIER]: [<User size={8} key="u" />],
-      [UnitType.RAMBO]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
+      [UnitType.SPECIAL_FORCES]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.SNIPER]: [<User size={8} key="u" />, <Shield size={8} key="s" />],
       [UnitType.MINE_PERSONAL]: [<User size={8} key="u" />],
       [UnitType.TANK]: [<Shield size={8} key="s" />, <User size={8} key="u" />],
@@ -619,7 +619,7 @@ const App: React.FC = () => {
         {renderGroup("Infantry", [
           { type: UnitType.SOLDIER, label: "SQUAD", icon: <SquadIcon size={16} /> },
           { type: UnitType.SNIPER, label: "SNIPER", icon: <SniperIcon size={16} /> },
-          { type: UnitType.RAMBO, label: "RAMBO", icon: <BandanaIcon size={16} />, special: true },
+          { type: UnitType.SPECIAL_FORCES, label: "SPEC FORCES", icon: <BandanaIcon size={16} />, special: true },
           { type: UnitType.FLAMETHROWER, label: "FLAMER", icon: <Flame size={16} /> },
           { type: UnitType.MEDIC, label: "MEDIC", icon: <Heart size={16} /> },
           { type: UnitType.ENGINEER, label: "ENGINEER", icon: <ShieldAlert size={16} /> },
@@ -1007,7 +1007,7 @@ const App: React.FC = () => {
             <div><strong className="text-white">Squad:</strong> Cheap, general purpose.</div>
             <div><strong className="text-white">Tank:</strong> High HP, heavy damage.</div>
             <div><strong className="text-white">Artillery:</strong> Long range splash. Stops to fire.</div>
-            <div><strong className="text-white">Rambo:</strong> Rapid fire hero unit.</div>
+            <div><strong className="text-white">Special Forces:</strong> Rapid fire hero unit.</div>
             <div><strong className="text-white">AA Unit:</strong> <span className="text-red-400">Essential</span> vs Drones & Air.</div>
             <div><strong className="text-white">Drone:</strong> Flying Bomb. Immune to Ground Fire.</div>
           </div>

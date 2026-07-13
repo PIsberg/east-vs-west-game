@@ -53,7 +53,7 @@ export const UNIT_CONFIG = {
     colorWest: '#1e3a8a',
     colorEast: '#7f1d1d',
   },
-  [UnitType.RAMBO]: {
+  [UnitType.SPECIAL_FORCES]: {
     cost: 150,
     health: 80,
     damage: 20,
