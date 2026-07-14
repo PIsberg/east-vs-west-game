@@ -3717,6 +3717,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           position: { ...u.position }, health: u.health, maxHealth: u.maxHealth, isInCover: !!u.isInCover,
           stuckSamples: u.stuckSamples || 0, deployed: !!u.deployed,
           buildUntil: u.buildUntil, garrison: u.garrison || 0,
+          suppressedUntil: u.suppressedUntil,
         })),
         gameOver: gameOverRef.current,
       };
