@@ -398,7 +398,10 @@ export const UNIT_CONFIG = {
   },
 };
 
-export const PROJECTILE_SPEED = 6;
+// Rounds used to be stepped by TWO loops in the same tick, so their real speed
+// was always double this number. Unifying the loops into one resolver halved
+// every time-of-flight, so the base doubles to keep flight times where they were.
+export const PROJECTILE_SPEED = 12;
 export const MONEY_PER_TICK = 0.15;
 // 2000 bought a ~20-unit opening all-in whose winner snowballed the match
 export const INITIAL_MONEY = 1200;

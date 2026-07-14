@@ -1310,75 +1310,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // Projectile Update
-    for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
-      const proj = projectilesRef.current[i];
-      const stepX = proj.velocity.x, stepY = proj.velocity.y;
-      const stepDist = Math.sqrt(stepX * stepX + stepY * stepY);
-      proj.position.x += stepX; proj.position.y += stepY;
-      proj.distanceTraveled += stepDist;
-
-      if (proj.distanceTraveled >= proj.maxRange || proj.position.x < 0 || proj.position.x > CANVAS_WIDTH || proj.position.y < (proj.targetType === 'air' ? -50 : HORIZON_Y) || proj.position.y > CANVAS_HEIGHT + 50) {
-        projectilesRef.current.splice(i, 1); continue;
-      }
-
-      let hit = false;
-      if (proj.targetType === 'air') {
-        for (const u of unitsRef.current) {
-          if (u.team !== proj.team && u.type === UnitType.DRONE) {
-            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < 18) {
-              u.health -= proj.damage;
-              u.lastHitTime = Date.now();
-              if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
-              hit = true; break;
-            }
-          }
-        }
-        if (!hit) {
-          for (const fly of flyoversRef.current) {
-            if (fly.team !== proj.team && Math.sqrt((fly.currentX - proj.position.x) ** 2 + (fly.altitudeY - proj.position.y) ** 2) < 35) { fly.health -= proj.damage; hit = true; break; }
-          }
-        }
-      } else {
-        const candidates = spatialHash.current.query(proj.position.x, proj.position.y, 50); // Query nearby units
-        for (const u of candidates) {
-          if (u.team !== proj.team && u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
-            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < (u.width * getScaleAt(u.position.y)) / 1.2) {
-              hit = true;
-              if (proj.explosionRadius) {
-                const victims = spatialHash.current.query(proj.position.x, proj.position.y, proj.explosionRadius!);
-                victims.forEach(victim => {
-                  if (victim.team !== proj.team && Math.sqrt((victim.position.x - proj.position.x) ** 2 + (victim.position.y - proj.position.y) ** 2) < proj.explosionRadius! * getScaleAt(proj.position.y)) {
-                    victim.health -= proj.damage;
-                    victim.lastHitTime = Date.now();
-                    if (proj.sourceUnitId) victim.lastAttackerId = proj.sourceUnitId;
-                  }
-                });
-              }
-              else {
-                // Cover Logic
-                // Tanks & Artillery ignore cover (Heavy weapons)
-                // Others (Infantry) have damage reduced by cover
-                const ignoresCover = proj.sourceType === UnitType.TANK || proj.sourceType === UnitType.ARTILLERY || proj.sourceType === UnitType.DRONE || proj.sourceType === UnitType.AIRSTRIKE || proj.sourceType === UnitType.MISSILE_STRIKE || proj.sourceType === UnitType.NUKE;
-                // Cover beats a foxhole; explosives (ignoresCover) dig everyone out
-                const damage = !ignoresCover && u.isInCover ? proj.damage * 0.4
-                  : !ignoresCover && u.isEntrenched ? proj.damage * 0.55
-                  : proj.damage;
-                u.health -= damage;
-                u.lastHitTime = Date.now();
-                if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
-                // Scaled by the damage that actually landed, so a round soaked
-                // by cover visibly lands softer than a clean one.
-                impactFx(proj.position.x, proj.position.y, damage,
-                  Math.atan2(proj.velocity.y, proj.velocity.x), isMechanical(u.type));
-              }
-              break;
-            }
-          }
-        }
-      }
-      if (hit) { soundService.playHitSound(); projectilesRef.current.splice(i, 1); }
-    }
+    // NOTE: projectiles used to be stepped and resolved by TWO loops in this same
+    // tick — this one and "Projectiles Logic" further down. They disagreed: this
+    // one knew about cover and flyovers, that one about the anti-air multipliers,
+    // blast falloff and craters. Whichever caught a round first decided which
+    // rules it played by, and since this loop ran first it won most collisions —
+    // so AA quietly lost its bonus vs drones, small arms hit aircraft at full
+    // damage, and shells that struck a unit dealt full damage to the whole blast
+    // with no falloff and no crater. Rounds also moved twice per tick. There is
+    // now exactly ONE resolver (see "Projectiles Logic"); do not add a second.
 
     // Missile Update
     for (let i = missilesRef.current.length - 1; i >= 0; i--) {
@@ -2961,7 +2901,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // Projectiles Logic (backwards: loop splices)
+    // Projectiles Logic — the ONE place a round moves and resolves (backwards:
+    // loop splices). Everything a shot obeys lives here: cover and foxholes, the
+    // anti-air multipliers, blast falloff, craters, bridges.
     for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
       const p = projectilesRef.current[i];
       p.position.x += p.velocity.x;
@@ -2973,20 +2915,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       let hit = false;
       let explode = false;
 
+      // Off the map: gone, no bang
+      if (p.position.x < 0 || p.position.x > CANVAS_WIDTH ||
+        p.position.y < (p.targetType === 'air' ? -50 : HORIZON_Y) || p.position.y > CANVAS_HEIGHT + 50) {
+        projectilesRef.current.splice(i, 1);
+        continue;
+      }
+
       // Check Max Range
       if (p.distanceTraveled >= p.maxRange) {
         explode = true;
       }
 
+      // Anti-air rounds can also swat a flyover (the strike aircraft themselves)
+      if (!explode && p.targetType === 'air') {
+        for (const fly of flyoversRef.current) {
+          if (fly.team !== p.team &&
+            Math.sqrt((fly.currentX - p.position.x) ** 2 + (fly.altitudeY - p.position.y) ** 2) < 35) {
+            fly.health -= p.damage;
+            hit = true; explode = true;
+            break;
+          }
+        }
+      }
+
       // Check Collision (Simple Circle)
       if (!explode) {
         const target = unitsRef.current.find(u => {
-          if (u.team === p.team) return false;
+          if (u.team === p.team || u.health <= 0) return false;
+          // Mines and burning napalm are terrain, not something you can shoot
+          if (u.type === UnitType.NAPALM || u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK) return false;
           // Air vs Ground check
           if (p.targetType === 'air' && !(UNIT_CONFIG[u.type] as any).isFlying && u.type !== UnitType.AIRBORNE) return false;
           if (p.targetType === 'ground' && (UNIT_CONFIG[u.type] as any).isFlying) return false; // Ground missiles don't hit planes randomly usually
 
-          const hitDist = (u.width + u.height) / 4; // Approx radius
+          // Perspective-scaled body radius (the old dual-loop code disagreed on
+          // this too; this is the more generous of the two, which is what
+          // actually governed hit rates in practice).
+          const hitDist = u.type === UnitType.DRONE ? 18 : (u.width * getScaleAt(u.position.y)) / 1.2;
           return Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) < hitDist;
         });
 
@@ -2994,35 +2960,49 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           hit = true;
           explode = true;
 
-          let damage = p.damage;
-          // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
-          if (p.sourceType === UnitType.ANTI_AIR) {
-            if (target.type === UnitType.HELICOPTER) damage *= 3;
-            else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
-          }
-          // Small arms (soldiers, special forces) are 30% effective against aircraft
-          if ((UNIT_CONFIG[target.type] as any).isFlying &&
-            (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.SPECIAL_FORCES)) {
-            damage *= 0.3;
-          }
+          // An explosive round does its damage as a blast (with falloff, below) —
+          // applying a direct hit as well would double-dip the primary target.
+          if (!p.explosionRadius) {
+            let damage = p.damage;
+            // Cover and foxholes soak a direct hit; heavy/explosive weapons dig you out
+            const ignoresCover = p.sourceType === UnitType.TANK || p.sourceType === UnitType.ARTILLERY ||
+              p.sourceType === UnitType.DRONE || p.sourceType === UnitType.AIRSTRIKE ||
+              p.sourceType === UnitType.MISSILE_STRIKE || p.sourceType === UnitType.NUKE;
+            if (!ignoresCover && target.isInCover) damage *= 0.4;
+            else if (!ignoresCover && target.isEntrenched) damage *= 0.55;
 
-          target.health -= damage;
-          target.lastHitTime = Date.now();
-          if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
-          // Blood or Sparks
-          if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
-            particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
+            // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
+            if (p.sourceType === UnitType.ANTI_AIR) {
+              if (target.type === UnitType.HELICOPTER) damage *= 3;
+              else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
+            }
+            // Small arms (soldiers, special forces) are 30% effective against aircraft
+            if ((UNIT_CONFIG[target.type] as any).isFlying &&
+              (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.SPECIAL_FORCES)) {
+              damage *= 0.3;
+            }
+
+            target.health -= damage;
+            target.lastHitTime = Date.now();
+            if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
+            // Blood or Sparks
+            if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
+              particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
+            }
+            // Scaled by the damage that ACTUALLY landed — after cover and after the
+            // AA multipliers — so a soaked round visibly lands softer than a clean one.
+            impactFx(p.position.x, p.position.y, damage,
+              Math.atan2(p.velocity.y, p.velocity.x), isMechanical(target.type));
           }
-          // Note the AA multipliers above: this path can deal several times the
-          // round's base damage, so the impact is scaled by `damage`, not p.damage.
-          impactFx(p.position.x, p.position.y, damage,
-            Math.atan2(p.velocity.y, p.velocity.x), isMechanical(target.type));
         }
       }
 
       if (explode) {
         projectilesRef.current.splice(i, 1);
-        soundService.playExplosionSound(); // Or hit sound
+        // A rifle round is not an explosion — the old dual-loop code played the
+        // hit sound from one loop and the blast from the other.
+        if (p.explosionRadius) soundService.playExplosionSound();
+        else if (hit) soundService.playHitSound();
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
@@ -3050,10 +3030,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           unitsRef.current.forEach(u => {
-            if (u.team !== p.team) {
+            if (u.team !== p.team && u.health > 0) {
               const d = Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2);
               if (d < p.explosionRadius!) {
                 u.health -= p.damage * (1 - d / p.explosionRadius!);
+                // Attribution matters: without it the blast kills nobody as far as
+                // the game is concerned — no veterancy for the gunner, and the
+                // stats credit the kill to no one (artillery and mortar showed 0
+                // kills in the harness the moment their damage moved to this path).
+                u.lastHitTime = Date.now();
+                if (p.sourceUnitId) u.lastAttackerId = p.sourceUnitId;
               }
             }
           });
