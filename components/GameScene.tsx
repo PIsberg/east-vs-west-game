@@ -6,7 +6,7 @@ import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks } from '../constants';
 
 
 interface GameSceneProps {
@@ -990,11 +990,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
     const bobY = walking ? Math.abs(Math.sin(Date.now() * 0.012 + walkPhase)) * 1.6 : 0;
     const bobTilt = walking ? Math.sin(Date.now() * 0.012 + walkPhase) * 0.05 : 0;
 
-    // Turret recoil right after firing (mirrors the muzzle-flash window), scaled
-    // by the unit's firing signature so a howitzer heaves and a rifle twitches.
-    const firing = unit.attackCooldown > (config.attackSpeed - 8);
+    // The muzzle-flash window scales with the weapon's cadence (flashTicks): fast
+    // guns strobe, slow guns linger. Recoil rides the same window and the unit's
+    // firing signature, so a howitzer heaves where a rifle twitches.
     const fireFx = getFireFx(unit.type);
-    const recoil = firing ? (unit.attackCooldown - (config.attackSpeed - 8)) * 0.11 * fireFx.recoil : 0;
+    const flashWin = flashTicks(unit.type);
+    const firing = unit.attackCooldown > (config.attackSpeed - flashWin);
+    const recoil = firing ? (unit.attackCooldown - (config.attackSpeed - flashWin)) * 0.11 * fireFx.recoil : 0;
 
     // Visual cue for Cover
     const opacity = (unit as any).isInCover ? 0.6 : 1.0;
@@ -1019,7 +1021,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <Suspense fallback={null}>
                                 <InfantryModel unit={unit} />
                             </Suspense>
-                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                            {firing && (
                                 <group position={[10, 12, 1]}>
                                     <MuzzleFlash size={0.8} />
                                 </group>
@@ -1036,7 +1038,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 </Suspense>
                             </group>
                             {/* Muzzle Flash at the barrel tip */}
-                            {unit.attackCooldown > (config.attackSpeed - 8) && (
+                            {firing && (
                                 <group position={[34, 15, 0]}>
                                     <MuzzleFlash size={4} />
                                 </group>
@@ -1061,7 +1063,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                     <meshStandardMaterial color={isWest ? '#3b82f6' : eastColor('#ef4444')} emissive={isWest ? '#3b82f6' : eastColor('#ef4444')} emissiveIntensity={0.3} side={THREE.DoubleSide} />
                                 </mesh>
                             </group>
-                            {unit.attackCooldown > (config.attackSpeed - 8) && (
+                            {firing && (
                                 <group position={[20, 10, 0]}>
                                     <MuzzleFlash size={3} />
                                 </group>
@@ -1135,7 +1137,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <Suspense fallback={null}>
                                 <InfantryModel unit={unit} scale={SOLDIER_SCALE * 1.18} />
                             </Suspense>
-                            {unit.attackCooldown > 5 && (
+                            {firing && (
                                 <group position={[12, 13, 1]}>
                                     <MuzzleFlash size={1.5} />
                                 </group>
@@ -1150,7 +1152,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <Suspense fallback={null}>
                                 <InfantryModel unit={unit} />
                             </Suspense>
-                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                            {firing && (
                                 <group position={[10, 12, 1]}>
                                     <MuzzleFlash size={0.8} />
                                 </group>
@@ -1184,7 +1186,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <Suspense fallback={null}>
                                 <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.55 }]} />
                             </Suspense>
-                            {unit.attackCooldown > 35 && (
+                            {firing && (
                                 <group position={[8, 26, 0]} rotation={[0, 0, Math.PI / 4]}>
                                     <MuzzleFlash size={3} color={fireFx.flashColor} />
                                 </group>
@@ -1272,7 +1274,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             </mesh>
 
                             {/* Muzzle Flashes (Missiles/Guns) */}
-                            {unit.attackCooldown > (config.attackSpeed - 10) && (
+                            {firing && (
                                 <group>
                                     <group position={[6, -2, 4]} rotation={[0, -Math.PI / 2, 0]}><MuzzleFlash size={2} /></group>
                                     <group position={[-6, -2, 4]} rotation={[0, -Math.PI / 2, 0]}><MuzzleFlash size={2} /></group>
@@ -1294,7 +1296,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                     <meshBasicMaterial color="#e0f2fe" toneMapped={false} />
                                 </mesh>
                             )}
-                            {unit.attackCooldown > (config.attackSpeed - 6) && (
+                            {firing && (
                                 <group position={[11, 12, 1]}>
                                     {/* A pale crack, not a fireball — his tell is the dust it lifts */}
                                     <MuzzleFlash size={1.5} color={fireFx.flashColor} />
@@ -1336,7 +1338,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <meshBasicMaterial color={Math.floor(Date.now() / 120) % 2 === 0 ? '#f97316' : '#fbbf24'} toneMapped={false} />
                         </mesh>
                         {/* Flame burst when attacking (emissive, blooms) */}
-                        {unit.attackCooldown > 4 && (
+                        {firing && (
                             <mesh position={[13, 11, 1]} scale={1 + 0.4 * Math.sin(Date.now() * 0.05)}>
                                 <sphereGeometry args={[2.2, 6, 6]} />
                                 <meshBasicMaterial color="#f97316" toneMapped={false} transparent opacity={0.85} />
@@ -1357,7 +1359,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             <mesh><boxGeometry args={[1, 3, 0.5]} /><meshBasicMaterial color="#16a34a" /></mesh>
                         </group>
                         {/* Healing glow (emissive) */}
-                        {unit.attackCooldown > 30 && (
+                        {firing && (
                             <mesh position={[0, 27, 0]}>
                                 <sphereGeometry args={[1.4, 6, 6]} />
                                 <meshBasicMaterial color="#4ade80" toneMapped={false} />
@@ -1382,7 +1384,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             </mesh>
                         </mesh>
                         {/* Defusing glow (emissive) */}
-                        {unit.attackCooldown > (config.attackSpeed - 12) && (
+                        {firing && (
                             <mesh position={[13, 3, 1]}>
                                 <sphereGeometry args={[1.4, 6, 6]} />
                                 <meshBasicMaterial color="#4ade80" toneMapped={false} />
@@ -1492,7 +1494,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         <Suspense fallback={null}>
                             <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
                         </Suspense>
-                        {unit.attackCooldown > (config.attackSpeed - 10) && (
+                        {firing && (
                             <group position={[22, 14, 0]}>
                                 <MuzzleFlash size={1.5} />
                             </group>
@@ -1570,7 +1572,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 </mesh>
                             </group>
                         ))}
-                        {!building && unit.attackCooldown > (config.attackSpeed - 8) && (
+                        {!building && firing && (
                             <group position={[18, 11, 0]} rotation={[0, -Math.PI / 2, 0]}>
                                 <MuzzleFlash size={2} />
                             </group>
@@ -2125,6 +2127,14 @@ const INST_PROJECTILE_GEO = new THREE.SphereGeometry(3, 8, 8);
 const INST_PROJECTILE_MAT = new THREE.MeshBasicMaterial({ color: 'white', toneMapped: false });
 const COLOR_PROJ_AIR = new THREE.Color('#f43f5e');
 const COLOR_PROJ_GROUND = new THREE.Color('#fbbf24');
+// setColorAt runs per projectile per frame — cache the Color objects rather than
+// allocating one per round in flight.
+const ROUND_COLOR_CACHE = new Map<string, THREE.Color>();
+const roundColor = (hex: string) => {
+    let c = ROUND_COLOR_CACHE.get(hex);
+    if (!c) { c = new THREE.Color(hex); ROUND_COLOR_CACHE.set(hex, c); }
+    return c;
+};
 
 const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null!);
@@ -2138,12 +2148,17 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
             if (proj.isMissile) continue; // rendered as Projectile3D (has pointLight)
             if (count >= MAX_PROJECTILE_INSTANCES) break;
             dummy.position.set(proj.position.x, 15, proj.position.y);
-            // Stretch into a tracer along the flight direction
+            // Stretch into a tracer along the flight direction. Size and color come
+            // from the shot: a tank shell is a fat glowing slug, a sniper round a
+            // thin pale streak — they used to be the same 3.4x0.65 dash.
+            const round = proj.sourceType ? getRoundFx(proj.sourceType) : DEFAULT_ROUND_FX;
             dummy.rotation.set(0, -Math.atan2(proj.velocity.y, proj.velocity.x), 0);
-            dummy.scale.set(3.4, 0.65, 0.65);
+            dummy.scale.set(round.len, round.girth, round.girth);
             dummy.updateMatrix();
             mesh.setMatrixAt(count, dummy.matrix);
-            mesh.setColorAt(count, proj.targetType === 'air' ? COLOR_PROJ_AIR : COLOR_PROJ_GROUND);
+            mesh.setColorAt(count, proj.targetType === 'air'
+                ? COLOR_PROJ_AIR
+                : roundColor(round.color));
             count++;
         }
         mesh.count = count;

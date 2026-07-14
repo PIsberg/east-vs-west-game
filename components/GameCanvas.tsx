@@ -28,6 +28,7 @@ import {
   ENGINEER_REPAIR_RANGE,
   isMechanical,
   getFireFx,
+  IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
   CLASS_PROFILE,
   AVOID_LOOKAHEAD,
@@ -928,6 +929,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [spawnQueue, spawnUnit, clearSpawnQueue]);
 
   const tickCountRef = useRef(0);
+  // FX telemetry: particles ALIVE decays every tick, so sampling it cannot tell
+  // you how big one shot was. These are monotonic counts of what was created.
+  const fxStatsRef = useRef({ shots: 0, fireParticles: 0, hits: 0, impactParticles: 0 });
 
   const update = useCallback(() => {
     const time = Date.now();
@@ -980,6 +984,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // particle (those cost a React component and a draw call each).
     const fireFx = (unit: Unit, angle: number) => {
       const fx = getFireFx(unit.type);
+      fxStatsRef.current.shots++;
+      fxStatsRef.current.fireParticles += fx.smoke + fx.dust + fx.brass + fx.sparks;
       const cos = Math.cos(angle), sin = Math.sin(angle);
       const mx = unit.position.x + cos * 16;   // roughly at the muzzle
       const my = unit.position.y + sin * 16;
@@ -1043,6 +1049,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           color: Math.random() < 0.5 ? '#fed7aa' : '#fb923c',
           size: 1.2 + Math.random() * 1.6,
           alt: 10, altVel: 0,
+        });
+      }
+    };
+
+    // What a round does when it lands. Scaled by the damage ACTUALLY dealt (so a
+    // shot soaked by cover lands softer) and flavored by what it hits: steel
+    // throws sparks and shards, troops kick up dust. Instanced particles only.
+    const impactFx = (x: number, y: number, damage: number, dir: number, onMetal: boolean) => {
+      const w = Math.max(0, Math.min(1, damage / 70));   // 0 = rifle round, 1 = shell
+      fxStatsRef.current.hits++;
+      fxStatsRef.current.impactParticles += (3 + Math.round(w * 11)) + Math.round(w * 5);
+      if (damage >= IMPACT_SHAKE_MIN_DAMAGE) {
+        shakeRef.current = Math.max(shakeRef.current, 0.5 + w * 2.2);
+      }
+      // Sparks / dust cone, thrown back along the round's flight
+      const back = dir + Math.PI;
+      const n = 3 + Math.round(w * 11);
+      for (let i = 0; i < n; i++) {
+        const a = back + (Math.random() - 0.5) * 1.9;
+        const s = (0.8 + Math.random() * 2.2) * (0.6 + w);
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x, y },
+          velocity: { x: Math.cos(a) * s, y: Math.sin(a) * s },
+          drag: 0.85,
+          life: 8 + Math.random() * 10,
+          color: onMetal
+            ? (Math.random() < 0.6 ? '#fde68a' : '#fb923c')   // hot sparks off armor
+            : (Math.random() < 0.6 ? '#a8a29e' : '#78716c'),  // dirt and grit
+          size: (1 + Math.random() * 1.8) * (0.7 + w),
+          alt: 8, altVel: 0.1,
+        });
+      }
+      // Heavy rounds also tear debris out of what they hit
+      const shards = Math.round(w * 5);
+      for (let i = 0; i < shards; i++) {
+        const a = back + (Math.random() - 0.5) * 2.6;
+        const s = 1 + Math.random() * 2;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x, y },
+          velocity: { x: Math.cos(a) * s, y: Math.sin(a) * s },
+          drag: 0.9,
+          life: 16 + Math.random() * 12,
+          color: onMetal ? '#57534e' : '#6b7280',
+          size: 1.6 + Math.random() * 2,
+          alt: 12, altVel: -0.4,   // arcs down
         });
       }
     };
@@ -1312,6 +1365,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 u.health -= damage;
                 u.lastHitTime = Date.now();
                 if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
+                // Scaled by the damage that actually landed, so a round soaked
+                // by cover visibly lands softer than a clean one.
+                impactFx(proj.position.x, proj.position.y, damage,
+                  Math.atan2(proj.velocity.y, proj.velocity.x), isMechanical(u.type));
               }
               break;
             }
@@ -2944,6 +3001,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
             particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
           }
+          // Note the AA multipliers above: this path can deal several times the
+          // round's base damage, so the impact is scaled by `damage`, not p.damage.
+          impactFx(p.position.x, p.position.y, damage,
+            Math.atan2(p.velocity.y, p.velocity.x), isMechanical(target.type));
         }
       }
 
@@ -3518,6 +3579,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
+        fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },

@@ -456,6 +456,58 @@ export const FIRE_FX: Partial<Record<UnitType, FireFx>> = {
 export const DEFAULT_FIRE_FX: FireFx = { flash: 1, smoke: 0, dust: 0, brass: 1, sparks: 1, shake: 0, recoil: 0.5 };
 export const getFireFx = (t: UnitType): FireFx => FIRE_FX[t] ?? DEFAULT_FIRE_FX;
 
+// How long the muzzle flash stays lit, in ticks — scaled to the weapon's cadence.
+// A fixed window (it was 8 ticks for everything) is wrong at both ends: the jeep
+// reloads in 14 ticks, so its flash burned for 57% of every cycle and read as a
+// constant glow, while artillery's 460-tick cycle reduced its shot to a 1.7%
+// blink. Holding the duty cycle at roughly a fifth makes fast weapons strobe and
+// heavy ones linger. Recoil rides the same window, so a howitzer heaves where a
+// jeep twitches.
+export const flashTicks = (t: UnitType): number => {
+  const cadence = (UNIT_CONFIG[t] as any)?.attackSpeed ?? 30;
+  return Math.max(3, Math.min(14, cadence * 0.22));
+};
+
+// How heavy a single shot is, 0 (rifle round) → 1 (tank shell). Derived from the
+// unit's own damage so it stays true if the balance numbers move — the whole
+// point is that what you see matches what the shot actually does.
+export const shotWeight = (t: UnitType): number => {
+  const dmg = (UNIT_CONFIG[t] as any)?.damage ?? 10;
+  return Math.max(0, Math.min(1, dmg / 70));
+};
+
+// ── Rounds in flight ────────────────────────────────────────────────────────
+// Every projectile used to be the same 3.4x0.65 streak in one of two colors, so
+// a tank shell and a rifle bullet were indistinguishable mid-air. Fat, slow,
+// glowing shells now read differently from a supersonic sniper streak.
+const ROUND_COLOR: Partial<Record<UnitType, string>> = {
+  [UnitType.SNIPER]: '#e0f2fe',     // a pale supersonic streak
+  [UnitType.ANTI_AIR]: '#fef08a',   // flak tracer
+  [UnitType.ARTILLERY]: '#fb923c',  // a shell you can see coming
+  [UnitType.TANK]: '#fdba74',
+  [UnitType.MORTAR]: '#fca5a5',
+  [UnitType.BUNKER]: '#fdba74',
+  [UnitType.GUNBOAT]: '#fdba74',
+};
+export interface RoundFx { len: number; girth: number; color: string }
+export const DEFAULT_ROUND_FX: RoundFx = { len: 3.4, girth: 0.65, color: '#fbbf24' };
+export const getRoundFx = (t: UnitType): RoundFx => {
+  const w = shotWeight(t);
+  return {
+    len: 2.6 + w * 3.2,
+    girth: 0.5 + w * 1.4,
+    color: ROUND_COLOR[t] ?? (w > 0.5 ? '#fdba74' : '#fde68a'),
+  };
+};
+
+// ── Impacts ─────────────────────────────────────────────────────────────────
+// A direct hit used to spawn nothing at all — 240 damage and 6 damage landed
+// identically, with only a sound and the red flash to tell you. The impact is
+// now scaled by the damage actually dealt (after cover/entrenchment), and
+// flavored by what it lands on: steel throws bright sparks and shards, troops
+// kick up dust. Counts stay small — every one is an instanced particle.
+export const IMPACT_SHAKE_MIN_DAMAGE = 40;   // below this a hit does not move the camera
+
 // Field repairs: units near their own edge patch up slowly when not under fire
 export const REPAIR_ZONE = 90;               // distance from own edge
 export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
