@@ -523,6 +523,23 @@ export const roundSpeed = (t: UnitType): number => {
 // so it never leaves the readable band above the field.
 export const arcHeight = (dist: number): number => Math.min(90, 20 + dist * 0.22);
 
+// ── Suppression ─────────────────────────────────────────────────────────────
+// Being shot at cost a soldier nothing but HP: he walked through a machine gun's
+// beaten zone at full speed, shooting just as straight, and only the rounds that
+// actually connected mattered. Volume of fire now does what volume of fire does —
+// it makes men keep their heads down. Rounds landing NEAR a foot soldier (hit or
+// near miss) pin him: he moves slower and works his weapon slower until he has
+// had a moment without incoming. Vehicles are unmoved by it; so is a bunker.
+export const SUPPRESSION_MS = 1100;          // how long a burst keeps him down
+export const SUPPRESSION_RADIUS = 42;        // a round landing this close is close enough
+export const SUPPRESSION_SPEED_MULT = 0.55;  // he crawls
+export const SUPPRESSION_RELOAD_MULT = 1.45; // and is slower to shoot back
+export const isSuppressible = (t: UnitType): boolean =>
+  MOVE_CLASS[t] === undefined &&              // foot units only
+  t !== UnitType.BUNKER && t !== UnitType.GUNBOAT &&
+  t !== UnitType.MINE_PERSONAL && t !== UnitType.MINE_TANK && t !== UnitType.NAPALM &&
+  !(UNIT_CONFIG[t] as any)?.isFlying;
+
 // ── Armor facing ────────────────────────────────────────────────────────────
 // A tank took the same damage in the engine deck as in the glacis, so there was
 // no reward for getting behind one — a flanking helicopter or a drone that came

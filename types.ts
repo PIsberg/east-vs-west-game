@@ -90,6 +90,7 @@ export interface Unit {
   lastCoverId?: string | null; // Don't reuse same cover immediately
   burstCount?: number; // For burst fire units (Tesla)
   isOnHill?: boolean;
+  suppressedUntil?: number; // under fire: keeps its head down (slower, shoots worse)
   squadId?: string;
   planeAltitudeAtDrop?: number;
   lastHitTime?: number; // For hit flash visual

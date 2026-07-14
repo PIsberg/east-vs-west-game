@@ -1646,6 +1646,22 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         <meshBasicMaterial color={unit.orders === 'advance' ? '#22c55e' : unit.orders === 'hold' ? '#f59e0b' : '#ef4444'} toneMapped={false} />
                     </mesh>
                 )}
+                {/* Pinned by incoming fire: dust kicked around his boots. Without a
+                    cue, suppression is an invisible mechanic — the player just sees
+                    his troops mysteriously bog down. */}
+                {!!unit.suppressedUntil && Date.now() < unit.suppressedUntil && (
+                    <group position={[0, -yOffset - bobY, 0]}>
+                        {[0, 1, 2].map(i => {
+                            const a = (Date.now() * 0.004) + (i * Math.PI * 2) / 3;
+                            return (
+                                <mesh key={i} position={[Math.cos(a) * 7, 2 + Math.sin(Date.now() * 0.01 + i) * 1.2, Math.sin(a) * 7]}>
+                                    <sphereGeometry args={[1.5, 5, 4]} />
+                                    <meshBasicMaterial color="#a8a29e" transparent opacity={0.5} depthWrite={false} />
+                                </mesh>
+                            );
+                        })}
+                    </group>
+                )}
 
                 {/* Foxhole: dug-in ground ring + sandbag parapet facing the enemy */}
                 {unit.isEntrenched && (

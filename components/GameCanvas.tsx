@@ -31,6 +31,11 @@ import {
   isMechanical,
   getFireFx,
   spreadAtRange,
+  SUPPRESSION_MS,
+  SUPPRESSION_RADIUS,
+  SUPPRESSION_SPEED_MULT,
+  SUPPRESSION_RELOAD_MULT,
+  isSuppressible,
   armorFacingMult,
   AIRBORNE_STICK,
   IMPACT_SHAKE_MIN_DAMAGE,
@@ -2020,6 +2025,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.isEntrenched = false; // orders changed — foxhole abandoned
       }
 
+      // Pinned by incoming fire: he crawls until he gets a moment's peace
+      const suppressed = !!unit.suppressedUntil && Date.now() < unit.suppressedUntil;
+
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
           ? (weatherRef.current === 'storm' ? 0.22 : 1.0)
@@ -2433,6 +2441,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (Math.abs(vel.y) < 0.005) vel.y = 0;
           moveX = vel.x; moveY = vel.y;
         }
+
+        // Suppression bites at the point movement is COMMITTED: the branches above
+        // (job-seeking, hill-climbing, fleeing) each recompute moveX/moveY from
+        // config.speed and would otherwise walk straight out from under it.
+        if (suppressed) { moveX *= SUPPRESSION_SPEED_MULT; moveY *= SUPPRESSION_SPEED_MULT; }
 
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
@@ -2862,7 +2875,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   ? { flightDist: shotDist, arcH: arcHeight(shotDist) }
                   : {}),
               });
-              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
+              // A man with rounds cracking past him is slower to work his weapon
+              const suppressReload = (unit.suppressedUntil && Date.now() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
+              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload);
               fireFx(unit, a + spread);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
@@ -2931,6 +2946,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Rounds no longer share one speed, so range must be counted from the round's
       // OWN velocity — a constant here would let a fast round out-fly its range.
       p.distanceTraveled += Math.sqrt(p.velocity.x ** 2 + p.velocity.y ** 2);
+
+      // Suppression: a round that passes CLOSE to a foot soldier pins him, whether
+      // or not it connects — a near miss is what suppressing fire is made of. Done
+      // on the round's flight rather than at its impact point, because a shot that
+      // whistles past and lands 200px behind him should still put his head down.
+      spatialHash.current.queryCallback(p.position.x, p.position.y, SUPPRESSION_RADIUS, u => {
+        if (u.team === p.team || u.health <= 0 || !isSuppressible(u.type)) return;
+        if (Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) > SUPPRESSION_RADIUS) return;
+        u.suppressedUntil = Date.now() + SUPPRESSION_MS;
+      });
 
       let hit = false;
       let explode = false;
@@ -3640,6 +3665,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         projectiles: projectilesRef.current.length,
         fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
+        suppressed: unitsRef.current.filter(u => u.suppressedUntil && Date.now() < u.suppressedUntil).length,
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
