@@ -3,7 +3,9 @@ import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
   UNIT_CONFIG,
-  PROJECTILE_SPEED,
+  roundSpeed,
+  arcHeight,
+  INDIRECT,
   INITIAL_MONEY,
   MONEY_PER_TICK,
   HORIZON_Y,
@@ -24,6 +26,19 @@ import {
   REPAIR_ZONE,
   REPAIR_PER_TICK,
   REPAIR_COMBAT_LOCKOUT_MS,
+  ENGINEER_REPAIR,
+  ENGINEER_REPAIR_RANGE,
+  isMechanical,
+  getFireFx,
+  spreadAtRange,
+  SUPPRESSION_MS,
+  SUPPRESSION_RADIUS,
+  SUPPRESSION_SPEED_MULT,
+  SUPPRESSION_RELOAD_MULT,
+  isSuppressible,
+  armorFacingMult,
+  AIRBORNE_STICK,
+  IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
   CLASS_PROFILE,
   AVOID_LOOKAHEAD,
@@ -57,13 +72,19 @@ export const BRIDGE_HP = 320;
 
 // Foot units a Transport can carry
 const TRANSPORTABLE = new Set([
-  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
+// Foot units that man a bunker's firing slits. The engineer is deliberately not
+// one of them: he is the only unit that can repair the bunker (and the armor
+// around it), and a bunker standing next to him would otherwise swallow him the
+// moment he was told to hold.
+const GARRISONS = (t: UnitType) => TRANSPORTABLE.has(t) && t !== UnitType.ENGINEER;
+
 // Foot units that can dig in while holding position
 const ENTRENCHABLE = new Set([
-  UnitType.SOLDIER, UnitType.SNIPER, UnitType.RAMBO, UnitType.FLAMETHROWER,
+  UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.AIRBORNE,
 ]);
 
@@ -918,6 +939,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   }, [spawnQueue, spawnUnit, clearSpawnQueue]);
 
   const tickCountRef = useRef(0);
+  // FX telemetry: particles ALIVE decays every tick, so sampling it cannot tell
+  // you how big one shot was. These are monotonic counts of what was created.
+  const fxStatsRef = useRef({ shots: 0, fireParticles: 0, hits: 0, impactParticles: 0 });
 
   const update = useCallback(() => {
     const time = Date.now();
@@ -961,6 +985,128 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             size: 2.5 + Math.random() * 2.5, alt: 3 + Math.random() * 6, altVel: 0.6,
           });
         }
+      }
+    };
+
+    // Everything that leaves the barrel when a unit shoots, per its FIRE_FX
+    // signature (constants.ts). All of it rides the instanced particle path —
+    // fast weapons fire many times a second, so nothing here may be a special
+    // particle (those cost a React component and a draw call each).
+    const fireFx = (unit: Unit, angle: number) => {
+      const fx = getFireFx(unit.type);
+      fxStatsRef.current.shots++;
+      fxStatsRef.current.fireParticles += fx.smoke + fx.dust + fx.brass + fx.sparks;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const mx = unit.position.x + cos * 16;   // roughly at the muzzle
+      const my = unit.position.y + sin * 16;
+
+      if (fx.shake > 0) shakeRef.current = Math.max(shakeRef.current, fx.shake);
+
+      // Smoke: shoved out of the bore, slows fast and drifts up
+      for (let i = 0; i < fx.smoke; i++) {
+        const s = 0.5 + Math.random();
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx + (Math.random() - 0.5) * 6, y: my + (Math.random() - 0.5) * 6 },
+          velocity: { x: cos * s + (Math.random() - 0.5) * 0.5, y: sin * s + (Math.random() - 0.5) * 0.5 },
+          drag: 0.86,
+          life: 24 + Math.random() * 16,
+          color: Math.random() < 0.5 ? '#9ca3af' : '#d1d5db',
+          size: 3 + Math.random() * 4,
+          alt: 9, altVel: 0.22,
+        });
+      }
+      // Dust: the blast slaps the ground and throws a low, wide sheet forward
+      for (let i = 0; i < fx.dust; i++) {
+        const spread = (Math.random() - 0.5) * 1.1;
+        const s = 0.7 + Math.random() * 1.3;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx, y: my },
+          velocity: { x: Math.cos(angle + spread) * s, y: Math.sin(angle + spread) * s },
+          drag: 0.88,
+          life: 18 + Math.random() * 14,
+          color: Math.random() < 0.5 ? '#b9a476' : '#8a7a58',
+          size: 2.5 + Math.random() * 3.5,
+          alt: 2, altVel: 0.06,
+        });
+      }
+      // Brass: ejected sideways, tumbling down out of the breech
+      for (let i = 0; i < fx.brass; i++) {
+        const side = (Math.random() < 0.5 ? 1 : -1) * (Math.PI / 2);
+        const s = 0.4 + Math.random() * 0.5;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: unit.position.x, y: unit.position.y },
+          velocity: { x: Math.cos(angle + side) * s, y: Math.sin(angle + side) * s },
+          drag: 0.93,
+          life: 14 + Math.random() * 8,
+          color: '#facc15',
+          size: 1 + Math.random(),
+          alt: 11, altVel: -0.55,   // falls
+        });
+      }
+      // Sparks: burning propellant, straight out of the muzzle and gone
+      for (let i = 0; i < fx.sparks; i++) {
+        const spread = (Math.random() - 0.5) * 0.7;
+        const s = 1.6 + Math.random() * 1.6;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: mx, y: my },
+          velocity: { x: Math.cos(angle + spread) * s, y: Math.sin(angle + spread) * s },
+          drag: 0.8,
+          life: 7 + Math.random() * 5,
+          color: Math.random() < 0.5 ? '#fed7aa' : '#fb923c',
+          size: 1.2 + Math.random() * 1.6,
+          alt: 10, altVel: 0,
+        });
+      }
+    };
+
+    // What a round does when it lands. Scaled by the damage ACTUALLY dealt (so a
+    // shot soaked by cover lands softer) and flavored by what it hits: steel
+    // throws sparks and shards, troops kick up dust. Instanced particles only.
+    const impactFx = (x: number, y: number, damage: number, dir: number, onMetal: boolean) => {
+      const w = Math.max(0, Math.min(1, damage / 70));   // 0 = rifle round, 1 = shell
+      fxStatsRef.current.hits++;
+      fxStatsRef.current.impactParticles += (3 + Math.round(w * 11)) + Math.round(w * 5);
+      if (damage >= IMPACT_SHAKE_MIN_DAMAGE) {
+        shakeRef.current = Math.max(shakeRef.current, 0.5 + w * 2.2);
+      }
+      // Sparks / dust cone, thrown back along the round's flight
+      const back = dir + Math.PI;
+      const n = 3 + Math.round(w * 11);
+      for (let i = 0; i < n; i++) {
+        const a = back + (Math.random() - 0.5) * 1.9;
+        const s = (0.8 + Math.random() * 2.2) * (0.6 + w);
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x, y },
+          velocity: { x: Math.cos(a) * s, y: Math.sin(a) * s },
+          drag: 0.85,
+          life: 8 + Math.random() * 10,
+          color: onMetal
+            ? (Math.random() < 0.6 ? '#fde68a' : '#fb923c')   // hot sparks off armor
+            : (Math.random() < 0.6 ? '#a8a29e' : '#78716c'),  // dirt and grit
+          size: (1 + Math.random() * 1.8) * (0.7 + w),
+          alt: 8, altVel: 0.1,
+        });
+      }
+      // Heavy rounds also tear debris out of what they hit
+      const shards = Math.round(w * 5);
+      for (let i = 0; i < shards; i++) {
+        const a = back + (Math.random() - 0.5) * 2.6;
+        const s = 1 + Math.random() * 2;
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x, y },
+          velocity: { x: Math.cos(a) * s, y: Math.sin(a) * s },
+          drag: 0.9,
+          life: 16 + Math.random() * 12,
+          color: onMetal ? '#57534e' : '#6b7280',
+          size: 1.6 + Math.random() * 2,
+          alt: 12, altVel: -0.4,   // arcs down
+        });
       }
     };
 
@@ -1172,71 +1318,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // Projectile Update
-    for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
-      const proj = projectilesRef.current[i];
-      const stepX = proj.velocity.x, stepY = proj.velocity.y;
-      const stepDist = Math.sqrt(stepX * stepX + stepY * stepY);
-      proj.position.x += stepX; proj.position.y += stepY;
-      proj.distanceTraveled += stepDist;
-
-      if (proj.distanceTraveled >= proj.maxRange || proj.position.x < 0 || proj.position.x > CANVAS_WIDTH || proj.position.y < (proj.targetType === 'air' ? -50 : HORIZON_Y) || proj.position.y > CANVAS_HEIGHT + 50) {
-        projectilesRef.current.splice(i, 1); continue;
-      }
-
-      let hit = false;
-      if (proj.targetType === 'air') {
-        for (const u of unitsRef.current) {
-          if (u.team !== proj.team && u.type === UnitType.DRONE) {
-            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < 18) {
-              u.health -= proj.damage;
-              u.lastHitTime = Date.now();
-              if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
-              hit = true; break;
-            }
-          }
-        }
-        if (!hit) {
-          for (const fly of flyoversRef.current) {
-            if (fly.team !== proj.team && Math.sqrt((fly.currentX - proj.position.x) ** 2 + (fly.altitudeY - proj.position.y) ** 2) < 35) { fly.health -= proj.damage; hit = true; break; }
-          }
-        }
-      } else {
-        const candidates = spatialHash.current.query(proj.position.x, proj.position.y, 50); // Query nearby units
-        for (const u of candidates) {
-          if (u.team !== proj.team && u.type !== UnitType.NAPALM && u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK) {
-            if (Math.sqrt((u.position.x - proj.position.x) ** 2 + (u.position.y - proj.position.y) ** 2) < (u.width * getScaleAt(u.position.y)) / 1.2) {
-              hit = true;
-              if (proj.explosionRadius) {
-                const victims = spatialHash.current.query(proj.position.x, proj.position.y, proj.explosionRadius!);
-                victims.forEach(victim => {
-                  if (victim.team !== proj.team && Math.sqrt((victim.position.x - proj.position.x) ** 2 + (victim.position.y - proj.position.y) ** 2) < proj.explosionRadius! * getScaleAt(proj.position.y)) {
-                    victim.health -= proj.damage;
-                    victim.lastHitTime = Date.now();
-                    if (proj.sourceUnitId) victim.lastAttackerId = proj.sourceUnitId;
-                  }
-                });
-              }
-              else {
-                // Cover Logic
-                // Tanks & Artillery ignore cover (Heavy weapons)
-                // Others (Infantry) have damage reduced by cover
-                const ignoresCover = proj.sourceType === UnitType.TANK || proj.sourceType === UnitType.ARTILLERY || proj.sourceType === UnitType.DRONE || proj.sourceType === UnitType.AIRSTRIKE || proj.sourceType === UnitType.MISSILE_STRIKE || proj.sourceType === UnitType.NUKE;
-                // Cover beats a foxhole; explosives (ignoresCover) dig everyone out
-                const damage = !ignoresCover && u.isInCover ? proj.damage * 0.4
-                  : !ignoresCover && u.isEntrenched ? proj.damage * 0.55
-                  : proj.damage;
-                u.health -= damage;
-                u.lastHitTime = Date.now();
-                if (proj.sourceUnitId) u.lastAttackerId = proj.sourceUnitId;
-              }
-              break;
-            }
-          }
-        }
-      }
-      if (hit) { soundService.playHitSound(); projectilesRef.current.splice(i, 1); }
-    }
+    // NOTE: projectiles used to be stepped and resolved by TWO loops in this same
+    // tick — this one and "Projectiles Logic" further down. They disagreed: this
+    // one knew about cover and flyovers, that one about the anti-air multipliers,
+    // blast falloff and craters. Whichever caught a round first decided which
+    // rules it played by, and since this loop ran first it won most collisions —
+    // so AA quietly lost its bonus vs drones, small arms hit aircraft at full
+    // damage, and shells that struck a unit dealt full damage to the whole blast
+    // with no falloff and no crater. Rounds also moved twice per tick. There is
+    // now exactly ONE resolver (see "Projectiles Logic"); do not add a second.
 
     // Missile Update
     for (let i = missilesRef.current.length - 1; i >= 0; i--) {
@@ -1563,11 +1653,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (fly.type === UnitType.AIRSTRIKE) { fly.canisterY = fly.altitudeY; fly.canisterVelocityY = 2; }
           else if (fly.type === UnitType.AIRBORNE) {
             const config = UNIT_CONFIG[UnitType.AIRBORNE];
-            for (let j = 0; j < 3; j++) unitsRef.current.push({ id: generateId(), team: fly.team, type: UnitType.AIRBORNE, position: { x: fly.targetPos.x + (j - 1) * 25, y: fly.targetPos.y }, state: UnitState.MOVING, health: config.health, maxHealth: config.health, attackCooldown: 0, targetId: null, width: config.width, height: config.height, spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY });
+            // A stick of FOUR, landing as one squad. At three, each trooper cost
+            // $23 against a rifleman's $8.30 for only 28 HP — the worst value in
+            // the game (0.48 kill-value/$ where a rifleman does 1.46). They also
+            // landed as loose individuals; a squadId means they select, and fight,
+            // as the unit they are supposed to be.
+            const stick = generateId();
+            for (let j = 0; j < AIRBORNE_STICK; j++) {
+              unitsRef.current.push({
+                id: generateId(), team: fly.team, type: UnitType.AIRBORNE,
+                position: { x: fly.targetPos.x + (j - (AIRBORNE_STICK - 1) / 2) * 25, y: fly.targetPos.y },
+                state: UnitState.MOVING, health: config.health, maxHealth: config.health,
+                attackCooldown: 0, targetId: null, width: config.width, height: config.height,
+                spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY, squadId: stick,
+              });
+            }
             // Dropped troops bypass spawnUnit — keep built/spawned telemetry honest
-            statsRef.current[fly.team].built += 3;
+            statsRef.current[fly.team].built += AIRBORNE_STICK;
             const ats = typeStatsRef.current[fly.team];
-            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + 3;
+            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + AIRBORNE_STICK;
           }
         }
       }
@@ -1742,10 +1846,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
-      // TRANSPORT: board nearby foot soldiers in your own half, unload at the front
-      if (unit.type === UnitType.TRANSPORT) {
+      // TRANSPORT / JEEP: board nearby foot soldiers in your own half, unload at
+      // the front. The jeep is the same taxi with a single seat — it is the
+      // quickest way to get an engineer (speed 0.5) up to the armor that needs him.
+      if (unit.type === UnitType.TRANSPORT || unit.type === UnitType.JEEP) {
         unit.passengers = unit.passengers || [];
-        const cap = (UNIT_CONFIG[UnitType.TRANSPORT] as any).capacity || 6;
+        const cap = (UNIT_CONFIG[unit.type] as any).capacity || 6;
         const inOwnHalf = unit.team === Team.WEST ? unit.position.x < CANVAS_WIDTH * 0.5 : unit.position.x > CANVAS_WIDTH * 0.5;
 
         if (unit.passengers.length < cap && inOwnHalf) {
@@ -1753,6 +1859,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (unit.passengers!.length >= cap) return;
             if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
             if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return; // still descending
+            // An engineer already working a job stays on it — a jeep driving past
+            // must not abduct the mechanic mid-weld.
+            if (o.type === UnitType.ENGINEER && o.jobX !== undefined) return;
             o.boarded = true;
             o.isInCover = false;
             unit.passengers!.push(o);
@@ -1823,7 +1932,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           unit.passengers = unit.passengers || [];
           spatialHash.current.queryCallback(unit.position.x, unit.position.y, BUNKER_GARRISON_RANGE, o => {
             if ((unit.garrison || 0) >= BUNKER_GARRISON_MAX) return;
-            if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
+            if (o.team !== unit.team || o.boarded || o.health <= 0 || !GARRISONS(o.type)) return;
             if ((o.orders ?? stancesRef.current[o.team]) !== 'hold') return; // only troops told to dig in man it
             o.boarded = true;
             o.isInCover = false;
@@ -1916,6 +2025,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         unit.isEntrenched = false; // orders changed — foxhole abandoned
       }
 
+      // Pinned by incoming fire: he crawls until he gets a moment's peace
+      const suppressed = !!unit.suppressedUntil && Date.now() < unit.suppressedUntil;
+
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
           ? (weatherRef.current === 'storm' ? 0.22 : 1.0)
@@ -1941,7 +2053,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Infantry told to hold near one of your bunkers walks over and mans it.
         // Holding freezes a unit where it stands, so without this they could
         // never actually reach the door — which is what garrisoning has to mean.
-        if (stance === 'hold' && TRANSPORTABLE.has(unit.type) && !unit.boarded) {
+        if (stance === 'hold' && GARRISONS(unit.type) && !unit.boarded) {
           const home = unitsRef.current.find(o =>
             o.type === UnitType.BUNKER && o.team === unit.team && o.health > 0 && !o.buildUntil &&
             (o.garrison || 0) < BUNKER_GARRISON_MAX &&
@@ -2038,28 +2150,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           // ENGINEER: walk to the nearest job — mines within 260px, broken
-          // bridges from anywhere on the map (repair is his headline job)
-          if (!movingToHill && unit.type === UnitType.ENGINEER && isSearchTick(unit)) {
-            let jobX: number | null = null, jobY = 0, jobDist = Infinity;
-            for (const m of unitsRef.current) {
-              if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
-              const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
-              if (d < 260 && d < jobDist) { jobDist = d; jobX = m.position.x; jobY = m.position.y; }
+          // bridges from anywhere on the map, and hurt friendly machines within
+          // 260px. Jobs compete on `score` (lower wins); `jobDist` stays a real
+          // distance because it also decides whether he still has to walk.
+          if (!movingToHill && unit.type === UnitType.ENGINEER) {
+            // Re-pick the job only on search ticks (the scans are O(units+terrain))...
+            if (isSearchTick(unit)) {
+              let jobX: number | null = null, jobY = 0, best = Infinity;
+              const consider = (x: number, y: number, score: number) => {
+                if (score >= best) return;
+                best = score; jobX = x; jobY = y;
+              };
+              for (const m of unitsRef.current) {
+                if (m.team === unit.team || (m.type !== UnitType.MINE_PERSONAL && m.type !== UnitType.MINE_TANK)) continue;
+                const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
+                if (d < 260) consider(m.position.x, m.position.y, d);
+              }
+              for (const b of terrainRef.current) {
+                if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
+                // Fully broken bridges attract engineers map-wide; partial damage only nearby
+                const cap = b.state === 'broken' ? 4000 : 300;
+                const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
+                if (d < cap) consider(b.x, b.y, d);
+              }
+              // Hurt friendly machines: scored by distance weighted by how healthy
+              // they still are, so a nearly-dead tank outranks a lightly scratched
+              // jeep standing closer.
+              for (const m of unitsRef.current) {
+                if (m.team !== unit.team || m.id === unit.id || !isMechanical(m.type)) continue;
+                if (m.health <= 0 || m.health >= m.maxHealth) continue;
+                if (m.buildUntil && Date.now() < m.buildUntil) continue;
+                const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
+                if (d < 260) consider(m.position.x, m.position.y, d * (m.health / m.maxHealth));
+              }
+              if (jobX !== null) { unit.jobX = jobX; unit.jobY = jobY; }
+              else { delete unit.jobX; delete unit.jobY; }
             }
-            for (const b of terrainRef.current) {
-              if (b.type !== 'bridge' || (b.health ?? BRIDGE_HP) >= BRIDGE_HP) continue;
-              // Fully broken bridges attract engineers map-wide; partial damage only nearby
-              const cap = b.state === 'broken' ? 4000 : 300;
-              const d = Math.sqrt((b.x - unit.position.x) ** 2 + (b.y - unit.position.y) ** 2);
-              if (d < cap && d < jobDist) { jobDist = d; jobX = b.x; jobY = b.y; }
-            }
-            if (jobX !== null && jobDist > 45) {
-              const a = Math.atan2(jobY - unit.position.y, jobX - unit.position.x);
-              moveX = Math.cos(a) * config.speed;
-              moveY = Math.sin(a) * config.speed;
+            // ...but steer to the job EVERY tick. Steering only on the search tick
+            // let the advance stance push him back toward the enemy in between,
+            // so he never closed on a job that lay behind him.
+            if (unit.jobX !== undefined && unit.jobY !== undefined) {
+              const jd = Math.sqrt((unit.jobX - unit.position.x) ** 2 + (unit.jobY - unit.position.y) ** 2);
+              if (jd > 45) {
+                const a = Math.atan2(unit.jobY - unit.position.y, unit.jobX - unit.position.x);
+                moveX = Math.cos(a) * config.speed;
+                moveY = Math.sin(a) * config.speed;
+              } else {
+                moveX = 0; moveY = 0;   // on station: work
+              }
               movingToHill = true; // skip cover logic while on the job
-            } else if (jobX !== null) {
-              moveX = 0; moveY = 0; movingToHill = true;
             }
           }
 
@@ -2303,6 +2442,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           moveX = vel.x; moveY = vel.y;
         }
 
+        // Suppression bites at the point movement is COMMITTED: the branches above
+        // (job-seeking, hill-climbing, fleeing) each recompute moveX/moveY from
+        // config.speed and would otherwise walk straight out from under it.
+        if (suppressed) { moveX *= SUPPRESSION_SPEED_MULT; moveY *= SUPPRESSION_SPEED_MULT; }
+
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
 
@@ -2445,12 +2589,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const fly = flyoversRef.current.find(f => f.team !== unit.team && Math.sqrt((f.currentX - unit.position.x) ** 2 + (f.altitudeY - unit.position.y) ** 2) < range);
             if (fly) {
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
             unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
           }
         } else {
@@ -2534,6 +2678,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   alt: 4, altVel: 0.4
                 });
                 unit.attackCooldown = Math.round(config.attackSpeed * 0.5);
+              } else {
+                // No mine, no broken bridge: patch up the most badly damaged
+                // machine alongside him. A bunker still curing its build HP is
+                // not "damaged" — leave that to the build cure.
+                const wrecks = spatialHash.current.query(unit.position.x, unit.position.y, ENGINEER_REPAIR_RANGE)
+                  .filter(m => m.team === unit.team && m.id !== unit.id && isMechanical(m.type) &&
+                    m.health > 0 && m.health < m.maxHealth &&
+                    !(m.buildUntil && Date.now() < m.buildUntil) &&
+                    Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2) < ENGINEER_REPAIR_RANGE);
+                if (wrecks.length > 0) {
+                  const patient = wrecks.reduce((a, b) => (a.health / a.maxHealth) < (b.health / b.maxHealth) ? a : b);
+                  patient.health = Math.min(patient.maxHealth, patient.health + ENGINEER_REPAIR);
+                  // Welding sparks, so a repair reads at a glance
+                  for (let s = 0; s < 3; s++) {
+                    particlesRef.current.push({
+                      id: generateId(),
+                      position: { x: patient.position.x + (Math.random() - 0.5) * 14, y: patient.position.y + (Math.random() - 0.5) * 10 },
+                      velocity: { x: (Math.random() - 0.5) * 1.4, y: -Math.random() * 1.1 },
+                      drag: 0.9,
+                      life: 20,
+                      color: '#fbbf24',
+                      size: 2 + Math.random() * 2,
+                      alt: 5, altVel: 0.35,
+                    });
+                  }
+                  soundService.playHealSound();
+                  unit.attackCooldown = config.attackSpeed;
+                }
               }
             }
           } else if (unit.type === UnitType.MEDIC) {
@@ -2560,7 +2732,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Tesla Targeting: STRICTLY Infantry Only
             target = potentialTargets.find(o =>
               o.team !== unit.team &&
-              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.RAMBO || o.type === UnitType.AIRBORNE) &&
+              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.SPECIAL_FORCES || o.type === UnitType.AIRBORNE) &&
               !smokeBlocked(unit, o) &&
               Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
             );
@@ -2607,7 +2779,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const ft = unitsRef.current.find(o => o.id === focus.targetId && o.team !== unit.team && o.health > 0);
               if (ft) {
                 const ftIsAir = !!(UNIT_CONFIG[ft.type] as any).isFlying;
-                const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+                const canEngageAirFocus = unit.type === UnitType.SOLDIER || unit.type === UnitType.SPECIAL_FORCES ||
                   unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
                 const fd = Math.sqrt((ft.position.x - unit.position.x) ** 2 + (ft.position.y - unit.position.y) ** 2);
                 if ((!ftIsAir || canEngageAirFocus) && fd < range && !smokeBlocked(unit, ft)) target = ft;
@@ -2644,7 +2816,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // Secondary pass: air targets — only infantry, snipers, and helicopters can engage air
             // Tanks and Artillery are strictly ground-only weapons
             if (!target) {
-              const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.RAMBO ||
+              const canEngageAir = unit.type === UnitType.SOLDIER || unit.type === UnitType.SPECIAL_FORCES ||
                 unit.type === UnitType.SNIPER || unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER;
               if (canEngageAir) {
                 target = potentialTargets.find(o => {
@@ -2662,8 +2834,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (unit.type === UnitType.SNIPER) {
                 if (Math.random() > 0.7) { // 30% Miss Chance
                   const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
-                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                   unit.attackCooldown = config.attackSpeed; soundService.playSniperShot();
+                  fireFx(unit, a);   // a miss still throws dust and gives his hide away
                   return;
                 }
               }
@@ -2676,12 +2849,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 spread = (Math.random() - 0.5) * 0.4;
               }
               const isMissile = unit.type === UnitType.HELICOPTER;
+              // Reach shows up in the shot: flat and fast for a long-barrelled
+              // direct-fire gun, a slow climbing lob for indirect fire.
+              const speed = roundSpeed(unit.type);
+              const shotDist = Math.sqrt(
+                (target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
+              // Rounds wander the further out you shoot, so parking at max range
+              // is no longer free — closing the distance buys accuracy.
+              spread += spreadAtRange(unit.type, shotDist, range);
 
               projectilesRef.current.push({
                 id: generateId(),
                 team: unit.team,
                 position: { ...unit.position },
-                velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED },
+                velocity: { x: Math.cos(a + spread) * speed, y: Math.sin(a + spread) * speed },
                 damage: config.damage * vetMult,
                 maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0),
                 distanceTraveled: 0,
@@ -2689,9 +2870,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 explosionRadius: config.explosionRadius,
                 sourceType: unit.type,
                 sourceUnitId: unit.id,
-                isMissile
+                isMissile,
+                ...(INDIRECT.has(unit.type)
+                  ? { flightDist: shotDist, arcH: arcHeight(shotDist) }
+                  : {}),
               });
-              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
+              // A man with rounds cracking past him is slower to work his weapon
+              const suppressReload = (unit.suppressedUntil && Date.now() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
+              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload);
+              fireFx(unit, a + spread);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
               else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
@@ -2749,30 +2936,68 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
-    // Projectiles Logic (backwards: loop splices)
+    // Projectiles Logic — the ONE place a round moves and resolves (backwards:
+    // loop splices). Everything a shot obeys lives here: cover and foxholes, the
+    // anti-air multipliers, blast falloff, craters, bridges.
     for (let i = projectilesRef.current.length - 1; i >= 0; i--) {
       const p = projectilesRef.current[i];
       p.position.x += p.velocity.x;
       p.position.y += p.velocity.y;
-      p.distanceTraveled += PROJECTILE_SPEED;
+      // Rounds no longer share one speed, so range must be counted from the round's
+      // OWN velocity — a constant here would let a fast round out-fly its range.
+      p.distanceTraveled += Math.sqrt(p.velocity.x ** 2 + p.velocity.y ** 2);
+
+      // Suppression: a round that passes CLOSE to a foot soldier pins him, whether
+      // or not it connects — a near miss is what suppressing fire is made of. Done
+      // on the round's flight rather than at its impact point, because a shot that
+      // whistles past and lands 200px behind him should still put his head down.
+      spatialHash.current.queryCallback(p.position.x, p.position.y, SUPPRESSION_RADIUS, u => {
+        if (u.team === p.team || u.health <= 0 || !isSuppressible(u.type)) return;
+        if (Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) > SUPPRESSION_RADIUS) return;
+        u.suppressedUntil = Date.now() + SUPPRESSION_MS;
+      });
 
       let hit = false;
       let explode = false;
+
+      // Off the map: gone, no bang
+      if (p.position.x < 0 || p.position.x > CANVAS_WIDTH ||
+        p.position.y < (p.targetType === 'air' ? -50 : HORIZON_Y) || p.position.y > CANVAS_HEIGHT + 50) {
+        projectilesRef.current.splice(i, 1);
+        continue;
+      }
 
       // Check Max Range
       if (p.distanceTraveled >= p.maxRange) {
         explode = true;
       }
 
+      // Anti-air rounds can also swat a flyover (the strike aircraft themselves)
+      if (!explode && p.targetType === 'air') {
+        for (const fly of flyoversRef.current) {
+          if (fly.team !== p.team &&
+            Math.sqrt((fly.currentX - p.position.x) ** 2 + (fly.altitudeY - p.position.y) ** 2) < 35) {
+            fly.health -= p.damage;
+            hit = true; explode = true;
+            break;
+          }
+        }
+      }
+
       // Check Collision (Simple Circle)
       if (!explode) {
         const target = unitsRef.current.find(u => {
-          if (u.team === p.team) return false;
+          if (u.team === p.team || u.health <= 0) return false;
+          // Mines and burning napalm are terrain, not something you can shoot
+          if (u.type === UnitType.NAPALM || u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK) return false;
           // Air vs Ground check
           if (p.targetType === 'air' && !(UNIT_CONFIG[u.type] as any).isFlying && u.type !== UnitType.AIRBORNE) return false;
           if (p.targetType === 'ground' && (UNIT_CONFIG[u.type] as any).isFlying) return false; // Ground missiles don't hit planes randomly usually
 
-          const hitDist = (u.width + u.height) / 4; // Approx radius
+          // Perspective-scaled body radius (the old dual-loop code disagreed on
+          // this too; this is the more generous of the two, which is what
+          // actually governed hit rates in practice).
+          const hitDist = u.type === UnitType.DRONE ? 18 : (u.width * getScaleAt(u.position.y)) / 1.2;
           return Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) < hitDist;
         });
 
@@ -2780,31 +3005,63 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           hit = true;
           explode = true;
 
-          let damage = p.damage;
-          // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
-          if (p.sourceType === UnitType.ANTI_AIR) {
-            if (target.type === UnitType.HELICOPTER) damage *= 3;
-            else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
-          }
-          // Small arms (soldiers, rambo) are 30% effective against aircraft
-          if ((UNIT_CONFIG[target.type] as any).isFlying &&
-            (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.RAMBO)) {
-            damage *= 0.3;
-          }
+          // An explosive round does its damage as a blast (with falloff, below) —
+          // applying a direct hit as well would double-dip the primary target.
+          if (!p.explosionRadius) {
+            let damage = p.damage;
+            // Cover and foxholes soak a direct hit; heavy/explosive weapons dig you out
+            const ignoresCover = p.sourceType === UnitType.TANK || p.sourceType === UnitType.ARTILLERY ||
+              p.sourceType === UnitType.DRONE || p.sourceType === UnitType.AIRSTRIKE ||
+              p.sourceType === UnitType.MISSILE_STRIKE || p.sourceType === UnitType.NUKE;
+            if (!ignoresCover && target.isInCover) damage *= 0.4;
+            else if (!ignoresCover && target.isEntrenched) damage *= 0.55;
 
-          target.health -= damage;
-          target.lastHitTime = Date.now();
-          if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
-          // Blood or Sparks
-          if (target.type === UnitType.SOLDIER || target.type === UnitType.RAMBO) {
-            particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
+            // AA is the hard counter to air — 3× vs helicopter, 2× vs drone
+            if (p.sourceType === UnitType.ANTI_AIR) {
+              if (target.type === UnitType.HELICOPTER) damage *= 3;
+              else if (target.type === UnitType.DRONE || target.type === UnitType.FIGHTER) damage *= 2;
+            }
+            // Small arms (soldiers, special forces) are 30% effective against aircraft
+            if ((UNIT_CONFIG[target.type] as any).isFlying &&
+              (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.SPECIAL_FORCES)) {
+              damage *= 0.3;
+            }
+
+            // Armor is thick where it faces the enemy. A hit up the back of a tank
+            // bites; one on the glacis does not. Ground vehicles and emplacements
+            // only — a rifleman has no armor to angle. Stationary machines are
+            // taken to face the way their team advances.
+            const roundDir = Math.atan2(p.velocity.y, p.velocity.x);
+            if (isMechanical(target.type) && !(UNIT_CONFIG[target.type] as any).isFlying) {
+              const v = target.vel;
+              const moving = v && (Math.abs(v.x) > 0.05 || Math.abs(v.y) > 0.05);
+              const facing = moving
+                ? Math.atan2(v!.y, v!.x)
+                : (target.team === Team.WEST ? 0 : Math.PI);
+              damage *= armorFacingMult(roundDir, facing);
+            }
+
+            target.health -= damage;
+            target.lastHitTime = Date.now();
+            if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
+            // Blood or Sparks
+            if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
+              particlesRef.current.push({ id: generateId(), position: { x: p.position.x, y: p.position.y }, life: 20, color: '#7f1d1d', size: 5 });
+            }
+            // Scaled by the damage that ACTUALLY landed — after cover and after the
+            // AA multipliers — so a soaked round visibly lands softer than a clean one.
+            impactFx(p.position.x, p.position.y, damage,
+              Math.atan2(p.velocity.y, p.velocity.x), isMechanical(target.type));
           }
         }
       }
 
       if (explode) {
         projectilesRef.current.splice(i, 1);
-        soundService.playExplosionSound(); // Or hit sound
+        // A rifle round is not an explosion — the old dual-loop code played the
+        // hit sound from one loop and the blast from the other.
+        if (p.explosionRadius) soundService.playExplosionSound();
+        else if (hit) soundService.playHitSound();
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
@@ -2832,10 +3089,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
 
           unitsRef.current.forEach(u => {
-            if (u.team !== p.team) {
+            if (u.team !== p.team && u.health > 0) {
               const d = Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2);
               if (d < p.explosionRadius!) {
                 u.health -= p.damage * (1 - d / p.explosionRadius!);
+                // Attribution matters: without it the blast kills nobody as far as
+                // the game is concerned — no veterancy for the gunner, and the
+                // stats credit the kill to no one (artillery and mortar showed 0
+                // kills in the harness the moment their damage moved to this path).
+                u.lastHitTime = Date.now();
+                if (p.sourceUnitId) u.lastAttackerId = p.sourceUnitId;
               }
             }
           });
@@ -2993,7 +3256,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             alt: 4 + Math.random() * 16, altVel: 0.5 + Math.random() * 0.7
           });
         }
-      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+      } else if (u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE ||
                  u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
                  u.type === UnitType.MORTAR) {
         // Troops Scream & Blood (flat pool at ground level)
@@ -3010,7 +3273,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Corpse / wreck left on the battlefield
       const cfg = UNIT_CONFIG[u.type] as any;
-      const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE ||
+      const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE ||
         u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
         u.type === UnitType.MORTAR;
       const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP || u.type === UnitType.TRANSPORT;
@@ -3128,7 +3391,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const foeUnits = unitsRef.current.filter(u => u.team === FOE);
         const airThreats    = foeUnits.filter(u => u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER).length;
         const armorThreats  = foeUnits.filter(u => u.type === UnitType.TANK || u.type === UnitType.APC).length;
-        const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
+        const infThreats    = foeUnits.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE || u.type === UnitType.FLAMETHROWER).length;
         // Foe front line: their furthest advance toward the CPU's edge
         const foeFrontX     = foeUnits.length > 0
           ? (FOE === Team.WEST ? Math.max(...foeUnits.map(u => u.position.x)) : Math.min(...foeUnits.map(u => u.position.x)))
@@ -3137,7 +3400,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const myHasAA     = myActive.some(u => u.type === UnitType.ANTI_AIR);
         const myHasMedic  = myActive.some(u => u.type === UnitType.MEDIC);
         const myHasTesla  = myActive.some(u => u.type === UnitType.TESLA);
-        const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.RAMBO).length;
+        const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES).length;
 
         // Helper: add weight only if affordable
         const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost;
@@ -3171,6 +3434,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           (ME === Team.WEST ? b.x < CANVAS_WIDTH / 2 + 60 : b.x > CANVAS_WIDTH / 2 - 60)
         ).length;
         if (brokenBridgesMySide > 0 && !myHasEngineer) add(UnitType.ENGINEER, 6);
+        // A banged-up armored column is worth a mechanic: he is the only way to
+        // put HP back into a tank without walking it home.
+        const myHurtArmor = myActive.filter(u => isMechanical(u.type) && u.health < u.maxHealth * 0.7).length;
+        if (myHurtArmor >= 2 && !myHasEngineer) add(UnitType.ENGINEER, 5);
+        else if (myHurtArmor >= 1 && !myHasEngineer) add(UnitType.ENGINEER, 2);
 
         // --- General composition ---
         add(UnitType.TANK, 3);
@@ -3181,7 +3449,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         add(UnitType.ARTILLERY, 1);
         add(UnitType.ANTI_AIR, 1);
         add(UnitType.DRONE, 1);
-        add(UnitType.RAMBO, 1);
+        add(UnitType.SPECIAL_FORCES, 1);
         add(UnitType.FLAMETHROWER, 1);
         add(UnitType.JEEP, 2);
         add(UnitType.MORTAR, 1);
@@ -3232,12 +3500,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Airborne drop behind foe lines when they push deep
         const foePushedDeep = FOE === Team.WEST ? foeFrontX > 450 : foeFrontX < 350;
-        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.2 * DIFF.special) {
-          const dropX = FOE === Team.WEST ? 80 + Math.random() * 120 : CANVAS_WIDTH - 200 + Math.random() * 120;
-          const dropY = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
-          spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: { x: dropX, y: dropY } });
-          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
-          specialSpawned = true;
+        // A paradrop is a raid, not a staple. The CPU used to roll for one every
+        // cycle (0.2) and sank $6-7k a session into sticks that died to a man —
+        // the single biggest hole in its economy. It now raids rarely, and only
+        // when the sampling below actually finds a hole to land in.
+        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special) {
+          // Drop into a GAP. This used to pick a blind random spot 80-200px from
+          // the foe's edge — i.e. right on top of their spawn, the one place their
+          // entire reinforcement stream walks through. The stick landed in the
+          // middle of the enemy's production line and died to a man (100% losses).
+          // Sample a few candidates behind their front and take the one furthest
+          // from their nearest unit.
+          const foeAlive = unitsRef.current.filter(u => u.team === FOE && u.health > 0 &&
+            u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
+          let drop = { x: 0, y: 0 }, bestClear = -1;
+          for (let s = 0; s < 8; s++) {
+            const x = FOE === Team.WEST ? 70 + Math.random() * 210 : CANVAS_WIDTH - 280 + Math.random() * 210;
+            const y = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
+            let nearest = Infinity;
+            for (const u of foeAlive) {
+              const d = Math.sqrt((u.position.x - x) ** 2 + (u.position.y - y) ** 2);
+              if (d < nearest) nearest = d;
+            }
+            const clear = Math.min(nearest, 260);   // beyond ~260 it is all equally empty
+            if (clear > bestClear) { bestClear = clear; drop = { x, y }; }
+          }
+          // No hole worth landing in — keep the money. Dropping anyway is how the
+          // stick used to end up on top of the enemy's spawn.
+          if (bestClear > 130) {
+            spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: drop });
+            moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
+            specialSpawned = true;
+          }
         }
 
         // Naval picket: anchor a gunboat on a river segment to guard crossings
@@ -3367,7 +3661,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
         smokes: smokesRef.current.length,
+        particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
+        projectiles: projectilesRef.current.length,
+        fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
+        suppressed: unitsRef.current.filter(u => u.suppressedUntil && Date.now() < u.suppressedUntil).length,
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
@@ -3390,6 +3688,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         // Test hook: end the match immediately (drives the real gameOver path)
         winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
+        // Test hook: set a team's army stance. Balance probes need a target that
+        // holds still — a strike aimed at a walking formation measures the lead,
+        // not the ordnance.
+        stance: (t: 'WEST' | 'EAST', order: 'advance' | 'hold' | 'retreat') => {
+          stancesRef.current[t === 'WEST' ? Team.WEST : Team.EAST] = order;
+        },
+        // Test hook: wound a team's units to a fraction of max HP, so repair and
+        // healing behavior can be probed without staging a firefight to cause it.
+        hurt: (t: 'WEST' | 'EAST', frac: number) => {
+          const team = t === 'WEST' ? Team.WEST : Team.EAST;
+          let n = 0;
+          unitsRef.current.forEach(u => {
+            if (u.team !== team || u.health <= 0) return;
+            u.health = Math.max(1, Math.round(u.maxHealth * frac));
+            n++;
+          });
+          return n;
+        },
         // Test hook: simulate clicking a unit (goes through real selection logic)
         clickUnit: (id: string) => {
           const u = unitsRef.current.find(x => x.id === id);
@@ -3401,6 +3717,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           position: { ...u.position }, health: u.health, maxHealth: u.maxHealth, isInCover: !!u.isInCover,
           stuckSamples: u.stuckSamples || 0, deployed: !!u.deployed,
           buildUntil: u.buildUntil, garrison: u.garrison || 0,
+          suppressedUntil: u.suppressedUntil,
         })),
         gameOver: gameOverRef.current,
       };

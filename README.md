@@ -53,17 +53,17 @@ The first team to reach **100 Points** wins.
 | :--- | :--- | :--- |
 | **Squad** | Basic grunts. Cheap & swarmable. | Splash damage, Snipers. |
 | **Sniper** | **Long Range** specialist. High damage, slow reload. 30% Miss chance. | Swarms, Close combat. |
-| **Rambo** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
+| **Special Forces** | Hero unit. Rapid fire minigun. | Tanks, Artillery. |
 | **Flamer** | Short-range cone of fire that ignores cover. | Snipers, anything with range. |
 | **Medic** | Heals nearby wounded troops. Unarmed. | Everything that shoots. |
 | **P. Mine** | Hidden trap. Explodes on contact. | Engineers, Luck. |
-| **Engineer** | Detects & defuses enemy mines, repairs bridges. Unarmed. | Everything that shoots. |
+| **Engineer** | Detects & defuses enemy mines, repairs bridges, and welds damaged vehicles & bunkers back to health anywhere on the map. Unarmed. | Everything that shoots. |
 | **Mortar** | Indirect splash fire at long range. Stops to shoot. | Rushes, Snipers. |
 
 ### Vehicles
 | Unit | Role | Weakness |
 | :--- | :--- | :--- |
-| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. | Tanks, Mines. |
+| **Jeep** | **Fast recon**. Rapid MG, races ahead of the column. Has **one seat** — it will pick up a foot soldier in your half and run him to the front (the quickest way to get a slow Engineer to the armor that needs him). | Tanks, Mines. |
 | **Truck** | **Troop transport**. Scoops up 6 foot soldiers in your half, delivers them to the front. Unarmed; survivors bail out if it dies. | Everything. |
 | **Tank** | **Heavy Armor**. High HP & Damage. The backbone of any push. | Anti-Tank Mines, Air attacks. |
 | **Tesla** | Chain-lightning vehicle. Melts infantry, ignores vehicles entirely. | Tanks, Helicopters. |
@@ -105,9 +105,10 @@ The first team to reach **100 Points** wins.
 
 ## 🙏 Asset Credits
 
-3D unit models, all via [Poly Pizza](https://poly.pizza/) — thank you to these artists for the free packs:
+3D unit models, mostly via [Poly Pizza](https://poly.pizza/) — thank you to these artists for the free packs:
 
 - **Soldier** (all infantry) and **Tank** by [Quaternius](https://quaternius.com/) — [CC0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Artillery, Tesla and Bunker** from the Turret Pack by [Quaternius](https://quaternius.com/) — CC0 (converted from OBJ to glTF)
 - **Jeep, Truck, Light Tank (APC) and Helicopter** from the [Low Poly Military Vehicles](https://poly.pizza/bundle/Low-Poly-Military-Vehicles-lSgBuYh48X) bundle, **Missile Turret** (Anti-Air) and **[Military Boat](https://poly.pizza/m/wouBxOe3CD)** (Gunboat) by [Zsky](https://poly.pizza/u/Zsky) — [CC-BY 3.0](https://creativecommons.org/licenses/by/3.0/)
 - **Low poly Fighter** by [Stephen Graybill](https://poly.pizza/m/1fi8ZIDdFCP) — CC-BY 3.0
 - **Drone** by [NateGazzard](https://poly.pizza/m/DNbUoMtG3H) — CC-BY 3.0

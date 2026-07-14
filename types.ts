@@ -7,7 +7,7 @@ export enum UnitType {
   TANK = 'TANK',
   SOLDIER = 'SOLDIER',
   ARTILLERY = 'ARTILLERY',
-  RAMBO = 'RAMBO',
+  SPECIAL_FORCES = 'SPECIAL_FORCES',
   AIRBORNE = 'AIRBORNE',
   AIRSTRIKE = 'AIRSTRIKE',
   MISSILE_STRIKE = 'MISSILE_STRIKE',
@@ -90,6 +90,7 @@ export interface Unit {
   lastCoverId?: string | null; // Don't reuse same cover immediately
   burstCount?: number; // For burst fire units (Tesla)
   isOnHill?: boolean;
+  suppressedUntil?: number; // under fire: keeps its head down (slower, shoots worse)
   squadId?: string;
   planeAltitudeAtDrop?: number;
   lastHitTime?: number; // For hit flash visual
@@ -109,6 +110,12 @@ export interface Unit {
   lastProgressPos?: Vector2D; // sampled periodically for stuck detection
   stuckSamples?: number;  // consecutive samples with no meaningful progress
   deployed?: boolean;     // APC has already put its squad on the ground
+  // Engineer: the job he is currently walking to (mine, bridge or hurt machine).
+  // Held between search ticks — recomputing it only every Nth tick but steering
+  // only on those ticks let him drift back toward the enemy in between, so he
+  // never actually reached a job that was behind him.
+  jobX?: number;
+  jobY?: number;
   // Bunkers
   buildUntil?: number;    // under construction until this timestamp: can't fire, HP still rising
   garrison?: number;      // infantry manning it — more guns in the slits, capped
@@ -130,6 +137,11 @@ export interface Projectile {
   sourceType?: UnitType;
   sourceUnitId?: string;
   isMissile?: boolean;
+  // Lobbed (indirect) rounds: the shell climbs and falls over its flight instead
+  // of flying flat. `flightDist` is how far it was aimed, so the renderer knows
+  // where in the arc it currently is; `arcH` is the apex.
+  flightDist?: number;
+  arcH?: number;
 }
 
 export interface Particle {

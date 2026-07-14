@@ -53,7 +53,7 @@ export const UNIT_CONFIG = {
     colorWest: '#1e3a8a',
     colorEast: '#7f1d1d',
   },
-  [UnitType.RAMBO]: {
+  [UnitType.SPECIAL_FORCES]: {
     cost: 150,
     health: 80,
     damage: 20,
@@ -91,9 +91,14 @@ export const UNIT_CONFIG = {
     colorEast: '#991b1b',
   },
   [UnitType.AIRBORNE]: {
+    // Paratroopers land alone behind the enemy line and were dying to a man
+    // (100% losses, 0.36-0.48 kill-value/$ — the worst in the game). At 28 HP a
+    // trooper cost twice a rifleman and was barely tougher than one, so the drop
+    // was a way to donate money. Elite now: double a rifleman's HP and damage for
+    // roughly double his price, which is what "airborne" is supposed to buy.
     cost: 70,
-    health: 28,
-    damage: 16,
+    health: 40,
+    damage: 20,
     speed: 0.6,
     range: 160,
     attackSpeed: 48,
@@ -333,6 +338,8 @@ export const UNIT_CONFIG = {
     speed: 1.15,
     range: 150,
     attackSpeed: 14,
+    capacity: 1, // one seat: the fastest way to get an engineer (or any foot unit) forward
+
     width: 32,
     height: 20,
     colorWest: '#1d4ed8',
@@ -352,10 +359,14 @@ export const UNIT_CONFIG = {
     colorEast: '#7f1d1d',
   },
   [UnitType.SATELLITE]: {
-    cost: 350,
+    // Was $350 / radius 48: the priciest non-nuke strike with the SMALLEST
+    // footprint (cruise 90, napalm 100), so it killed fewer units than a $100
+    // napalm run — measured at 0.39 value-per-dollar against every other
+    // strike's 0.75-1.31. Widened the beam (area x2) and cut the price.
+    cost: 260,
     health: 0,
     damage: 3.5, // per tick while the beam is active
-    radius: 48,
+    radius: 68,
     speed: 0,
     range: 0,
     attackSpeed: 0,
@@ -392,7 +403,10 @@ export const UNIT_CONFIG = {
   },
 };
 
-export const PROJECTILE_SPEED = 6;
+// Rounds used to be stepped by TWO loops in the same tick, so their real speed
+// was always double this number. Unifying the loops into one resolver halved
+// every time-of-flight, so the base doubles to keep flight times where they were.
+export const PROJECTILE_SPEED = 12;
 export const MONEY_PER_TICK = 0.15;
 // 2000 bought a ~20-unit opening all-in whose winner snowballed the match
 export const INITIAL_MONEY = 1200;
@@ -410,10 +424,209 @@ export const RALLY_COOLDOWN_MS = 50000;      // measured from activation
 export const RALLY_RELOAD_MULT = 1.45;       // cooldowns tick 45% faster
 export const RALLY_SPEED_MULT = 1.25;
 
+// ── Firing signatures ───────────────────────────────────────────────────────
+// What actually leaves the barrel. Every gun used to emit the same orange cone,
+// so a tank's main gun read like a rifle. Now the weight of a shot is in the
+// muzzle: heavy bores blow smoke, kick dust off the ground and shove the
+// camera; automatics spit brass; the sniper barely disturbs the air (a wisp of
+// dust is the only tell). Counts are per shot — keep them small, every one of
+// these is an instanced particle and fast weapons fire many times a second.
+export interface FireFx {
+  flash: number;        // muzzle-flash scale
+  flashColor?: string;  // default is the hot orange of burning propellant
+  smoke: number;        // puffs shoved out of the bore
+  dust: number;         // ground kicked up by the muzzle blast
+  brass: number;        // ejected casings
+  sparks: number;       // burning propellant flecks
+  shake: number;        // camera kick
+  recoil: number;       // how far the whole weapon rocks back (GameScene)
+}
+
+export const FIRE_FX: Partial<Record<UnitType, FireFx>> = {
+  // Heavy bores: the shot is an event
+  [UnitType.ARTILLERY]: { flash: 7, smoke: 7, dust: 9, brass: 0, sparks: 5, shake: 3.4, recoil: 5 },
+  [UnitType.TANK]:      { flash: 4, smoke: 5, dust: 6, brass: 0, sparks: 4, shake: 2.0, recoil: 4 },
+  [UnitType.GUNBOAT]:   { flash: 3.4, smoke: 4, dust: 0, brass: 0, sparks: 3, shake: 1.4, recoil: 3 },
+  [UnitType.MORTAR]:    { flash: 1.6, smoke: 5, dust: 3, brass: 0, sparks: 2, shake: 0.6, recoil: 2 },
+  [UnitType.BUNKER]:    { flash: 2.2, smoke: 2, dust: 1, brass: 2, sparks: 2, shake: 0.7, recoil: 1.5 },
+  // Automatics: brass, not thunder
+  [UnitType.ANTI_AIR]:  { flash: 2.2, flashColor: '#fde68a', smoke: 1, dust: 0, brass: 4, sparks: 3, shake: 0.4, recoil: 1 },
+  [UnitType.APC]:       { flash: 1.8, smoke: 1, dust: 0, brass: 3, sparks: 2, shake: 0.3, recoil: 1 },
+  [UnitType.JEEP]:      { flash: 1.3, smoke: 0, dust: 0, brass: 3, sparks: 1, shake: 0.15, recoil: 0.8 },
+  [UnitType.SPECIAL_FORCES]: { flash: 1.5, smoke: 0, dust: 0, brass: 4, sparks: 2, shake: 0.15, recoil: 0.8 },
+  [UnitType.SOLDIER]:   { flash: 1, smoke: 0, dust: 0, brass: 2, sparks: 1, shake: 0, recoil: 0.6 },
+  // The sniper's tell is dust lifted off the ground, not a flash
+  [UnitType.SNIPER]:    { flash: 1.5, flashColor: '#fff7ed', smoke: 1, dust: 3, brass: 1, sparks: 0, shake: 0.25, recoil: 1.2 },
+  // Aircraft: nothing to kick dust off, and rockets leave their own trail
+  [UnitType.HELICOPTER]: { flash: 2, smoke: 1, dust: 0, brass: 0, sparks: 2, shake: 0.35, recoil: 1 },
+  [UnitType.FIGHTER]:   { flash: 2, smoke: 1, dust: 0, brass: 0, sparks: 2, shake: 0.3, recoil: 1 },
+};
+export const DEFAULT_FIRE_FX: FireFx = { flash: 1, smoke: 0, dust: 0, brass: 1, sparks: 1, shake: 0, recoil: 0.5 };
+export const getFireFx = (t: UnitType): FireFx => FIRE_FX[t] ?? DEFAULT_FIRE_FX;
+
+// How long the muzzle flash stays lit, in ticks — scaled to the weapon's cadence.
+// A fixed window (it was 8 ticks for everything) is wrong at both ends: the jeep
+// reloads in 14 ticks, so its flash burned for 57% of every cycle and read as a
+// constant glow, while artillery's 460-tick cycle reduced its shot to a 1.7%
+// blink. Holding the duty cycle at roughly a fifth makes fast weapons strobe and
+// heavy ones linger. Recoil rides the same window, so a howitzer heaves where a
+// jeep twitches.
+export const flashTicks = (t: UnitType): number => {
+  const cadence = (UNIT_CONFIG[t] as any)?.attackSpeed ?? 30;
+  return Math.max(3, Math.min(14, cadence * 0.22));
+};
+
+// How heavy a single shot is, 0 (rifle round) → 1 (tank shell). Derived from the
+// unit's own damage so it stays true if the balance numbers move — the whole
+// point is that what you see matches what the shot actually does.
+export const shotWeight = (t: UnitType): number => {
+  const dmg = (UNIT_CONFIG[t] as any)?.damage ?? 10;
+  return Math.max(0, Math.min(1, dmg / 70));
+};
+
+// ── Rounds in flight ────────────────────────────────────────────────────────
+// Every projectile used to be the same 3.4x0.65 streak in one of two colors, so
+// a tank shell and a rifle bullet were indistinguishable mid-air. Fat, slow,
+// glowing shells now read differently from a supersonic sniper streak.
+const ROUND_COLOR: Partial<Record<UnitType, string>> = {
+  [UnitType.SNIPER]: '#e0f2fe',     // a pale supersonic streak
+  [UnitType.ANTI_AIR]: '#fef08a',   // flak tracer
+  [UnitType.ARTILLERY]: '#fb923c',  // a shell you can see coming
+  [UnitType.TANK]: '#fdba74',
+  [UnitType.MORTAR]: '#fca5a5',
+  [UnitType.BUNKER]: '#fdba74',
+  [UnitType.GUNBOAT]: '#fdba74',
+};
+// ── Reach ───────────────────────────────────────────────────────────────────
+// Range was the one stat that never showed up in the shot: every round left the
+// barrel at the same speed (6) and flew dead flat, so a mortar bomb lobbed 320px
+// and a rifle bullet crossing 140px looked identical.
+//
+// Indirect weapons LOB — the shell climbs and falls, which is the whole reason
+// they out-range everything and shoot over cover. Direct-fire guns shoot flat,
+// and the longer the reach the faster the round, so a long shot doesn't crawl
+// across the field (at a flat speed of 6, a sniper's 350px shot hung in the air
+// for a full second).
+export const INDIRECT = new Set<UnitType>([UnitType.ARTILLERY, UnitType.MORTAR]);
+
+export const roundSpeed = (t: UnitType): number => {
+  if (INDIRECT.has(t)) return PROJECTILE_SPEED * 0.75;   // a lobbed bomb hangs
+  const r = (UNIT_CONFIG[t] as any)?.range ?? 200;
+  // Floor at 1.0, never below: reach may only ever make a round FASTER. A floor
+  // of 0.9 quietly slowed every short-range weapon in the game (the balance run
+  // caught soldiers 1.49 -> 1.25 and jeeps 0.93 -> 0.36 off the back of it),
+  // which is a stat nerf nobody asked for.
+  return PROJECTILE_SPEED * Math.max(1.0, Math.min(1.9, r / 220));
+};
+
+// How high a lobbed round climbs: proportional to how far it has to go, capped
+// so it never leaves the readable band above the field.
+export const arcHeight = (dist: number): number => Math.min(90, 20 + dist * 0.22);
+
+// ── Suppression ─────────────────────────────────────────────────────────────
+// Being shot at cost a soldier nothing but HP: he walked through a machine gun's
+// beaten zone at full speed, shooting just as straight, and only the rounds that
+// actually connected mattered. Volume of fire now does what volume of fire does —
+// it makes men keep their heads down. Rounds landing NEAR a foot soldier (hit or
+// near miss) pin him: he moves slower and works his weapon slower until he has
+// had a moment without incoming. Vehicles are unmoved by it; so is a bunker.
+export const SUPPRESSION_MS = 1100;          // how long a burst keeps him down
+export const SUPPRESSION_RADIUS = 42;        // a round landing this close is close enough
+export const SUPPRESSION_SPEED_MULT = 0.55;  // he crawls
+export const SUPPRESSION_RELOAD_MULT = 1.45; // and is slower to shoot back
+export const isSuppressible = (t: UnitType): boolean =>
+  MOVE_CLASS[t] === undefined &&              // foot units only
+  t !== UnitType.BUNKER && t !== UnitType.GUNBOAT &&
+  t !== UnitType.MINE_PERSONAL && t !== UnitType.MINE_TANK && t !== UnitType.NAPALM &&
+  !(UNIT_CONFIG[t] as any)?.isFlying;
+
+// ── Armor facing ────────────────────────────────────────────────────────────
+// A tank took the same damage in the engine deck as in the glacis, so there was
+// no reward for getting behind one — a flanking helicopter or a drone that came
+// in from the rear may as well have driven up the front. Armor is thick where it
+// faces the enemy: hits from the flank and (especially) the rear bite harder.
+// Infantry are unaffected — a rifleman has no armor to angle.
+export const ARMOR_REAR_MULT = 1.6;
+export const ARMOR_FLANK_MULT = 1.25;
+
+/** Damage multiplier for a round arriving on `roundDir` at a target facing `facing` (radians). */
+export const armorFacingMult = (roundDir: number, facing: number): number => {
+  // A round that travels in the same direction the target faces came from BEHIND it.
+  let d = Math.abs(roundDir - facing) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  if (d < Math.PI / 3) return ARMOR_REAR_MULT;        // within 60° of "up its back"
+  if (d < (2 * Math.PI) / 3) return ARMOR_FLANK_MULT; // broadside
+  return 1;                                          // it is looking right at you
+};
+
+// ── Accuracy ────────────────────────────────────────────────────────────────
+// A shot at the very edge of a weapon's envelope used to be exactly as deadly as
+// a point-blank one, so there was never a reason to close the distance — you
+// simply parked at max range and won. Rounds now wander with distance: the
+// angular error grows with how deep into its own envelope the shot is. Aimed
+// weapons hold a tight group; a jeep's machine gun sprays.
+// (Radians of half-spread at MAX range. At 200px, 0.12 rad ~ 24px of lateral
+// error, which is a clean miss on an infantryman.)
+const SPREAD_AT_MAX: Partial<Record<UnitType, number>> = {
+  [UnitType.SNIPER]: 0.02,          // he has a 30% flat miss already; the rifle itself is exact
+  [UnitType.TANK]: 0.05,
+  [UnitType.BUNKER]: 0.05,          // braced, on a mount
+  [UnitType.GUNBOAT]: 0.06,
+  [UnitType.ANTI_AIR]: 0.06,
+  [UnitType.SPECIAL_FORCES]: 0.07,  // elite marksmanship
+  [UnitType.HELICOPTER]: 0.10,
+  [UnitType.FIGHTER]: 0.10,
+  [UnitType.SOLDIER]: 0.12,
+  [UnitType.APC]: 0.13,
+  [UnitType.JEEP]: 0.16,            // firing on the move, off a bouncing mount
+};
+// Artillery and mortar already carry their own scatter, and Tesla/flamethrower
+// do not fire a round at all.
+export const spreadAtRange = (t: UnitType, dist: number, range: number): number => {
+  const s = SPREAD_AT_MAX[t];
+  if (!s || range <= 0) return 0;
+  const reach = Math.max(0, Math.min(1, dist / range));
+  return (Math.random() - 0.5) * 2 * s * reach;
+};
+
+export interface RoundFx { len: number; girth: number; color: string }
+export const DEFAULT_ROUND_FX: RoundFx = { len: 3.4, girth: 0.65, color: '#fbbf24' };
+export const getRoundFx = (t: UnitType): RoundFx => {
+  const w = shotWeight(t);
+  return {
+    len: 2.6 + w * 3.2,
+    girth: 0.5 + w * 1.4,
+    color: ROUND_COLOR[t] ?? (w > 0.5 ? '#fdba74' : '#fde68a'),
+  };
+};
+
+// ── Impacts ─────────────────────────────────────────────────────────────────
+// A direct hit used to spawn nothing at all — 240 damage and 6 damage landed
+// identically, with only a sound and the red flash to tell you. The impact is
+// now scaled by the damage actually dealt (after cover/entrenchment), and
+// flavored by what it lands on: steel throws bright sparks and shards, troops
+// kick up dust. Counts stay small — every one is an instanced particle.
+export const IMPACT_SHAKE_MIN_DAMAGE = 40;   // below this a hit does not move the camera
+
+// One $70 paradrop puts a stick of this many troopers on the ground. Keep it in
+// step with the harness cost table (scripts/balance-harness.cjs divides the buy
+// price by the stick size) or paratrooper efficiency reads wrong.
+export const AIRBORNE_STICK = 4;
+
 // Field repairs: units near their own edge patch up slowly when not under fire
 export const REPAIR_ZONE = 90;               // distance from own edge
 export const REPAIR_PER_TICK = 0.06;         // ~3.6 HP/s
 export const REPAIR_COMBAT_LOCKOUT_MS = 2500;
+
+// Engineer field repairs: he is the only way to put HP back into armor out in
+// the field (the edge-zone trickle above means dragging a hurt tank all the way
+// home). Works under fire and anywhere on the map — that is what you pay for.
+export const ENGINEER_REPAIR = 12;           // HP per repair action (~9 HP/s at his 80-tick cadence)
+export const ENGINEER_REPAIR_RANGE = 70;     // must be alongside the machine
+// A machine is anything with an engine or poured out of concrete: every vehicle,
+// plus the two emplacements. Aircraft are excluded — he cannot reach them.
+export const isMechanical = (t: UnitType): boolean =>
+  MOVE_CLASS[t] !== undefined || t === UnitType.BUNKER || t === UnitType.GUNBOAT;
 
 // ── Locomotion ───────────────────────────────────────────────────────────────
 // Every ground unit belongs to a movement class. The class decides how it takes
