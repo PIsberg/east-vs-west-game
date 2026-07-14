@@ -523,6 +523,25 @@ export const roundSpeed = (t: UnitType): number => {
 // so it never leaves the readable band above the field.
 export const arcHeight = (dist: number): number => Math.min(90, 20 + dist * 0.22);
 
+// ── Armor facing ────────────────────────────────────────────────────────────
+// A tank took the same damage in the engine deck as in the glacis, so there was
+// no reward for getting behind one — a flanking helicopter or a drone that came
+// in from the rear may as well have driven up the front. Armor is thick where it
+// faces the enemy: hits from the flank and (especially) the rear bite harder.
+// Infantry are unaffected — a rifleman has no armor to angle.
+export const ARMOR_REAR_MULT = 1.6;
+export const ARMOR_FLANK_MULT = 1.25;
+
+/** Damage multiplier for a round arriving on `roundDir` at a target facing `facing` (radians). */
+export const armorFacingMult = (roundDir: number, facing: number): number => {
+  // A round that travels in the same direction the target faces came from BEHIND it.
+  let d = Math.abs(roundDir - facing) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  if (d < Math.PI / 3) return ARMOR_REAR_MULT;        // within 60° of "up its back"
+  if (d < (2 * Math.PI) / 3) return ARMOR_FLANK_MULT; // broadside
+  return 1;                                          // it is looking right at you
+};
+
 // ── Accuracy ────────────────────────────────────────────────────────────────
 // A shot at the very edge of a weapon's envelope used to be exactly as deadly as
 // a point-blank one, so there was never a reason to close the distance — you

@@ -31,6 +31,7 @@ import {
   isMechanical,
   getFireFx,
   spreadAtRange,
+  armorFacingMult,
   AIRBORNE_STICK,
   IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
@@ -2999,6 +3000,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if ((UNIT_CONFIG[target.type] as any).isFlying &&
               (p.sourceType === UnitType.SOLDIER || p.sourceType === UnitType.SPECIAL_FORCES)) {
               damage *= 0.3;
+            }
+
+            // Armor is thick where it faces the enemy. A hit up the back of a tank
+            // bites; one on the glacis does not. Ground vehicles and emplacements
+            // only — a rifleman has no armor to angle. Stationary machines are
+            // taken to face the way their team advances.
+            const roundDir = Math.atan2(p.velocity.y, p.velocity.x);
+            if (isMechanical(target.type) && !(UNIT_CONFIG[target.type] as any).isFlying) {
+              const v = target.vel;
+              const moving = v && (Math.abs(v.x) > 0.05 || Math.abs(v.y) > 0.05);
+              const facing = moving
+                ? Math.atan2(v!.y, v!.x)
+                : (target.team === Team.WEST ? 0 : Math.PI);
+              damage *= armorFacingMult(roundDir, facing);
             }
 
             target.health -= damage;
