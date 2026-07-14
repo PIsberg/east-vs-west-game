@@ -91,9 +91,14 @@ export const UNIT_CONFIG = {
     colorEast: '#991b1b',
   },
   [UnitType.AIRBORNE]: {
+    // Paratroopers land alone behind the enemy line and were dying to a man
+    // (100% losses, 0.36-0.48 kill-value/$ — the worst in the game). At 28 HP a
+    // trooper cost twice a rifleman and was barely tougher than one, so the drop
+    // was a way to donate money. Elite now: double a rifleman's HP and damage for
+    // roughly double his price, which is what "airborne" is supposed to buy.
     cost: 70,
-    health: 28,
-    damage: 16,
+    health: 40,
+    damage: 20,
     speed: 0.6,
     range: 160,
     attackSpeed: 48,
@@ -536,6 +541,11 @@ export const getRoundFx = (t: UnitType): RoundFx => {
 // flavored by what it lands on: steel throws bright sparks and shards, troops
 // kick up dust. Counts stay small — every one is an instanced particle.
 export const IMPACT_SHAKE_MIN_DAMAGE = 40;   // below this a hit does not move the camera
+
+// One $70 paradrop puts a stick of this many troopers on the ground. Keep it in
+// step with the harness cost table (scripts/balance-harness.cjs divides the buy
+// price by the stick size) or paratrooper efficiency reads wrong.
+export const AIRBORNE_STICK = 4;
 
 // Field repairs: units near their own edge patch up slowly when not under fire
 export const REPAIR_ZONE = 90;               // distance from own edge

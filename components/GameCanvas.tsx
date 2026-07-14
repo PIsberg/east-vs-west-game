@@ -30,6 +30,7 @@ import {
   ENGINEER_REPAIR_RANGE,
   isMechanical,
   getFireFx,
+  AIRBORNE_STICK,
   IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
   CLASS_PROFILE,
@@ -1645,11 +1646,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (fly.type === UnitType.AIRSTRIKE) { fly.canisterY = fly.altitudeY; fly.canisterVelocityY = 2; }
           else if (fly.type === UnitType.AIRBORNE) {
             const config = UNIT_CONFIG[UnitType.AIRBORNE];
-            for (let j = 0; j < 3; j++) unitsRef.current.push({ id: generateId(), team: fly.team, type: UnitType.AIRBORNE, position: { x: fly.targetPos.x + (j - 1) * 25, y: fly.targetPos.y }, state: UnitState.MOVING, health: config.health, maxHealth: config.health, attackCooldown: 0, targetId: null, width: config.width, height: config.height, spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY });
+            // A stick of FOUR, landing as one squad. At three, each trooper cost
+            // $23 against a rifleman's $8.30 for only 28 HP — the worst value in
+            // the game (0.48 kill-value/$ where a rifleman does 1.46). They also
+            // landed as loose individuals; a squadId means they select, and fight,
+            // as the unit they are supposed to be.
+            const stick = generateId();
+            for (let j = 0; j < AIRBORNE_STICK; j++) {
+              unitsRef.current.push({
+                id: generateId(), team: fly.team, type: UnitType.AIRBORNE,
+                position: { x: fly.targetPos.x + (j - (AIRBORNE_STICK - 1) / 2) * 25, y: fly.targetPos.y },
+                state: UnitState.MOVING, health: config.health, maxHealth: config.health,
+                attackCooldown: 0, targetId: null, width: config.width, height: config.height,
+                spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY, squadId: stick,
+              });
+            }
             // Dropped troops bypass spawnUnit — keep built/spawned telemetry honest
-            statsRef.current[fly.team].built += 3;
+            statsRef.current[fly.team].built += AIRBORNE_STICK;
             const ats = typeStatsRef.current[fly.team];
-            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + 3;
+            ats.spawned[UnitType.AIRBORNE] = (ats.spawned[UnitType.AIRBORNE] || 0) + AIRBORNE_STICK;
           }
         }
       }
@@ -3441,12 +3456,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Airborne drop behind foe lines when they push deep
         const foePushedDeep = FOE === Team.WEST ? foeFrontX > 450 : foeFrontX < 350;
-        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.2 * DIFF.special) {
-          const dropX = FOE === Team.WEST ? 80 + Math.random() * 120 : CANVAS_WIDTH - 200 + Math.random() * 120;
-          const dropY = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
-          spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: { x: dropX, y: dropY } });
-          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
-          specialSpawned = true;
+        // A paradrop is a raid, not a staple. The CPU used to roll for one every
+        // cycle (0.2) and sank $6-7k a session into sticks that died to a man —
+        // the single biggest hole in its economy. It now raids rarely, and only
+        // when the sampling below actually finds a hole to land in.
+        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special) {
+          // Drop into a GAP. This used to pick a blind random spot 80-200px from
+          // the foe's edge — i.e. right on top of their spawn, the one place their
+          // entire reinforcement stream walks through. The stick landed in the
+          // middle of the enemy's production line and died to a man (100% losses).
+          // Sample a few candidates behind their front and take the one furthest
+          // from their nearest unit.
+          const foeAlive = unitsRef.current.filter(u => u.team === FOE && u.health > 0 &&
+            u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
+          let drop = { x: 0, y: 0 }, bestClear = -1;
+          for (let s = 0; s < 8; s++) {
+            const x = FOE === Team.WEST ? 70 + Math.random() * 210 : CANVAS_WIDTH - 280 + Math.random() * 210;
+            const y = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
+            let nearest = Infinity;
+            for (const u of foeAlive) {
+              const d = Math.sqrt((u.position.x - x) ** 2 + (u.position.y - y) ** 2);
+              if (d < nearest) nearest = d;
+            }
+            const clear = Math.min(nearest, 260);   // beyond ~260 it is all equally empty
+            if (clear > bestClear) { bestClear = clear; drop = { x, y }; }
+          }
+          // No hole worth landing in — keep the money. Dropping anyway is how the
+          // stick used to end up on top of the enemy's spawn.
+          if (bestClear > 130) {
+            spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: drop });
+            moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
+            specialSpawned = true;
+          }
         }
 
         // Naval picket: anchor a gunboat on a river segment to guard crossings
