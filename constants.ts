@@ -523,6 +523,36 @@ export const roundSpeed = (t: UnitType): number => {
 // so it never leaves the readable band above the field.
 export const arcHeight = (dist: number): number => Math.min(90, 20 + dist * 0.22);
 
+// ── Accuracy ────────────────────────────────────────────────────────────────
+// A shot at the very edge of a weapon's envelope used to be exactly as deadly as
+// a point-blank one, so there was never a reason to close the distance — you
+// simply parked at max range and won. Rounds now wander with distance: the
+// angular error grows with how deep into its own envelope the shot is. Aimed
+// weapons hold a tight group; a jeep's machine gun sprays.
+// (Radians of half-spread at MAX range. At 200px, 0.12 rad ~ 24px of lateral
+// error, which is a clean miss on an infantryman.)
+const SPREAD_AT_MAX: Partial<Record<UnitType, number>> = {
+  [UnitType.SNIPER]: 0.02,          // he has a 30% flat miss already; the rifle itself is exact
+  [UnitType.TANK]: 0.05,
+  [UnitType.BUNKER]: 0.05,          // braced, on a mount
+  [UnitType.GUNBOAT]: 0.06,
+  [UnitType.ANTI_AIR]: 0.06,
+  [UnitType.SPECIAL_FORCES]: 0.07,  // elite marksmanship
+  [UnitType.HELICOPTER]: 0.10,
+  [UnitType.FIGHTER]: 0.10,
+  [UnitType.SOLDIER]: 0.12,
+  [UnitType.APC]: 0.13,
+  [UnitType.JEEP]: 0.16,            // firing on the move, off a bouncing mount
+};
+// Artillery and mortar already carry their own scatter, and Tesla/flamethrower
+// do not fire a round at all.
+export const spreadAtRange = (t: UnitType, dist: number, range: number): number => {
+  const s = SPREAD_AT_MAX[t];
+  if (!s || range <= 0) return 0;
+  const reach = Math.max(0, Math.min(1, dist / range));
+  return (Math.random() - 0.5) * 2 * s * reach;
+};
+
 export interface RoundFx { len: number; girth: number; color: string }
 export const DEFAULT_ROUND_FX: RoundFx = { len: 3.4, girth: 0.65, color: '#fbbf24' };
 export const getRoundFx = (t: UnitType): RoundFx => {

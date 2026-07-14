@@ -30,6 +30,7 @@ import {
   ENGINEER_REPAIR_RANGE,
   isMechanical,
   getFireFx,
+  spreadAtRange,
   AIRBORNE_STICK,
   IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
@@ -2839,6 +2840,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const speed = roundSpeed(unit.type);
               const shotDist = Math.sqrt(
                 (target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
+              // Rounds wander the further out you shoot, so parking at max range
+              // is no longer free — closing the distance buys accuracy.
+              spread += spreadAtRange(unit.type, shotDist, range);
 
               projectilesRef.current.push({
                 id: generateId(),
