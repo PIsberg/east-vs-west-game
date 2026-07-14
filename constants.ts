@@ -489,6 +489,32 @@ const ROUND_COLOR: Partial<Record<UnitType, string>> = {
   [UnitType.BUNKER]: '#fdba74',
   [UnitType.GUNBOAT]: '#fdba74',
 };
+// ── Reach ───────────────────────────────────────────────────────────────────
+// Range was the one stat that never showed up in the shot: every round left the
+// barrel at the same speed (6) and flew dead flat, so a mortar bomb lobbed 320px
+// and a rifle bullet crossing 140px looked identical.
+//
+// Indirect weapons LOB — the shell climbs and falls, which is the whole reason
+// they out-range everything and shoot over cover. Direct-fire guns shoot flat,
+// and the longer the reach the faster the round, so a long shot doesn't crawl
+// across the field (at a flat speed of 6, a sniper's 350px shot hung in the air
+// for a full second).
+export const INDIRECT = new Set<UnitType>([UnitType.ARTILLERY, UnitType.MORTAR]);
+
+export const roundSpeed = (t: UnitType): number => {
+  if (INDIRECT.has(t)) return PROJECTILE_SPEED * 0.75;   // a lobbed bomb hangs
+  const r = (UNIT_CONFIG[t] as any)?.range ?? 200;
+  // Floor at 1.0, never below: reach may only ever make a round FASTER. A floor
+  // of 0.9 quietly slowed every short-range weapon in the game (the balance run
+  // caught soldiers 1.49 -> 1.25 and jeeps 0.93 -> 0.36 off the back of it),
+  // which is a stat nerf nobody asked for.
+  return PROJECTILE_SPEED * Math.max(1.0, Math.min(1.9, r / 220));
+};
+
+// How high a lobbed round climbs: proportional to how far it has to go, capped
+// so it never leaves the readable band above the field.
+export const arcHeight = (dist: number): number => Math.min(90, 20 + dist * 0.22);
+
 export interface RoundFx { len: number; girth: number; color: string }
 export const DEFAULT_ROUND_FX: RoundFx = { len: 3.4, girth: 0.65, color: '#fbbf24' };
 export const getRoundFx = (t: UnitType): RoundFx => {

@@ -3,7 +3,9 @@ import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
   UNIT_CONFIG,
-  PROJECTILE_SPEED,
+  roundSpeed,
+  arcHeight,
+  INDIRECT,
   INITIAL_MONEY,
   MONEY_PER_TICK,
   HORIZON_Y,
@@ -2617,12 +2619,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const fly = flyoversRef.current.find(f => f.team !== unit.team && Math.sqrt((f.currentX - unit.position.x) ** 2 + (f.altitudeY - unit.position.y) ** 2) < range);
             if (fly) {
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
             unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
           }
         } else {
@@ -2862,7 +2864,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (unit.type === UnitType.SNIPER) {
                 if (Math.random() > 0.7) { // 30% Miss Chance
                   const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
-                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * PROJECTILE_SPEED, y: Math.sin(a) * PROJECTILE_SPEED }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                   unit.attackCooldown = config.attackSpeed; soundService.playSniperShot();
                   fireFx(unit, a);   // a miss still throws dust and gives his hide away
                   return;
@@ -2877,12 +2879,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 spread = (Math.random() - 0.5) * 0.4;
               }
               const isMissile = unit.type === UnitType.HELICOPTER;
+              // Reach shows up in the shot: flat and fast for a long-barrelled
+              // direct-fire gun, a slow climbing lob for indirect fire.
+              const speed = roundSpeed(unit.type);
+              const shotDist = Math.sqrt(
+                (target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
 
               projectilesRef.current.push({
                 id: generateId(),
                 team: unit.team,
                 position: { ...unit.position },
-                velocity: { x: Math.cos(a + spread) * PROJECTILE_SPEED, y: Math.sin(a + spread) * PROJECTILE_SPEED },
+                velocity: { x: Math.cos(a + spread) * speed, y: Math.sin(a + spread) * speed },
                 damage: config.damage * vetMult,
                 maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0),
                 distanceTraveled: 0,
@@ -2890,7 +2897,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 explosionRadius: config.explosionRadius,
                 sourceType: unit.type,
                 sourceUnitId: unit.id,
-                isMissile
+                isMissile,
+                ...(INDIRECT.has(unit.type)
+                  ? { flightDist: shotDist, arcH: arcHeight(shotDist) }
+                  : {}),
               });
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload);
               fireFx(unit, a + spread);
@@ -2956,7 +2966,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const p = projectilesRef.current[i];
       p.position.x += p.velocity.x;
       p.position.y += p.velocity.y;
-      p.distanceTraveled += PROJECTILE_SPEED;
+      // Rounds no longer share one speed, so range must be counted from the round's
+      // OWN velocity — a constant here would let a fast round out-fly its range.
+      p.distanceTraveled += Math.sqrt(p.velocity.x ** 2 + p.velocity.y ** 2);
 
       let hit = false;
       let explode = false;
@@ -3579,6 +3591,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
+        projectiles: projectilesRef.current.length,
         fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
         incomeLevel: { ...incomeLevelRef.current },

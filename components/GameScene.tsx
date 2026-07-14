@@ -6,7 +6,7 @@ import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS } from '../constants';
 
 
 interface GameSceneProps {
@@ -1620,6 +1620,26 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         <meshBasicMaterial color="#a3e635" transparent opacity={0.9} toneMapped={false} depthWrite={false} />
                     </mesh>
                 )}
+                {/* Reach: the range you are actually buying. Range was invisible —
+                    you could not see that a sniper out-ranges a tank, nor that the
+                    hill a unit is standing on is lengthening its reach right now
+                    (HILL_RANGE_BONUS), which is the whole reason to take the hill. */}
+                {selected && (config.range || 0) > 0 && (
+                    <mesh
+                        position={[0, -yOffset - bobY + 0.4, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={config.range * (unit.isOnHill ? HILL_RANGE_BONUS : 1)}
+                    >
+                        <ringGeometry args={[0.985, 1, 64]} />
+                        <meshBasicMaterial
+                            color={unit.isOnHill ? '#fbbf24' : '#a3e635'}
+                            transparent
+                            opacity={unit.isOnHill ? 0.55 : 0.32}
+                            toneMapped={false}
+                            depthWrite={false}
+                        />
+                    </mesh>
+                )}
                 {unit.orders && (
                     <mesh position={[0, unit.height + 16, 0]}>
                         <sphereGeometry args={[2, 6, 5]} />
@@ -2147,7 +2167,15 @@ const InstancedProjectiles = ({ projectiles }: { projectiles: Projectile[] }) =>
         for (const proj of projectiles) {
             if (proj.isMissile) continue; // rendered as Projectile3D (has pointLight)
             if (count >= MAX_PROJECTILE_INSTANCES) break;
-            dummy.position.set(proj.position.x, 15, proj.position.y);
+            // Indirect fire LOBS: the shell climbs and falls across its flight,
+            // which is the whole reason it out-ranges everything and clears cover.
+            // Flat-trajectory rounds keep the old fixed height.
+            let alt = 15;
+            if (proj.arcH && proj.flightDist) {
+                const t = Math.min(1, proj.distanceTraveled / proj.flightDist);
+                alt = 15 + Math.sin(Math.PI * t) * proj.arcH;
+            }
+            dummy.position.set(proj.position.x, alt, proj.position.y);
             // Stretch into a tracer along the flight direction. Size and color come
             // from the shot: a tank shell is a fat glowing slug, a sniper round a
             // thin pale streak — they used to be the same 3.4x0.65 dash.

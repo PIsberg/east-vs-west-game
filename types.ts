@@ -136,6 +136,11 @@ export interface Projectile {
   sourceType?: UnitType;
   sourceUnitId?: string;
   isMissile?: boolean;
+  // Lobbed (indirect) rounds: the shell climbs and falls over its flight instead
+  // of flying flat. `flightDist` is how far it was aimed, so the renderer knows
+  // where in the arc it currently is; `arcH` is the apex.
+  flightDist?: number;
+  arcH?: number;
 }
 
 export interface Particle {
