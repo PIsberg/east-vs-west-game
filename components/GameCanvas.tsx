@@ -2741,6 +2741,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
               projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
+            } else {
+              // Sky's clear — depress the guns and rake enemy infantry. Flak
+              // shreds soft targets but can't punch armour, and on the ground it
+              // reaches far less than into the air, so it's a useful second job
+              // (never a wasted buy against a foe with no aircraft), not a
+              // super-soldier that outclasses dedicated ground units.
+              const groundRange = Math.min(range, 190 * currentScale * fogPenalty);
+              let gt: Unit | null = null, gd = groundRange;
+              spatialHash.current.queryCallback(unit.position.x, unit.position.y, groundRange, o => {
+                if (o.team === unit.team || o.health <= 0) return;
+                if ((UNIT_CONFIG[o.type] as any).isFlying || isMechanical(o.type)) return; // infantry only
+                if (o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return;
+                if (smokeBlocked(unit, o)) return;
+                const d = Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y);
+                if (d < gd) { gd = d; gt = o; }
+              });
+              if (gt) {
+                const t = gt as Unit;
+                const a = Math.atan2(t.position.y - unit.position.y, t.position.x - unit.position.x) + spreadAtRange(unit.type, gd, groundRange);
+                projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult * 0.5, maxRange: groundRange, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                unit.attackCooldown = Math.round(config.attackSpeed * vetReload);
+                fireFx(unit, a); soundService.playRifleShot();
+              }
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
