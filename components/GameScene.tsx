@@ -778,6 +778,38 @@ const bountyMaterial = (text: string): THREE.SpriteMaterial => {
     return m;
 };
 
+// Small white-on-black label sprites (e.g. a building's "5/30" occupancy). Same
+// cached-canvas approach as the bounty labels — the set of distinct strings is
+// tiny, so each is rasterized once and shared.
+const LABEL_CACHE = new Map<string, THREE.SpriteMaterial>();
+const labelMaterial = (text: string, color = '#ffffff'): THREE.SpriteMaterial => {
+    const key = `${text}|${color}`;
+    let m = LABEL_CACHE.get(key);
+    if (!m) {
+        const pad = 7, font = 40;
+        const c = document.createElement('canvas');
+        const ctx = c.getContext('2d')!;
+        ctx.font = `bold ${font}px sans-serif`;
+        c.width = Math.ceil(ctx.measureText(text).width) + pad * 2;
+        c.height = font + pad * 2;
+        const g = c.getContext('2d')!;
+        g.font = `bold ${font}px sans-serif`;
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 6;
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.strokeText(text, c.width / 2, c.height / 2);
+        g.fillStyle = color;
+        g.fillText(text, c.width / 2, c.height / 2);
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, toneMapped: false });
+        m.userData = { w: (c.width / c.height) * 14, h: 14 };
+        LABEL_CACHE.set(key, m);
+    }
+    return m;
+};
+
 // Rifle length in the soldier's own units (he stands ~1.8 tall), before the
 // wrist bone's baked armature scale is cancelled out.
 const RIFLE_LENGTH = 0.85;
@@ -2346,7 +2378,7 @@ const RepairMarker = () => {
     );
 };
 
-const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObject, itemState?: TerrainObject['state'], itemHealth?: number, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
+const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObject, itemState?: TerrainObject['state'], itemHealth?: number, itemOccupant?: Team | null, itemGarrison?: number, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
     // River handled by RiverRenderer now
     // if (item.type === 'river') { ... } 
 
@@ -2539,15 +2571,83 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const h = 30 + (seed % 40); // Varied height 30-70
         const w = item.width || 30;
         const d = item.height || 30;
-        const wallColor = item.state === 'burnt' ? '#1c1917' : (seed % 3 === 0 ? '#374151' : seed % 3 === 1 ? '#4b5563' : '#6b7280');
+        const occ = !!item.occupiable;
+        const occupant = item.occupant ?? null;
+        const filled = item.garrisonUnits?.length ?? 0;
+        const capv = item.capacity ?? 0;
+        const flagColor = occupant === Team.WEST ? '#3b82f6' : occupant === Team.EAST ? eastColor('#ef4444') : '#d6d3d1';
+
+        // A collapsed strongpoint: a low pile of rubble where the house stood.
+        const isRubble = item.state === 'burnt';
+        if (isRubble) {
+            const rh = Math.min(14, h * 0.28);
+            return (
+                <ClickableGroup position={[item.x, rh / 2, item.y]} onCanvasClick={onCanvasClick}>
+                    <mesh castShadow receiveShadow>
+                        <boxGeometry args={[w, rh, d]} />
+                        <meshStandardMaterial color="#292524" roughness={1} />
+                    </mesh>
+                    {/* Broken wall stubs poking out of the debris */}
+                    {[[-w * 0.32, -d * 0.28], [w * 0.3, d * 0.22], [w * 0.1, -d * 0.3]].map(([lx, lz], i) => (
+                        <mesh key={i} position={[lx, rh * 0.5 + 3 + (seed % 5), lz]} rotation={[0, (seed + i) % 3, (i % 2 ? 0.3 : -0.25)]} castShadow>
+                            <boxGeometry args={[w * 0.22, 8 + (seed % 6), d * 0.2]} />
+                            <meshStandardMaterial color="#1c1917" roughness={1} />
+                        </mesh>
+                    ))}
+                    {/* Rubble chunks */}
+                    {[0.5, 1.8, 3.1, 4.4, 5.6].map((a, i) => (
+                        <mesh key={`r${i}`} position={[Math.cos(a) * w * 0.34, rh * 0.5 + 1, Math.sin(a) * d * 0.34]} rotation={[a, a * 2, 0]} castShadow>
+                            <dodecahedronGeometry args={[3 + (seed + i) % 3, 0]} />
+                            <meshStandardMaterial color="#44403c" roughness={1} />
+                        </mesh>
+                    ))}
+                </ClickableGroup>
+            );
+        }
+
+        // Battle damage darkens and scorches the walls as HP falls
+        const wallColor = item.state === 'burning' ? '#3f3a36'
+            : item.state === 'broken' ? '#3f4451'
+            : (seed % 3 === 0 ? '#374151' : seed % 3 === 1 ? '#4b5563' : '#6b7280');
         const roofProp = seed % 4; // 0 water tank, 1 AC units, 2 antenna, 3 bare
         const hasSetback = h > 52;
+        const flicker = Math.floor(Date.now() / 110) % 2 === 0;
+        const occLabel = occ && occupant ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
         return (
             <ClickableGroup position={[item.x, h / 2, item.y]} onCanvasClick={onCanvasClick}>
                 <mesh castShadow receiveShadow>
                     <boxGeometry args={[w, h, d]} />
                     <meshStandardMaterial color={wallColor} roughness={0.85} />
                 </mesh>
+
+                {/* ── Occupiable strongpoint fittings ─────────────────────── */}
+                {occ && (
+                    <group>
+                        {/* Flag on a rooftop pole — team colors when held, a pale
+                            neutral pennant when the house is still up for grabs */}
+                        <group position={[w * 0.34, h / 2 + (hasSetback ? 13 : 1), d * 0.3]}>
+                            <mesh position={[0, 9, 0]} castShadow>
+                                <cylinderGeometry args={[0.5, 0.5, 18]} />
+                                <meshStandardMaterial color="#57534e" />
+                            </mesh>
+                            <mesh position={[3.6, 15, 0]}>
+                                <boxGeometry args={[7, 4.5, 0.4]} />
+                                <meshStandardMaterial color={flagColor} emissive={flagColor} emissiveIntensity={occupant ? 0.35 : 0} side={THREE.DoubleSide} />
+                            </mesh>
+                        </group>
+                        {/* Occupancy readout, e.g. "5/30", above the roof */}
+                        {occLabel && (
+                            <sprite position={[0, h / 2 + 26, 0]} scale={[occLabel.userData.w, occLabel.userData.h, 1]} material={occLabel} />
+                        )}
+                        {/* Fire licking the roofline once the house is burning */}
+                        {item.state === 'burning' && [[-w * 0.25, d * 0.1], [w * 0.2, -d * 0.15], [0, d * 0.2]].map(([lx, lz], i) => (
+                            <mesh key={`f${i}`} position={[lx, h / 2 + 2 + (i % 2 ? 1 : 0), lz]}>
+                                <coneGeometry args={[3.5, 8, 6]} />
+                                <meshBasicMaterial color={flicker === (i % 2 === 0) ? '#f97316' : '#fbbf24'} toneMapped={false} />
+                            </mesh>
+                        ))}
+                    </group>
+                )}
                 {/* Sidewalk base */}
                 <mesh position={[0, -h / 2 + 0.4, 0]} receiveShadow>
                     <boxGeometry args={[w + 10, 0.8, d + 10]} />
@@ -2681,6 +2781,8 @@ const TerrainItem = React.memo(TerrainItemInner, (prev, next) =>
     prev.onCanvasClick === next.onCanvasClick &&
     prev.itemState === next.itemState &&
     prev.itemHealth === next.itemHealth &&
+    prev.itemOccupant === next.itemOccupant &&
+    prev.itemGarrison === next.itemGarrison &&
     next.itemState !== 'burning'
 );
 
@@ -3309,7 +3411,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments
-                    return <TerrainItem key={t.id} item={t} itemState={t.state} itemHealth={t.health} onCanvasClick={onCanvasClick} mapType={mapType} />;
+                    return <TerrainItem key={t.id} item={t} itemState={t.state} itemHealth={t.health} itemOccupant={t.occupant ?? null} itemGarrison={t.garrisonUnits?.length ?? 0} onCanvasClick={onCanvasClick} mapType={mapType} />;
                 })}
 
                 {units.map(u => <Unit3D key={u.id} unit={u} terrain={terrain} onCanvasClick={onCanvasClick} onUnitClick={onUnitClick} focused={focusIds?.includes(u.id)} selected={selectedIds?.includes(u.id)} />)}

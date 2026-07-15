@@ -689,3 +689,19 @@ export const BUNKER_CALL_RANGE = 150;        // infantry told to hold within thi
 export const APC_SQUAD = 3;
 export const APC_DEPLOY_RANGE = 240;    // enemy within this → drop the ramp
 export const APC_DEPLOY_HP = 0.55;      // or when it's taken a beating
+
+// Occupiable buildings: contested strongpoints riflemen can garrison. The house
+// soaks fire for the men inside, so it carries a lot of HP — several tank shells'
+// worth — and only occupied houses can be destroyed (an empty one is permanent
+// cover). Capacity and HP both scale with the footprint.
+export const OCCUPIABLE_PER_MAP = 4;         // strongpoints seeded into each map's contested band
+export const BUILDING_HP_PER_SIZE = 26;      // structural HP ≈ size × this (size ~20–42 → ~520–1100 HP)
+export const BUILDING_ENTRY_RANGE = 34;      // a rifleman this close to a free/friendly house files inside
+export const BUILDING_FIRE_RANGE = 175;      // the garrison shoots out to here
+export const BUILDING_FIRE_COOLDOWN = 30;    // ticks between defensive volleys (~0.5s)
+export const BUILDING_MAX_GUNS = 6;          // windows that can fire at once — volley size cap
+export const BUILDING_GARRISON_DAMAGE = 11;  // damage per firing window (rifle-grade)
+export const BUILDING_COLLAPSE_SURVIVE = 0.3; // fraction of the garrison that scrambles clear when it falls
+// Capacity tiers by footprint size — a small house shelters a squad, a large one a platoon.
+export const buildingCapacity = (size: number): number =>
+  Math.max(5, Math.min(30, Math.round((size - 12) * 1.05)));

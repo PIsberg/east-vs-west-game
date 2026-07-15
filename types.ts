@@ -65,6 +65,17 @@ export interface TerrainObject {
   height?: number;
   state?: 'normal' | 'burning' | 'burnt' | 'broken';
   health?: number; // Burn time or durability
+  // Occupiable buildings — infantry strongpoints. A house with `occupiable` set
+  // can be garrisoned: the first team whose riflemen reach it captures it (a flag
+  // goes up), soldiers shelter inside (removed from the field), the structure
+  // soaks fire on their behalf until its `health` runs out, and when it collapses
+  // most of the garrison dies. `capacity` scales with the footprint.
+  occupiable?: boolean;
+  capacity?: number;         // max troops it can hold (by size)
+  occupant?: Team | null;    // holding team, null = empty/neutral
+  garrisonUnits?: Unit[];    // off-field soldiers sheltering inside
+  maxHealth?: number;        // structural HP at full integrity (health = current)
+  fireCooldown?: number;     // ticks until the garrison's next defensive volley
 }
 
 export interface Unit {

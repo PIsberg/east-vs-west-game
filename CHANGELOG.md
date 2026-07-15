@@ -1,5 +1,11 @@
 # Changelog
 
+## Infantry hold the houses (July 2026)
+
+- **Buildings are strongpoints now.** Every map seeds a handful of occupiable houses across the contested middle, and the first team whose line infantry reaches one raises its flag over it. Riflemen, snipers, special forces and paras can garrison; engineers and medics have work to do in the open and walk on past.
+- **The house shelters the men and shoots back.** Troops inside leave the field — nothing can touch them directly — while the structure soaks fire on their behalf and the garrison fires out of the windows at the nearest enemy. A floating **5/30** counter shows how full it is; a bigger house holds more (small squad up to a full platoon).
+- **A lot of HP, and states on the way down.** Houses carry several tank shells' worth of structure and visibly degrade — intact, then cracked, then burning and coughing smoke — before they **collapse into rubble**. When one falls most of the garrison dies in it and a few scramble clear at low health, so it's worth burning the enemy out of a house before you try to storm past it. Empty houses stay standing as plain cover; only a manned one can be brought down (by direct fire, splash, or an attacker with nothing else to shoot).
+
 ## Bunkers, box-select, and a tank that faces the right way (July 2026)
 
 - **Tanks drove backwards.** The tank model faces −X, but the code assumed +X and gave it no yaw, so both sides rolled into battle with the barrel pointing at their own base (measured: the gun sat 5.1 units *behind* the hull centre relative to the advance). Yawed by π — the gun now leads.
