@@ -3131,6 +3131,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             bld.occupant = o.team;
             pushEvent('capture', `${teamName(o.team)} infantry occupy a strongpoint`, o.team);
             soundService.playSpawnSound(o.team === Team.EAST);
+            // Flag-raise flourish: a puff of team-coloured motes rises off the roof
+            const flag = o.team === Team.WEST ? '#3b82f6' : '#ef4444';
+            for (let k = 0; k < 10; k++) {
+              particlesRef.current.push({
+                id: generateId(),
+                position: { x: bld.x + (Math.random() - 0.5) * hw, y: bld.y - hd * 0.5 },
+                velocity: { x: (Math.random() - 0.5) * 0.5, y: -0.3 }, drag: 0.95,
+                life: 26 + Math.random() * 14, color: k % 3 === 0 ? '#ffffff' : flag,
+                size: 3 + Math.random() * 3, alt: hd + Math.random() * 12, altVel: 0.9,
+              });
+            }
           } else if (bld.occupant !== o.team) {
             return; // enemy house — they have to burn it down, not walk in
           }
