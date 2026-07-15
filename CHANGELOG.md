@@ -1,5 +1,10 @@
 # Changelog
 
+## The ground comes alive (July 2026)
+
+- **The battlefield was a flat green slab; now it's a field.** The terrain used to be one solid colour with a scattering of 140 identical dark tufts — read as a painted plane, not ground. It's now planted: denser grass in **three tones** per map so the turf mottles instead of reading flat, blades at **varied heights**, and a scattering of **low faceted bushes** that break the horizon and give the field depth (coloured apart from the grey rock props so they don't read as boulders). The base ground gained gentle **two-tone patches** — sun-catch turf over damp earth — spread across the actual play area instead of half off-map.
+- **Every map keeps its character.** Countryside and the islands go lush green; the desert gets sparse dry brush and sun-bleached sand patches, no bushes crowding the dunes; the city streets stay bare rubble. It's all on the instanced-mesh path — the whole meadow is two draw calls — and tuned low and muted so troops still pop against it.
+
 ## The Tesla coil forks its lightning (July 2026)
 
 - **The Tesla coil chains now.** Its bolt used to be a five-round burst that dumped its whole charge into one man — 110 damage a shot into a 20-HP rifleman, over and over, while the squad packed in beside him went untouched. A coil is supposed to punish a *crowd*. So the shot now **forks**: it strikes the nearest man for full damage, then arcs to his nearest neighbour, then the next, up to four troops in a chain, each jump weaker than the last. One coil clears a squad instead of executing a single rifleman five times. The arc can walk clear of the coil's own range as it hops the mob, and it still ignores vehicles entirely — this is the answer to an infantry blob, nothing else.

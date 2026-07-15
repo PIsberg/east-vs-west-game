@@ -3235,39 +3235,81 @@ const UrbanRoadMarkings = React.memo(({ mapType }: { mapType: MapType }) => {
 
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
 const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
-    const ref = useRef<THREE.InstancedMesh>(null!);
-    const COUNT = 140;
+    const grassRef = useRef<THREE.InstancedMesh>(null!);
+    const bushRef = useRef<THREE.InstancedMesh>(null!);
     const active = mapType !== MapType.URBAN; // city streets stay bare
-    const color =
-        mapType === MapType.DESERT      ? '#a16207' :
-        mapType === MapType.ARCHIPELAGO ? '#15803d' : '#1a2e05';
+
+    // Per-map planting: a handful of tones so the field mottles like real ground
+    // instead of reading as one flat slab, plus low bushes for silhouette depth.
+    // Kept muted and low so units still pop against it.
+    const plan = useMemo(() => {
+        if (mapType === MapType.DESERT)
+            return { tufts: 170, bushes: 16, grassTones: ['#a16207', '#ca8a04', '#854d0e'], bushTone: '#6b4310' };
+        if (mapType === MapType.ARCHIPELAGO)
+            return { tufts: 300, bushes: 28, grassTones: ['#166534', '#15803d', '#3f8f3e'], bushTone: '#14532d' };
+        // COUNTRYSIDE
+        return { tufts: 300, bushes: 28, grassTones: ['#22400d', '#33511a', '#405f22'], bushTone: '#1c3a0d' };
+    }, [mapType]);
 
     useEffect(() => {
-        if (!active || !ref.current) return;
-        const dummy = new THREE.Object3D();
+        if (!active) return;
         const rand = (i: number, salt: number) => {
             const v = Math.sin(i * 127.1 + salt * 311.7) * 43758.5453;
             return v - Math.floor(v);
         };
-        for (let i = 0; i < COUNT; i++) {
-            const x = 20 + rand(i, 1) * (CANVAS_WIDTH - 40);
-            const z = HORIZON_Y + 20 + rand(i, 2) * (CANVAS_HEIGHT - HORIZON_Y - 40);
-            const s = 1.2 + rand(i, 3) * 2.2;
-            dummy.position.set(x, 2, z);
-            dummy.scale.set(s, s * 1.8, s);
-            dummy.rotation.set(0, rand(i, 4) * Math.PI * 2, 0);
-            dummy.updateMatrix();
-            ref.current.setMatrixAt(i, dummy.matrix);
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+
+        // Grass tufts — dense, colour-varied, some blades standing taller than others
+        if (grassRef.current) {
+            const tones = plan.grassTones.map(c => new THREE.Color(c));
+            for (let i = 0; i < plan.tufts; i++) {
+                const x = 20 + rand(i, 1) * (CANVAS_WIDTH - 40);
+                const z = HORIZON_Y + 16 + rand(i, 2) * (CANVAS_HEIGHT - HORIZON_Y - 32);
+                const s = 1.1 + rand(i, 3) * 2.1;
+                dummy.position.set(x, 2, z);
+                dummy.scale.set(s, s * (1.5 + rand(i, 5) * 0.7), s);
+                dummy.rotation.set(0, rand(i, 4) * Math.PI * 2, 0);
+                dummy.updateMatrix();
+                grassRef.current.setMatrixAt(i, dummy.matrix);
+                grassRef.current.setColorAt(i, tones[Math.floor(rand(i, 6) * tones.length) % tones.length]);
+            }
+            grassRef.current.instanceMatrix.needsUpdate = true;
+            if (grassRef.current.instanceColor) grassRef.current.instanceColor.needsUpdate = true;
         }
-        ref.current.instanceMatrix.needsUpdate = true;
-    }, [mapType, active]);
+
+        // Low bushes — faceted green mounds that break the horizon of the field
+        // (distinct from the grey rock props by their colour).
+        if (bushRef.current) {
+            const base = new THREE.Color(plan.bushTone);
+            for (let i = 0; i < plan.bushes; i++) {
+                const x = 30 + rand(i, 11) * (CANVAS_WIDTH - 60);
+                const z = HORIZON_Y + 22 + rand(i, 12) * (CANVAS_HEIGHT - HORIZON_Y - 44);
+                const s = 3.5 + rand(i, 13) * 3.5;
+                dummy.position.set(x, s * 0.55, z);
+                dummy.scale.set(s * 1.3, s, s * 1.3);
+                dummy.rotation.set(0, rand(i, 14) * Math.PI * 2, 0);
+                dummy.updateMatrix();
+                bushRef.current.setMatrixAt(i, dummy.matrix);
+                bushRef.current.setColorAt(i, col.copy(base).offsetHSL(0, 0, (rand(i, 15) - 0.5) * 0.12));
+            }
+            bushRef.current.instanceMatrix.needsUpdate = true;
+            if (bushRef.current.instanceColor) bushRef.current.instanceColor.needsUpdate = true;
+        }
+    }, [mapType, active, plan]);
 
     if (!active) return null;
     return (
-        <instancedMesh ref={ref} args={[undefined as any, undefined as any, COUNT]} frustumCulled={false}>
-            <coneGeometry args={[1.6, 4.5, 5]} />
-            <meshStandardMaterial color={color} roughness={1} />
-        </instancedMesh>
+        <group>
+            <instancedMesh ref={grassRef} args={[undefined as any, undefined as any, plan.tufts]} frustumCulled={false}>
+                <coneGeometry args={[1.6, 4.5, 5]} />
+                <meshStandardMaterial roughness={1} />
+            </instancedMesh>
+            <instancedMesh ref={bushRef} args={[undefined as any, undefined as any, plan.bushes]} frustumCulled={false}>
+                <dodecahedronGeometry args={[1, 0]} />
+                <meshStandardMaterial roughness={1} flatShading />
+            </instancedMesh>
+        </group>
     );
 });
 
@@ -3276,17 +3318,24 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
         mapType === MapType.URBAN       ? '#374151' :
         mapType === MapType.DESERT      ? '#92400e' :
         mapType === MapType.ARCHIPELAGO ? '#1a6b3a' : '#365314';
-    const spotColor =
-        mapType === MapType.URBAN       ? '#4b5563' :
-        mapType === MapType.DESERT      ? '#b45309' :
-        mapType === MapType.ARCHIPELAGO ? '#d97706' : '#14532d'; // sandy beach spots on islands
+    // Two mottle tones — a lighter and a darker patch — dabbed across the field
+    // so the ground reads as uneven earth rather than a flat slab. Kept subtle
+    // (low opacity) so units still pop against it.
+    const [spotLight, spotDark] =
+        mapType === MapType.URBAN       ? ['#4b5563', '#2b3444'] :
+        mapType === MapType.DESERT      ? ['#b45309', '#7c3d0a'] :
+        mapType === MapType.ARCHIPELAGO ? ['#d97706', '#14532d'] : // sandy beach + turf on islands
+                                          ['#4a6b22', '#233d10'];   // countryside: sun-catch turf + damp earth
 
+    // Distributed across the actual play area (not half off-map like before),
+    // alternating tone so patches of light and dark overlap into natural mottle.
     const spots = [];
-    for (let i = 0; i < 60; i++) {
-        const x = (Math.sin(i * 123.45) * 800);
-        const y = (Math.cos(i * 678.90) * 400);
-        const s = 30 + (i % 20);
-        spots.push({ x, y, s });
+    const srand = (i: number, s: number) => { const v = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return v - Math.floor(v); };
+    for (let i = 0; i < 46; i++) {
+        const x = -CANVAS_WIDTH / 2 + srand(i, 1) * CANVAS_WIDTH * 2;
+        const y = -CANVAS_HEIGHT / 2 + srand(i, 2) * CANVAS_HEIGHT * 2;
+        const s = 26 + srand(i, 3) * 40;
+        spots.push({ x, y, s, color: i % 2 === 0 ? spotLight : spotDark });
     }
 
     return (
@@ -3322,7 +3371,7 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
             {spots.map((s, i) => (
                 <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[CANVAS_WIDTH / 2 + s.x, -0.5, CANVAS_HEIGHT / 2 + s.y]}>
                     <circleGeometry args={[s.s, 16]} />
-                    <meshStandardMaterial color={spotColor} transparent opacity={0.4} depthWrite={false} />
+                    <meshStandardMaterial color={s.color} transparent opacity={0.32} depthWrite={false} />
                 </mesh>
             ))}
         </group>
