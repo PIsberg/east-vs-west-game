@@ -2633,6 +2633,24 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                             <ringGeometry args={[markR + 4, markR + 8, 40]} />
                             <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
                         </mesh>
+                        {/* Sandbag barricade ringing the base — reads as a fortified
+                            position, not just another office block (esp. on rural maps) */}
+                        {item.state !== 'burning' && (() => {
+                            const bw = w / 2 + 3, bd = d / 2 + 3, gy = -h / 2 + 2;
+                            const spots: [number, number][] = [[-bw, -bd], [0, -bd], [bw, -bd], [bw, 0], [bw, bd], [0, bd], [-bw, bd], [-bw, 0]];
+                            return spots.map(([sx, sz], i) => (
+                                <group key={`sb${i}`} position={[sx, gy, sz]} rotation={[0, ((i * 37) % 7) * 0.15, 0]}>
+                                    <mesh position={[0, 2, 0]} scale={[1.2, 0.5, 0.9]} castShadow>
+                                        <sphereGeometry args={[4, 8, 6]} />
+                                        <meshStandardMaterial color="#7c6142" roughness={1} />
+                                    </mesh>
+                                    <mesh position={[0.8, 4.4, 0]} scale={[1, 0.45, 0.8]} castShadow>
+                                        <sphereGeometry args={[4, 8, 6]} />
+                                        <meshStandardMaterial color="#6b5238" roughness={1} />
+                                    </mesh>
+                                </group>
+                            ));
+                        })()}
                         {/* Flag on a rooftop pole — team colors when held, a pale
                             neutral pennant when the house is still up for grabs */}
                         <group position={[w * 0.34, h / 2 + (hasSetback ? 13 : 1), d * 0.3]}>
