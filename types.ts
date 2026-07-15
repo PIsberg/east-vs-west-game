@@ -99,7 +99,6 @@ export interface Unit {
   coverEnterTime?: number;
   coverDuration?: number; // How long to stay
   lastCoverId?: string | null; // Don't reuse same cover immediately
-  burstCount?: number; // For burst fire units (Tesla)
   isOnHill?: boolean;
   suppressedUntil?: number; // under fire: keeps its head down (slower, shoots worse)
   squadId?: string;

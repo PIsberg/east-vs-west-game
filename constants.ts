@@ -231,10 +231,12 @@ export const UNIT_CONFIG = {
   [UnitType.TESLA]: {
     cost: 165,
     health: 165,
-    damage: 110,
+    damage: 110,     // primary bolt; arc jumps fall off from here (TESLA_CHAIN_FALLOFF)
     speed: 0.44,
     range: 150,
-    attackSpeed: 200,
+    // One forking chain per shot now, not a 5-round burst — so it recharges a
+    // little faster to keep the coil's cadence lively (was 200).
+    attackSpeed: 160,
     width: 32,
     height: 24,
     colorWest: '#0ea5e9', // Sky Blue
@@ -713,6 +715,15 @@ export const BUNKER_CALL_RANGE = 150;        // infantry told to hold within thi
 export const APC_SQUAD = 3;
 export const APC_DEPLOY_RANGE = 240;    // enemy within this → drop the ramp
 export const APC_DEPLOY_HP = 0.55;      // or when it's taken a beating
+
+// Tesla coil — its bolt forks. A single shot now arcs from the primary target
+// through a knot of nearby troops, each jump weaker than the last, so one coil
+// clears a squad instead of dumping its whole charge into a lone rifleman (the
+// old 5-shot burst overkilled a 20-HP man five times over and did nothing to
+// the mob beside him). Infantry-only, as before.
+export const TESLA_CHAIN_MAX = 4;        // primary target + up to 3 arc jumps
+export const TESLA_CHAIN_FALLOFF = 0.6;  // each jump lands 60% of the previous hit
+export const TESLA_CHAIN_RADIUS = 68;    // an arc reaches the next man within this
 
 // Occupiable buildings: contested strongpoints riflemen can garrison. The house
 // soaks fire for the men inside, so it carries a lot of HP — several tank shells'

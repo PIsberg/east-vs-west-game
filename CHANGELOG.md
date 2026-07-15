@@ -1,5 +1,10 @@
 # Changelog
 
+## The Tesla coil forks its lightning (July 2026)
+
+- **The Tesla coil chains now.** Its bolt used to be a five-round burst that dumped its whole charge into one man — 110 damage a shot into a 20-HP rifleman, over and over, while the squad packed in beside him went untouched. A coil is supposed to punish a *crowd*. So the shot now **forks**: it strikes the nearest man for full damage, then arcs to his nearest neighbour, then the next, up to four troops in a chain, each jump weaker than the last. One coil clears a squad instead of executing a single rifleman five times. The arc can walk clear of the coil's own range as it hops the mob, and it still ignores vehicles entirely — this is the answer to an infantry blob, nothing else.
+- **You can see it work.** The old single blue beam is now a visible zig-zag: a bright bolt to the first target and a spark of thinner arcs jumping man to man through the pack, so a coil catching a tight formation reads at a glance. Recharges a little faster to match its lighter per-shot punch (verified against the CPU-vs-CPU efficiency harness — it lands squarely in the healthy band, a crowd-control specialist rather than a single-target executioner).
+
 ## Orders you can read at a glance (July 2026)
 
 - **Every ordered unit now wears a clear command badge** instead of a tiny coloured dot: a **forward arrow** (green) for attack, a **pause symbol** (amber) for hold, a **back arrow** (red) to fall back. The arrows point the way the unit is headed, so a glance tells you what a selected squad has been told to do.
