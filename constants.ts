@@ -54,9 +54,14 @@ export const UNIT_CONFIG = {
     colorEast: '#7f1d1d',
   },
   [UnitType.SPECIAL_FORCES]: {
-    cost: 150,
-    health: 80,
-    damage: 20,
+    // Elite shock infantry. At the old 150/80/20 they were badly overpriced —
+    // per dollar a plain soldier out-DPS'd and out-HP'd them several times over,
+    // and the balance harness had them stuck at ~0.28 kill-value/$ (healthy band
+    // 0.5-1.5) across runs. Tougher and harder-hitting now so their $ buys the
+    // elite unit it promises, at a slightly lower price.
+    cost: 135,
+    health: 110,
+    damage: 28,
     speed: 0.72,
     range: 180,
     attackSpeed: 20,
