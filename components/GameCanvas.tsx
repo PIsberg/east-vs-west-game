@@ -743,6 +743,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
         return true;
       };
+      // Preferred siting also keeps a house off a hillside and clear of any tree
+      // or rock that would otherwise punch up through its floor/roof. This is the
+      // soft rule — the guarantee pass below drops it so a cramped, hill-choked
+      // map (Desert) still gets its strongpoints rather than none.
+      const hills = t.filter(o => o.type === 'hill');
+      const stumps = t.filter(o => o.type === 'tree' || o.type === 'rock');
+      const clearStrict = (x: number, y: number, w2: number, h2: number) => {
+        if (!clearFor(x, y, w2, h2)) return false;
+        if (hills.some(o => Math.hypot(o.x - x, o.y - y) < (o.size ?? 0) + Math.max(w2, h2) * 0.6)) return false;
+        if (stumps.some(o => Math.abs(o.x - x) < w2 + 8 && Math.abs(o.y - y) < h2 + 8)) return false;
+        return true;
+      };
       let placed = 0;
       for (let i = 0; i < OCCUPIABLE_PER_MAP * 60 && placed < OCCUPIABLE_PER_MAP; i++) {
         // Bias across three vertical lanes so they don't clump on one flank
@@ -752,7 +764,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const y = laneTop + Math.random() * (bandH / 3);
         const size = 20 + Math.random() * 22; // 20–42 footprint
         const width = size * 2.6, height = size * 2.0;
-        if (!clearFor(x, y, width / 2, height / 2)) continue;
+        if (!clearStrict(x, y, width / 2, height / 2)) continue;
         const hp = Math.round(size * BUILDING_HP_PER_SIZE);
         t.push({
           id: gid(), x, y, type: 'building', size, width, height,

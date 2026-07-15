@@ -247,27 +247,39 @@ const RiverMaterial = shaderMaterial(
         return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
     }
 
+    // Two-octave fractal noise — a richer, less regular surface than one layer
+    float fbm(vec2 p) { return 0.62 * noise(p) + 0.38 * noise(p * 2.3 + 5.0); }
+
     void main() {
-      // Flow animation
-      float flowSpeed = 1.5;
-      vec2 uvFlow = vUv;
-      uvFlow.y -= uTime * 0.2; // Flow along Y (along the river path)
+      // Two surface layers drifting downstream at different scales and speeds,
+      // so the water reads as a moving body rather than a field of static specks.
+      float s1 = fbm(vec2(vUv.x * 6.0,  vUv.y * 10.0 - uTime * 0.45));
+      float s2 = fbm(vec2(vUv.x * 3.0 + uTime * 0.12, vUv.y * 5.0 - uTime * 0.22));
+      float surf = mix(s1, s2, 0.5);
 
-      // Generate water surface noise
-      float n1 = noise(uvFlow * 15.0);
-      float n2 = noise(uvFlow * 30.0 + 3.0);
-      float waterNoise = mix(n1, n2, 0.5);
+      // Rounded cross-section: darker/deeper down the middle, lighter at the banks
+      float centre = 1.0 - abs(vUv.x - 0.5) * 2.0;      // 1 mid-channel → 0 at a bank
+      vec3 deep    = uColor * 0.72;
+      vec3 shallow = mix(uColor, uFoamColor, 0.35);
+      vec3 water   = mix(shallow, deep, smoothstep(0.15, 0.8, centre));
 
-      // Foam streaks
-      float foam = step(0.65, waterNoise);
-      
-      // Soft Edges (Alpha Fade)
-      float edgeAlpha = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
+      // Soft ripple highlights — smooth bands, not a hard threshold
+      float ripple = smoothstep(0.55, 0.95, surf);
+      water = mix(water, uFoamColor, ripple * 0.45);
 
-      vec3 finalColor = mix(uColor, uFoamColor, foam * 0.5);
+      // Foam: a line where the water meets the bank, plus the brightest crests
+      float edgeDist = min(vUv.x, 1.0 - vUv.x);
+      float bankFoam = smoothstep(0.34, 0.03, edgeDist) * (0.55 + 0.45 * surf);
+      float crest    = smoothstep(0.84, 0.99, surf);
+      water = mix(water, uFoamColor, clamp(bankFoam * 0.7 + crest * 0.6, 0.0, 1.0));
 
-      // Transparency
-      gl_FragColor = vec4(finalColor, 0.85 * edgeAlpha);
+      // Sparse moving sun-glints
+      float glint = smoothstep(0.9, 1.0, noise(vec2(vUv.x * 13.0, vUv.y * 22.0 - uTime * 0.8)));
+      water += glint * 0.22;
+
+      // Soft edges so the channel melts into its banks
+      float edgeAlpha = smoothstep(0.0, 0.16, vUv.x) * smoothstep(1.0, 0.84, vUv.x);
+      gl_FragColor = vec4(water, 0.92 * edgeAlpha);
     }
   `
 );

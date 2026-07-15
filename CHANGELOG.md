@@ -1,5 +1,10 @@
 # Changelog
 
+## Rivers that flow, houses on solid ground (July 2026)
+
+- **The water actually looks like water now.** The river shader dumped a hard on/off foam threshold over a flat blue fill — it read as TV static on a painted strip. It's been rebuilt: two noise layers drift downstream at different speeds so the surface *moves*, the channel is darker and deeper down its middle and lightens toward the banks (a rounded cross-section instead of a flat slab), a **foam line** traces where the water meets the land, soft ripple highlights replace the hard specks, and sparse sun-glints drift across it. The islands' straits use the same shader in a deeper ocean blue.
+- **Strongpoints stop perching on hilltops.** House placement only ever avoided water and other buildings, so a strongpoint could spawn straddling a hillside or with a tree or boulder punching up through its floor. The preferred siting now keeps a house clear of hills, trees and rocks; the guarantee pass that seeds a cramped, hill-choked map still relaxes the rule so you never end up with zero strongpoints.
+
 ## The ground comes alive (July 2026)
 
 - **The battlefield was a flat green slab; now it's a field.** The terrain used to be one solid colour with a scattering of 140 identical dark tufts — read as a painted plane, not ground. It's now planted: denser grass in **three tones** per map so the turf mottles instead of reading flat, blades at **varied heights**, and a scattering of **low faceted bushes** that break the horizon and give the field depth (coloured apart from the grey rock props so they don't read as boulders). The base ground gained gentle **two-tone patches** — sun-catch turf over damp earth — spread across the actual play area instead of half off-map.
