@@ -1,5 +1,10 @@
 # Changelog
 
+## Orders you can read at a glance (July 2026)
+
+- **Every ordered unit now wears a clear command badge** instead of a tiny coloured dot: a **forward arrow** (green) for attack, a **diamond** (amber) for hold, a **back arrow** (red) to fall back. The arrows point the way the unit is headed, so a glance tells you what a selected squad has been told to do.
+- **Held infantry hunker down.** Tell troops to hold (or let them dig in) and they drop into a low crouch where they stand, so a defensive line reads as men gone to ground rather than standing around waiting.
+
 ## Single-player fills the screen; aircraft get their own shelf (July 2026)
 
 - **The enemy's spawn panel is gone in single-player.** Those buttons were always disabled — you can't build for the CPU — so they were just a dead column eating a third of the width. A spawn panel now shows only for a *human* side: one panel in single-player (two in local 2-player, none when spectating), and the battlefield fills the reclaimed space. That's the difference between the game fitting a phone in landscape and only fitting a tablet or PC.

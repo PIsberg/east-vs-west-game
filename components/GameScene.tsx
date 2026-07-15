@@ -952,8 +952,13 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
         a.fadeIn(0.12).play();
         return () => { a.fadeOut(0.12); };
     }, [actions, clip, unit.id]);
+    // Told to hold (or already dug in) → hunker down: the soldier drops into a
+    // low crouch, so a held line reads as a line of men gone to ground rather
+    // than standing around. Squashing toward the feet keeps his boots planted.
+    const hunkered = (unit.orders === 'hold' || unit.isEntrenched) && unit.state !== UnitState.MOVING;
     return (
-        <group ref={group} rotation={[0, Math.PI / 2, 0]} scale={scale}>
+        <group ref={group} rotation={[0, Math.PI / 2, 0]}
+            scale={hunkered ? [scale, scale * 0.62, scale] : scale}>
             <primitive object={obj} />
         </group>
     );
@@ -1672,12 +1677,33 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         />
                     </mesh>
                 )}
-                {unit.orders && (
-                    <mesh position={[0, unit.height + 16, 0]}>
-                        <sphereGeometry args={[2, 6, 5]} />
-                        <meshBasicMaterial color={unit.orders === 'advance' ? '#22c55e' : unit.orders === 'hold' ? '#f59e0b' : '#ef4444'} toneMapped={false} />
-                    </mesh>
-                )}
+                {/* Per-unit order badge: a shape you can read at a glance, not just
+                    a coloured dot. A chevron points the way the unit is ordered to
+                    move (forward = advance, back = fall back); a diamond means hold.
+                    A dark backing plate keeps it legible against any terrain. */}
+                {unit.orders && (() => {
+                    const oc = unit.orders === 'advance' ? '#22c55e' : unit.orders === 'hold' ? '#f59e0b' : '#ef4444';
+                    const oy = (unit.height || 16) + 17;
+                    if (unit.orders === 'hold') {
+                        return (
+                            <group position={[0, oy, 0]}>
+                                <mesh rotation={[0, Math.PI / 4, Math.PI / 4]}>
+                                    <boxGeometry args={[3.6, 3.6, 3.6]} />
+                                    <meshBasicMaterial color={oc} toneMapped={false} />
+                                </mesh>
+                            </group>
+                        );
+                    }
+                    // advance / retreat → a chevron pointing where it's headed
+                    const fwd = unit.team === Team.WEST ? 1 : -1;
+                    const dir = unit.orders === 'advance' ? fwd : -fwd;
+                    return (
+                        <mesh position={[0, oy, 0]} rotation={[0, 0, dir > 0 ? -Math.PI / 2 : Math.PI / 2]}>
+                            <coneGeometry args={[2.8, 6, 4]} />
+                            <meshBasicMaterial color={oc} toneMapped={false} />
+                        </mesh>
+                    );
+                })()}
                 {/* Pinned by incoming fire: dust kicked around his boots. Without a
                     cue, suppression is an invisible mechanic — the player just sees
                     his troops mysteriously bog down. */}
