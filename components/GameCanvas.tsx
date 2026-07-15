@@ -56,7 +56,17 @@ import {
   BUNKER_GARRISON_DAMAGE,
   BUNKER_GARRISON_RELOAD,
   BUNKER_GARRISON_RANGE,
-  BUNKER_CALL_RANGE
+  BUNKER_CALL_RANGE,
+  OCCUPIABLE_PER_MAP,
+  BUILDING_HP_PER_SIZE,
+  BUILDING_ENTRY_RANGE,
+  BUILDING_FIRE_RANGE,
+  BUILDING_FIRE_COOLDOWN,
+  BUILDING_MAX_GUNS,
+  BUILDING_GARRISON_DAMAGE,
+  BUILDING_COLLAPSE_SURVIVE,
+  BUILDING_NAPALM_BURN,
+  buildingCapacity,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -81,6 +91,13 @@ const TRANSPORTABLE = new Set([
 // around it), and a bunker standing next to him would otherwise swallow him the
 // moment he was told to hold.
 const GARRISONS = (t: UnitType) => TRANSPORTABLE.has(t) && t !== UnitType.ENGINEER;
+
+// Foot units that occupy houses. It's the line infantry — riflemen, snipers,
+// special forces, paratroopers. Engineers and medics have jobs to do out in the
+// open and no business boarding up in a window, so they walk past.
+const OCCUPIES_BUILDING = (t: UnitType) =>
+  t === UnitType.SOLDIER || t === UnitType.SNIPER ||
+  t === UnitType.SPECIAL_FORCES || t === UnitType.AIRBORNE;
 
 // Foot units that can dig in while holding position
 const ENTRENCHABLE = new Set([
@@ -153,7 +170,12 @@ const MiniMap: React.FC<{
           ctx.arc(mx(t.x), my(t.y), Math.max(1.5, t.size * sx * 0.55), 0, Math.PI * 2);
           ctx.fill();
         } else if (t.type === 'building') {
-          ctx.fillStyle = 'rgba(120, 113, 108, 0.55)';
+          // Occupied strongpoints fly their holder's color; rubble goes dark
+          ctx.fillStyle = t.state === 'burnt' ? 'rgba(41, 37, 36, 0.7)'
+            : t.occupant === Team.WEST ? 'rgba(96, 165, 250, 0.8)'
+            : t.occupant === Team.EAST ? eastUi
+            : t.occupiable ? 'rgba(214, 211, 209, 0.7)'
+            : 'rgba(120, 113, 108, 0.55)';
           const s = Math.max(1.5, (t.width ?? t.size) * sx * 0.7);
           ctx.fillRect(mx(t.x) - s / 2, my(t.y) - s / 2, s, s);
         }
@@ -647,18 +669,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const span = CANVAS_HEIGHT - HORIZON_Y - 130;
       t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.28 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
       t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.72 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
-      // Buildings both sides
+      // City blocks both sides. Kept a touch sparser and better-spaced than the
+      // old grid: 13-a-side with tight gaps funnelled tanks into dead-ends and
+      // wedged them (~11% of 3s windows went nowhere). Wider spacing leaves
+      // driveable streets between blocks while still reading as a dense city.
       const placeBuilding = (xMin: number, xMax: number) => {
-        for (let attempt = 0; attempt < 10; attempt++) {
+        for (let attempt = 0; attempt < 14; attempt++) {
           const x = xMin + Math.random() * (xMax - xMin);
           const y = HORIZON_Y + 22 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 44);
-          const size = 18 + Math.random() * 24;
-          if (!avoidCheck(x, y, size, wallSegs, 30) && !t.some(o => o.type === 'building' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < size + (o.size || 0) + 65))
+          const size = 18 + Math.random() * 22;
+          if (!avoidCheck(x, y, size, wallSegs, 34) && !t.some(o => o.type === 'building' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < size + (o.size || 0) + 84))
             { t.push({ id: gid(), x, y, type: 'building', size, width: size * 2.6, height: size * 2.0 }); return; }
         }
       };
-      for (let i = 0; i < 13; i++) placeBuilding(22, wallX - 28);
-      for (let i = 0; i < 13; i++) placeBuilding(wallX + 28, CANVAS_WIDTH - 22);
+      for (let i = 0; i < 10; i++) placeBuilding(22, wallX - 28);
+      for (let i = 0; i < 10; i++) placeBuilding(wallX + 28, CANVAS_WIDTH - 22);
       // Rubble mounds (small hills = elevation bonus)
       placeHills(2, 35, wallX - 50, wallSegs, 40);
       placeHills(2, wallX + 50, CANVAS_WIDTH - 35, wallSegs, 40);
@@ -693,6 +718,64 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeTrees(5, ch2x + seaWidth / 2 + 20, CANVAS_WIDTH - 25, allR);
       placeRocks(12, 25, CANVAS_WIDTH - 25, allR);
       placeHills(2, ch1x + seaWidth / 2 + 30, ch2x - seaWidth / 2 - 30, allR);
+    }
+
+    // Occupiable buildings: infantry strongpoints seeded across the contested
+    // middle band of every map (not in either spawn zone), so both sides can
+    // race to garrison them. Sizes vary → capacity and HP vary. On URBAN these
+    // sit among the decorative blocks; elsewhere they're the only structures.
+    {
+      const riverSegs = t.filter(o => o.type === 'river');
+      const xMinBand = CANVAS_WIDTH * 0.28, xMaxBand = CANVAS_WIDTH * 0.72;
+      const bandTop = HORIZON_Y + 40, bandH = CANVAS_HEIGHT - HORIZON_Y - 80;
+      // A house can't sit on water, a bridge or another building. It CAN sit on
+      // open ground near a dune — checking hills too let a dune-heavy map (Desert)
+      // reject every spot and place zero strongpoints. Water/building clearance is
+      // the only hard rule.
+      const clearFor = (x: number, y: number, w2: number, h2: number) => {
+        if (riverSegs.some(s => Math.abs(s.x - x) < (s.width ?? 40) / 2 + w2 + 8 && Math.abs(s.y - y) < (s.height ?? 22) / 2 + h2 + 8)) return false;
+        if (t.some(o => o.type === 'bridge' && Math.abs(o.x - x) < (o.width || 60) / 2 + w2 + 12 && Math.abs(o.y - y) < (o.height || 40) / 2 + h2 + 12)) return false;
+        if (t.some(o => o.type === 'building' &&
+          Math.abs(o.x - x) < (o.width || o.size * 2.6) / 2 + w2 + 26 &&
+          Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
+        return true;
+      };
+      let placed = 0;
+      for (let i = 0; i < OCCUPIABLE_PER_MAP * 60 && placed < OCCUPIABLE_PER_MAP; i++) {
+        // Bias across three vertical lanes so they don't clump on one flank
+        const lane = placed % 3;
+        const laneTop = bandTop + lane * (bandH / 3);
+        const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
+        const y = laneTop + Math.random() * (bandH / 3);
+        const size = 20 + Math.random() * 22; // 20–42 footprint
+        const width = size * 2.6, height = size * 2.0;
+        if (!clearFor(x, y, width / 2, height / 2)) continue;
+        const hp = Math.round(size * BUILDING_HP_PER_SIZE);
+        t.push({
+          id: gid(), x, y, type: 'building', size, width, height,
+          occupiable: true, capacity: buildingCapacity(size),
+          occupant: null, garrisonUnits: [], state: 'normal',
+          health: hp, maxHealth: hp, fireCooldown: 0,
+        });
+        placed++;
+      }
+      // Guarantee at least a couple of strongpoints even on a cramped map: relax
+      // the lane bias and scan the whole band for any water/building-free spot.
+      for (let i = 0; placed < Math.min(2, OCCUPIABLE_PER_MAP) && i < 400; i++) {
+        const size = 20 + Math.random() * 16;
+        const width = size * 2.6, height = size * 2.0;
+        const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
+        const y = bandTop + Math.random() * bandH;
+        if (!clearFor(x, y, width / 2, height / 2)) continue;
+        const hp = Math.round(size * BUILDING_HP_PER_SIZE);
+        t.push({
+          id: gid(), x, y, type: 'building', size, width, height,
+          occupiable: true, capacity: buildingCapacity(size),
+          occupant: null, garrisonUnits: [], state: 'normal',
+          health: hp, maxHealth: hp, fireCooldown: 0,
+        });
+        placed++;
+      }
     }
 
     // Battlefield props: a handful of supply crates & fuel barrels scattered
@@ -1110,12 +1193,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     };
 
-    // Explosive damage to bridges; collapse blocks crossings until repaired
-    const damageBridges = (x: number, y: number, radius: number, dmg: number) => {
+    // Chip HP off a manned building and kick dust/debris off the wall. Collapse
+    // itself is resolved in the building pass once health reaches 0.
+    const damageBuilding = (b: TerrainObject, dmg: number, hx: number, hy: number) => {
+      if (b.state === 'burnt') return;
+      b.health = (b.health ?? 0) - dmg;
+      const n = 2 + Math.round(Math.min(dmg, 60) / 20);
+      for (let k = 0; k < n; k++) {
+        particlesRef.current.push({
+          id: generateId(),
+          position: { x: hx + (Math.random() - 0.5) * 12, y: hy + (Math.random() - 0.5) * 10 },
+          velocity: { x: (Math.random() - 0.5) * 1.6, y: -Math.random() * 1.3 },
+          drag: 0.9, life: 20 + Math.random() * 8,
+          color: k % 2 === 0 ? '#a8a29e' : '#78716c', size: 2.5 + Math.random() * 2.8,
+          alt: 3 + Math.random() * 8, altVel: 0.5,
+        });
+      }
+    };
+
+    // Explosive damage to bridges; collapse blocks crossings until repaired.
+    // `levelsBuildings` (air-delivered ordnance — airstrikes, missile strikes,
+    // nukes, cruise) flattens ANY house in the blast, empty or manned; ground
+    // splash only chews a house that's actually garrisoned.
+    const damageBridges = (x: number, y: number, radius: number, dmg: number, levelsBuildings = false) => {
       // Props caught in any blast break too
       terrainRef.current.forEach(p => {
         if ((p.type !== 'crate' && p.type !== 'barrel') || p.state === 'broken') return;
         if (Math.abs(p.x - x) < radius + p.size && Math.abs(p.y - y) < radius + p.size) breakProp(p);
+      });
+      // Buildings caught in a blast take structural damage
+      terrainRef.current.forEach(b => {
+        if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+        if (b.occupant == null && !levelsBuildings) return; // empty house shrugs off ground splash
+        const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
+        if (Math.abs(b.x - x) < radius + bw && Math.abs(b.y - y) < radius + bh) damageBuilding(b, dmg, b.x, b.y);
       });
       terrainRef.current.forEach(b => {
         if (b.type !== 'bridge' || b.state === 'broken') return;
@@ -1426,8 +1537,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           size: isNuke ? 170 : m.isCruise ? 72 : 42,
           isGroundDecal: true
         });
-        // Bridges in the blast take structural damage (nuke capped to its epicenter)
-        damageBridges(m.target.x, m.target.y, Math.min(radius || 60, 300), damage || 200);
+        // Bridges in the blast take structural damage (nuke capped to its
+        // epicenter); a missile/nuke/cruise strike also levels any house it hits.
+        damageBridges(m.target.x, m.target.y, Math.min(radius || 60, 300), damage || 200, true);
         // Explosion particles ( Standard )
         if (!isNuke) {
           particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fde68a', size: (radius || 60) * 1.4, isShockwave: true });
@@ -1799,6 +1911,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
           }
         });
+        // The fire also eats any house it's burning on — an airstrike (from
+        // either side) can level a strongpoint, garrisoned or empty. Raw HP over
+        // the ~5s burn; the napalm's own flames and the building's burning state
+        // carry the visuals (no per-tick dust — it would swamp the particle budget).
+        terrainRef.current.forEach(b => {
+          if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+          const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
+          if (Math.abs(b.x - unit.position.x) < burnRadius + bw && Math.abs(b.y - unit.position.y) < burnRadius + bh) {
+            b.health = (b.health ?? 0) - BUILDING_NAPALM_BURN;
+          }
+        });
         return;
       }
 
@@ -2061,6 +2184,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (home) {
             const a = Math.atan2(home.position.y - unit.position.y, home.position.x - unit.position.x);
             moveX = Math.cos(a) * config.speed;
+            moveY = Math.sin(a) * config.speed;
+          }
+        }
+
+        // Medics work from the rear, not the firing line. They used to advance
+        // shoulder-to-shoulder with the assault and die at the front (~96% losses)
+        // having healed no one — and "chase the nearest wounded" only made it
+        // worse, because the wounded ARE at the front. A medic now trails the
+        // push at a walk and only side-steps to a casualty that's level with it
+        // or fallen back (never forward into the fight), so it survives to keep
+        // the reserve patched up.
+        if (unit.type === UnitType.MEDIC && stance === 'advance' && !unit.boarded) {
+          const fwd = unit.team === Team.WEST ? 1 : -1;
+          moveX *= 0.3; // trail — never lead the charge
+          let patient: Unit | null = null, pd = 200;
+          spatialHash.current.queryCallback(unit.position.x, unit.position.y, 200, o => {
+            if (o.team !== unit.team || o.id === unit.id || o.boarded || o.health <= 0 || o.health >= o.maxHealth) return;
+            if ((UNIT_CONFIG[o.type] as any).isFlying) return;
+            // don't chase a casualty deeper toward the enemy than we already are
+            if (fwd > 0 ? o.position.x > unit.position.x + 25 : o.position.x < unit.position.x - 25) return;
+            const d = Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y);
+            if (d < pd) { pd = d; patient = o; }
+          });
+          if (patient) {
+            const p = patient as Unit;
+            const a = Math.atan2(p.position.y - unit.position.y, p.position.x - unit.position.x);
+            moveX = Math.cos(a) * config.speed;   // toward a safe (rearward/level) casualty
             moveY = Math.sin(a) * config.speed;
           }
         }
@@ -2591,6 +2741,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
               projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
+            } else {
+              // Sky's clear — depress the guns and rake enemy infantry. Flak
+              // shreds soft targets but can't punch armour, and on the ground it
+              // reaches far less than into the air, so it's a useful second job
+              // (never a wasted buy against a foe with no aircraft), not a
+              // super-soldier that outclasses dedicated ground units.
+              const groundRange = Math.min(range, 190 * currentScale * fogPenalty);
+              let gt: Unit | null = null, gd = groundRange;
+              spatialHash.current.queryCallback(unit.position.x, unit.position.y, groundRange, o => {
+                if (o.team === unit.team || o.health <= 0) return;
+                if ((UNIT_CONFIG[o.type] as any).isFlying || isMechanical(o.type)) return; // infantry only
+                if (o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return;
+                if (smokeBlocked(unit, o)) return;
+                const d = Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y);
+                if (d < gd) { gd = d; gt = o; }
+              });
+              if (gt) {
+                const t = gt as Unit;
+                const a = Math.atan2(t.position.y - unit.position.y, t.position.x - unit.position.x) + spreadAtRange(unit.type, gd, groundRange);
+                projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult * 0.5, maxRange: groundRange, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                unit.attackCooldown = Math.round(config.attackSpeed * vetReload);
+                fireFx(unit, a); soundService.playRifleShot();
+              }
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
@@ -2630,6 +2803,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     });
                   }
                 }
+              }
+            });
+            // The same cover-ignoring flame licks any manned enemy house it's up
+            // against — the cheap, close-up way to burn a garrison out (the
+            // airstrike is the standoff version). A strongpoint is no shelter from
+            // fire pouring through the windows.
+            terrainRef.current.forEach(b => {
+              if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+              if (b.occupant == null || b.occupant === unit.team) return;
+              const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
+              const dx = Math.max(Math.abs(unit.position.x - b.x) - bw, 0);
+              const dy = Math.max(Math.abs(unit.position.y - b.y) - bh, 0);
+              if (Math.hypot(dx, dy) < range) {
+                b.health = (b.health ?? 0) - config.damage * vetMult * 1.5; // fire eats structure fast
+                fired = true;
+                for (let fp = 0; fp < 2; fp++) particlesRef.current.push({
+                  id: generateId(),
+                  position: { x: b.x + (Math.random() - 0.5) * bw, y: b.y + (Math.random() - 0.5) * bh },
+                  velocity: { x: (Math.random() - 0.5) * 1.2, y: -Math.random() * 1.4 },
+                  drag: 0.9, life: 18 + Math.random() * 10,
+                  color: Math.random() > 0.4 ? '#f97316' : '#fbbf24', size: 4 + Math.random() * 4,
+                  alt: 4 + Math.random() * 8, altVel: 0.5,
+                });
               }
             });
             if (fired) { soundService.playFlameSound(); unit.attackCooldown = Math.round(config.attackSpeed * vetReload); }
@@ -2801,6 +2997,52 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ) || null;
             }
 
+            // Indirect fire (artillery, mortar) walks its shell onto the DENSEST
+            // cluster in range rather than the nearest man — the whole point of an
+            // area weapon is to catch several at once. Only overrides the general
+            // pass when it actually spots a knot of two or more.
+            if (!target && INDIRECT.has(unit.type)) {
+              const blast = config.explosionRadius || 50;
+              const inRange = potentialTargets.filter(o => o.team !== unit.team && o.health > 0 &&
+                !(UNIT_CONFIG[o.type] as any).isFlying &&
+                o.type !== UnitType.NAPALM && o.type !== UnitType.MINE_PERSONAL && o.type !== UnitType.MINE_TANK &&
+                !smokeBlocked(unit, o) &&
+                Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) < range);
+              let best: Unit | null = null, bestCount = 1;
+              for (const c of inRange) {
+                let count = 0;
+                for (const o of inRange) if (Math.hypot(o.position.x - c.position.x, o.position.y - c.position.y) < blast) count++;
+                if (count > bestCount) { bestCount = count; best = c; }
+              }
+              if (best) target = best;
+            }
+
+            // Sniper's eye: a marksman spends his slow, powerful shot on the most
+            // valuable soft target in view — an enemy sniper, special-forces
+            // trooper, medic, engineer or mortar crew — not the nearest rifleman.
+            // He ignores armour (the round pings off) and only falls through to
+            // the general pass if there's no worthwhile mark. This is what makes a
+            // sniper feel like a sniper instead of an expensive, slow rifle.
+            if (!target && unit.type === UnitType.SNIPER) {
+              let best: Unit | null = null, bestVal = -1;
+              for (const o of potentialTargets) {
+                if (o.team === unit.team || o.health <= 0) continue;
+                if ((UNIT_CONFIG[o.type] as any).isFlying || isMechanical(o.type)) continue;
+                if (o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) continue;
+                if (smokeBlocked(unit, o)) continue;
+                if (Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) > range) continue;
+                // Worth = unit cost, with a bump for the high-value support/elite
+                // roles a marksman most wants gone (killing the medic hurts more
+                // than its price tag). Wounded marks are finished off first.
+                const prime = (o.type === UnitType.SNIPER || o.type === UnitType.SPECIAL_FORCES ||
+                  o.type === UnitType.MEDIC || o.type === UnitType.ENGINEER || o.type === UnitType.MORTAR) ? 60 : 0;
+                const woundBonus = o.health < o.maxHealth ? 25 : 0;
+                const v = ((UNIT_CONFIG[o.type] as any).cost || 0) + prime + woundBonus;
+                if (v > bestVal) { bestVal = v; best = o; }
+              }
+              if (best) target = best;
+            }
+
             // Primary pass: ground targets (all unit types)
             if (!target) {
               target = potentialTargets.find(o => {
@@ -2825,6 +3067,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   return Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range;
                 }) || null;
               }
+            }
+
+            // Last resort: a manned enemy strongpoint with its defenders tucked
+            // inside and nothing else showing. Shoot the house to burn them out.
+            // Direct-fire ground weapons only — aircraft have better uses.
+            if (!target && unit.type !== UnitType.HELICOPTER && unit.type !== UnitType.FIGHTER && unit.type !== UnitType.DRONE) {
+              let bBest = range, bx = 0, by = 0, found = false;
+              for (const b of terrainRef.current) {
+                if (b.type !== 'building' || !b.occupiable || b.state === 'burnt' || b.occupant == null || b.occupant === unit.team) continue;
+                const dx = Math.max(Math.abs(unit.position.x - b.x) - (b.width || b.size * 2.6) / 2, 0);
+                const dy = Math.max(Math.abs(unit.position.y - b.y) - (b.height || b.size * 2.0) / 2, 0);
+                const d = Math.hypot(dx, dy);
+                if (d < bBest) { bBest = d; bx = b.x; by = b.y; found = true; }
+              }
+              if (found) target = { position: { x: bx, y: by }, type: UnitType.SOLDIER } as unknown as Unit;
             }
 
             if (target) {
@@ -2936,6 +3193,190 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
+    // ── Occupiable buildings ─────────────────────────────────────────────────
+    // Houses infantry can fortify. The first riflemen to reach a free house
+    // capture it (a flag goes up); friendly riflemen reinforce up to capacity;
+    // the men shelter inside (removed from the field) while the structure soaks
+    // fire on their behalf; the garrison shoots back out of the windows. Each
+    // time a shell knocks the house down a damage stage the shaken garrison is
+    // driven out into the open and the position is up for grabs again — so a
+    // strongpoint changes hands as it's chewed down. When it finally collapses
+    // most of whoever's inside dies in the rubble. Empty houses are
+    // indestructible cover — only a manned one is a target.
+    //
+    // Put the garrison back on the field. `survive` (0..1) is the per-man
+    // chance of making it out (undefined = all live); `pushClear` shoves them
+    // out the back beyond the entry radius so they don't just walk straight
+    // back in before the other side gets its chance. Returns the number lost.
+    const spillGarrison = (bld: TerrainObject, opts: { survive?: number, healthMult: number, pushClear?: boolean }): number => {
+      const g = bld.garrisonUnits || [];
+      const hw = (bld.width || bld.size * 2.6) / 2;
+      let lost = 0;
+      g.forEach((p, idx) => {
+        if (opts.survive != null && Math.random() >= opts.survive) { lost++; return; }
+        p.boarded = false;
+        p.health = Math.max(1, Math.floor(p.maxHealth * opts.healthMult));
+        p.lastHitTime = Date.now();
+        p.state = UnitState.MOVING;
+        p.suppressedUntil = 0;
+        const back = p.team === Team.WEST ? -1 : 1;
+        const outX = opts.pushClear ? (hw + BUILDING_ENTRY_RANGE + 18 + idx * 3) : (hw + 10 + idx * 4);
+        p.position.x = Math.max(10, Math.min(CANVAS_WIDTH - 10, bld.x + back * outX));
+        p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, bld.y + ((idx % 5) - 2) * 12));
+        if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
+      });
+      bld.garrisonUnits = [];
+      return lost;
+    };
+
+    terrainRef.current.forEach(bld => {
+      if (bld.type !== 'building' || !bld.occupiable || bld.state === 'burnt') return;
+      bld.garrisonUnits = bld.garrisonUnits || [];
+      const hw = (bld.width || bld.size * 2.6) / 2;
+      const hd = (bld.height || bld.size * 2.0) / 2;
+
+      // Entry / capture: riflemen at the wall file inside. A free house is taken
+      // by whoever gets there first; a held house admits only its own team.
+      const cap = bld.capacity || 0;
+      if (bld.garrisonUnits.length < cap) {
+        spatialHash.current.queryCallback(bld.x, bld.y, Math.max(hw, hd) + BUILDING_ENTRY_RANGE, o => {
+          if (bld.garrisonUnits!.length >= cap) return;
+          if (o.boarded || o.health <= 0 || !OCCUPIES_BUILDING(o.type)) return;
+          // A paratrooper still under canopy can't duck into a doorway
+          if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return;
+          if (Math.abs(o.position.x - bld.x) > hw + BUILDING_ENTRY_RANGE ||
+              Math.abs(o.position.y - bld.y) > hd + BUILDING_ENTRY_RANGE) return;
+          if (bld.occupant == null) {
+            bld.occupant = o.team;
+            pushEvent('capture', `${teamName(o.team)} infantry occupy a strongpoint`, o.team);
+            soundService.playSpawnSound(o.team === Team.EAST);
+            // Flag-raise flourish: a puff of team-coloured motes rises off the roof
+            const flag = o.team === Team.WEST ? '#3b82f6' : '#ef4444';
+            for (let k = 0; k < 10; k++) {
+              particlesRef.current.push({
+                id: generateId(),
+                position: { x: bld.x + (Math.random() - 0.5) * hw, y: bld.y - hd * 0.5 },
+                velocity: { x: (Math.random() - 0.5) * 0.5, y: -0.3 }, drag: 0.95,
+                life: 26 + Math.random() * 14, color: k % 3 === 0 ? '#ffffff' : flag,
+                size: 3 + Math.random() * 3, alt: hd + Math.random() * 12, altVel: 0.9,
+              });
+            }
+          } else if (bld.occupant !== o.team) {
+            return; // enemy house — they have to burn it down, not walk in
+          }
+          o.boarded = true;
+          o.isInCover = false;
+          o.isEntrenched = false;
+          o.suppressedUntil = 0;
+          bld.garrisonUnits!.push(o);
+        });
+      }
+
+      // Emptied out (collapse spill / wipe) → reverts to neutral so the other
+      // side can take it.
+      if (bld.occupant && bld.garrisonUnits.length === 0) bld.occupant = null;
+
+      // Defensive fire: the garrison shoots the nearest enemy through the windows.
+      if (bld.occupant && bld.garrisonUnits.length > 0) {
+        bld.fireCooldown = (bld.fireCooldown || 0) - 1;
+        if (bld.fireCooldown <= 0) {
+          let target: Unit | null = null;
+          let best = BUILDING_FIRE_RANGE;
+          spatialHash.current.queryCallback(bld.x, bld.y, BUILDING_FIRE_RANGE, o => {
+            if (o.team === bld.occupant || o.health <= 0) return;
+            if ((UNIT_CONFIG[o.type] as any).isFlying) return;
+            if (o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return;
+            const d = Math.hypot(o.position.x - bld.x, o.position.y - bld.y);
+            if (d < best) { best = d; target = o; }
+          });
+          if (target) {
+            const tgt = target as Unit;
+            const guns = Math.min(bld.garrisonUnits.length, BUILDING_MAX_GUNS);
+            const baseA = Math.atan2(tgt.position.y - bld.y, tgt.position.x - bld.x);
+            const sp = roundSpeed(UnitType.SOLDIER);
+            const ex = bld.x + Math.cos(baseA) * (hw + 4);
+            const ey = bld.y + Math.sin(baseA) * (hd + 4);
+            for (let g = 0; g < guns; g++) {
+              const spread = (Math.random() - 0.5) * 0.16;
+              projectilesRef.current.push({
+                id: generateId(), team: bld.occupant!,
+                position: { x: ex + (Math.random() - 0.5) * hw * 0.5, y: ey },
+                velocity: { x: Math.cos(baseA + spread) * sp, y: Math.sin(baseA + spread) * sp },
+                damage: BUILDING_GARRISON_DAMAGE, maxRange: BUILDING_FIRE_RANGE, distanceTraveled: 0,
+                targetType: 'ground', sourceType: UnitType.SOLDIER,
+              });
+            }
+            particlesRef.current.push({ id: generateId(), position: { x: ex, y: ey }, life: 6, color: '#fde68a', size: 3 });
+            soundService.playRifleShot();
+            bld.fireCooldown = BUILDING_FIRE_COOLDOWN;
+          }
+        }
+      }
+
+      // Damage states track structural integrity; 0 HP collapses the house.
+      if ((bld.health ?? 0) <= 0) {
+        const held = bld.occupant;
+        const buried = spillGarrison(bld, { survive: BUILDING_COLLAPSE_SURVIVE, healthMult: 0.35 });
+        if (held) {
+          statsRef.current[held].lost += buried;
+          pushEvent('capture', `${teamName(held)} strongpoint collapses`, held);
+        }
+        bld.state = 'burnt';
+        bld.occupant = null;
+        bld.health = 0;
+        soundService.playLargeExplosion();
+        shakeRef.current = Math.max(shakeRef.current, 6);
+        for (let k = 0; k < 18; k++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: bld.x + (Math.random() - 0.5) * (bld.width || 40), y: bld.y + (Math.random() - 0.5) * (bld.height || 30) },
+            velocity: { x: (Math.random() - 0.5) * 2.2, y: (Math.random() - 0.5) * 2.2 },
+            drag: 0.9, life: 40 + Math.random() * 30,
+            color: k % 3 === 0 ? '#78716c' : k % 3 === 1 ? '#57534e' : '#292524',
+            size: 5 + Math.random() * 8, alt: 4 + Math.random() * 14, altVel: 0.8 + Math.random() * 0.8,
+          });
+        }
+        particlesRef.current.push({ id: generateId(), position: { x: bld.x, y: bld.y }, life: 600, color: '#292524', size: (bld.width || 40) * 0.7, isGroundDecal: true });
+      } else {
+        const frac = (bld.health ?? 0) / (bld.maxHealth || 1);
+        const newState = frac > 0.6 ? 'normal' : frac > 0.3 ? 'broken' : 'burning';
+        // Crossing into a worse stage (normal→broken, broken→burning) blows the
+        // garrison out into the open, shaken but alive, and hands the position
+        // back to whoever reaches it next — the enemy assaulting it, or the
+        // defenders scrambling back in. (Collapse, above, is the lethal stage.)
+        if (newState !== bld.state && (newState === 'broken' || newState === 'burning') && bld.garrisonUnits.length > 0) {
+          const held = bld.occupant;
+          spillGarrison(bld, { healthMult: 0.6, pushClear: true });
+          bld.occupant = null;
+          bld.fireCooldown = 0;
+          if (held) pushEvent('capture', `${teamName(held)} driven out of a crumbling strongpoint`, held);
+          soundService.playCrackSound();
+          shakeRef.current = Math.max(shakeRef.current, 3);
+          for (let k = 0; k < 12; k++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: bld.x + (Math.random() - 0.5) * (bld.width || 40), y: bld.y + (Math.random() - 0.5) * (bld.height || 30) },
+              velocity: { x: (Math.random() - 0.5) * 1.8, y: (Math.random() - 0.5) * 1.8 },
+              drag: 0.9, life: 30 + Math.random() * 20,
+              color: k % 2 === 0 ? '#a8a29e' : '#78716c',
+              size: 4 + Math.random() * 6, alt: 3 + Math.random() * 12, altVel: 0.7,
+            });
+          }
+        }
+        bld.state = newState;
+        // A house on fire coughs smoke so its state reads at a glance
+        if (bld.state === 'burning' && tickCountRef.current % 8 === 0) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: bld.x + (Math.random() - 0.5) * (bld.width || 40) * 0.7, y: bld.y - hd * 0.4 },
+            velocity: { x: (Math.random() - 0.5) * 0.4, y: -0.3 }, drag: 0.96,
+            life: 40 + Math.random() * 20, color: Math.random() > 0.5 ? '#44403c' : '#78716c',
+            size: 6 + Math.random() * 6, alt: hd + Math.random() * 10, altVel: 0.6,
+          });
+        }
+      }
+    });
+
     // Projectiles Logic — the ONE place a round moves and resolves (backwards:
     // loop splices). Everything a shot obeys lives here: cover and foxholes, the
     // anti-air multipliers, blast falloff, craters, bridges.
@@ -2981,6 +3422,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             hit = true; explode = true;
             break;
           }
+        }
+      }
+
+      // A manned enemy house soaks any round that reaches its walls — the men
+      // sheltering inside are off the field, so this is where their fire lands.
+      // (Empty/neutral houses aren't tracked as targets; rounds pass them by.)
+      if (!explode && p.targetType !== 'air') {
+        const bld = terrainRef.current.find(b =>
+          b.type === 'building' && b.occupiable && b.state !== 'burnt' &&
+          b.occupant != null && b.occupant !== p.team &&
+          Math.abs(p.position.x - b.x) <= (b.width || b.size * 2.6) / 2 &&
+          Math.abs(p.position.y - b.y) <= (b.height || b.size * 2.0) / 2);
+        if (bld) {
+          hit = true;
+          explode = true;
+          // Direct rounds do their damage here; explosive rounds fall through to
+          // the blast path below (damageBridges hits the building through splash).
+          if (!p.explosionRadius) damageBuilding(bld, p.damage, p.position.x, p.position.y);
         }
       }
 
@@ -3354,14 +3813,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (cpuTimerRef.current[ME] >= spawnInterval) {
         cpuTimerRef.current[ME] = 0;
 
-        // Hard CPU generalship: read the balance of forces and set the army
-        // stance — fall back to regroup (and heal) when badly outmatched,
-        // dig in when slightly weaker, push when stronger.
-        if (DIFF.stanceIQ) {
+        // CPU generalship: read the balance of forces and set the army stance —
+        // fall back to regroup (and heal) when outmatched, dig in when slightly
+        // weaker, push when stronger. This is the main brake on blowouts: a
+        // losing CPU that keeps marching everything forward just feeds the
+        // meatgrinder and gets pinned at its own spawn. Hard reads the balance
+        // early and reacts decisively; normal only pulls back once it's clearly
+        // losing (preserving the difficulty gap); easy never regroups.
+        if (DIFF.stanceIQ || DIFF.commands > 0) {
           const val = (us: Unit[]) => us.reduce((s, u) => s + ((UNIT_CONFIG[u.type] as any).cost || 0), 0);
           const myVal = val(myActive), foeVal = val(foeActive);
-          const desired: Stance = foeVal > 200 && myVal < foeVal * 0.5 ? 'retreat'
-            : foeVal > 200 && myVal < foeVal * 0.75 ? 'hold'
+          const retreatAt = DIFF.stanceIQ ? 0.5 : 0.4;
+          const holdAt = DIFF.stanceIQ ? 0.75 : 0.6;
+          const desired: Stance = foeVal > 200 && myVal < foeVal * retreatAt ? 'retreat'
+            : foeVal > 200 && myVal < foeVal * holdAt ? 'hold'
             : 'advance';
           if (stancesRef.current[ME] !== desired) {
             stancesRef.current[ME] = desired;
@@ -3459,12 +3924,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // --- Special tactics (override normal spawn with a chance) ---
         let specialSpawned = false;
 
+        // Burn the foe out of a strongpoint. A garrisoned house shelters its
+        // troops from rifle fire, but an airstrike levels the whole structure —
+        // so when the enemy is dug into a building, call one in on the fullest
+        // one. (This is the CPU's only use of the airstrike, and the answer to
+        // the occupiable-buildings the human can turtle in.)
+        const foeForts = terrainRef.current.filter(b =>
+          b.type === 'building' && b.occupiable && b.state !== 'burnt' &&
+          b.occupant === FOE && (b.garrisonUnits?.length || 0) >= 3);
+        if (!specialSpawned && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special) {
+          const fort = foeForts.reduce((a, b) => ((b.garrisonUnits?.length || 0) > (a.garrisonUnits?.length || 0) ? b : a));
+          spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
+          specialSpawned = true;
+        }
+
         // Smoke blinds the foe's long-range battery: dropped ON their
         // artillery/snipers/mortars, the cloud stops them firing out while my
         // units close the distance. (Never on my own troops — smoke blocks
-        // targeting both ways, so that would blind my own push.)
+        // targeting both ways, so that would blind my own push.) Used to fire
+        // on a 0.2 reflex up to two clouds at once — the single biggest line in
+        // the CPU's budget ($4.7k/session, more than it spent on tanks) and a
+        // permanent grey haze over the field. Now one cloud at a time, and only
+        // when the foe fields a real battery (≥3), so it's a considered play.
         const foeLongRange = foeUnits.filter(u => u.type === UnitType.ARTILLERY || u.type === UnitType.SNIPER || u.type === UnitType.MORTAR);
-        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 2 && smokesRef.current.length < 2 && Math.random() < 0.2 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && Math.random() < 0.14 * DIFF.special) {
           const cx = foeLongRange.reduce((s, u) => s + u.position.x, 0) / foeLongRange.length;
           const cy = foeLongRange.reduce((s, u) => s + u.position.y, 0) / foeLongRange.length;
           spawnUnit(ME, UnitType.SMOKE, { absolutePos: { x: cx, y: cy } });
@@ -3660,6 +4144,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           WEST: unitsRef.current.filter(u => u.team === Team.WEST).length,
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
+        weather: weatherRef.current,
+        stances: { WEST: stancesRef.current[Team.WEST], EAST: stancesRef.current[Team.EAST] },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
         projectiles: projectilesRef.current.length,
@@ -3669,6 +4155,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
+        buildings: terrainRef.current.filter(t => t.type === 'building' && t.occupiable).map(b => ({
+          x: Math.round(b.x), y: Math.round(b.y), occupant: b.occupant ?? null,
+          garrison: b.garrisonUnits?.length ?? 0, capacity: b.capacity ?? 0,
+          health: Math.round(b.health ?? 0), maxHealth: b.maxHealth ?? 0, state: b.state,
+        })),
         selectedCount: (selectedIds ?? []).length,
         // Test hook: select the first n units of the first human team
         selectOwn: (n: number) => {

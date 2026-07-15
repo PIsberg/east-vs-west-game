@@ -238,6 +238,12 @@ const App: React.FC = () => {
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
+  // A CPU side's spawn panel is all disabled buttons — dead space. Hide it and
+  // give the width back to the battlefield, so a single-player game (or a
+  // spectated one) fits a phone instead of only a tablet/PC. A human side always
+  // keeps its panel.
+  const westIsCpu = SPECTATE || cpuTeam === Team.WEST;
+  const eastIsCpu = SPECTATE || cpuTeam === Team.EAST;
   const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const [cmdHint, setCmdHint] = useState(false);
@@ -270,8 +276,9 @@ const App: React.FC = () => {
     const compute = () => {
       const headerH = headerRef.current?.getBoundingClientRect().height ?? 60;
       const cmdH = cmdBarRef.current?.getBoundingClientRect().height ?? 0;
-      const westW = westPanelRef.current?.getBoundingClientRect().width ?? 100;
-      const eastW = eastPanelRef.current?.getBoundingClientRect().width ?? 100;
+      // A hidden (CPU) panel contributes no width — the canvas fills that space.
+      const westW = westIsCpu ? 0 : (westPanelRef.current?.getBoundingClientRect().width ?? 100);
+      const eastW = eastIsCpu ? 0 : (eastPanelRef.current?.getBoundingClientRect().width ?? 100);
       const padX = compact ? 8 : 32;                  // page container horizontal padding
       const gapX = compact ? 8 : 16;                  // side-panel margins toward the canvas
       const padY = compact ? 8 : 32;
@@ -295,7 +302,7 @@ const App: React.FC = () => {
     const ro = new ResizeObserver(compute);
     [headerRef, westPanelRef, eastPanelRef, cmdBarRef].forEach(r => { if (r.current) ro.observe(r.current); });
     return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); ro.disconnect(); };
-  }, [compact, cpuLevel, playerSide]);
+  }, [compact, cpuLevel, playerSide, westIsCpu, eastIsCpu]);
 
   const handleStartClick = () => {
     soundService.playIntroJingle();
@@ -633,13 +640,15 @@ const App: React.FC = () => {
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },
           { type: UnitType.ARTILLERY, label: "ARTY", icon: <ArtilleryIcon size={16} /> },
-          { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
-          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
-          { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
           { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },
           { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
           { type: UnitType.GUNBOAT, label: "GUNBOAT", icon: <Ship size={16} /> }
+        ])}
+        {renderGroup("Aircraft", [
+          { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
+          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
+          { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
@@ -900,7 +909,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
-        {renderUnitButtons(Team.WEST, westPanelRef)}
+        {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
           <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
@@ -968,7 +977,7 @@ const App: React.FC = () => {
           </div>
           {renderCommandBar()}
         </div>
-        {renderUnitButtons(Team.EAST, eastPanelRef)}
+        {!eastIsCpu && renderUnitButtons(Team.EAST, eastPanelRef)}
       </div>
       {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
 
@@ -990,8 +999,9 @@ const App: React.FC = () => {
             <li><strong className="text-white">Gunboat:</strong> Station it on a <span className="text-amber-400">river or channel</span> (click open water when placing) — a tough, long-range gun platform that guards crossings.</li>
             <li><strong className="text-white">Shortcuts & Access:</strong> Number keys <span className="text-amber-400">1–0</span> buy your core units, <span className="text-amber-400">P</span> pauses. The <span className="text-amber-400">CB</span> toggle recolors East to amber for colorblind players.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
-            <li><strong className="text-white">Troop Control:</strong> <span className="text-amber-400">Click your own unit</span> to select it (squads select together), <span className="text-amber-400">double-click for all of that type</span>, then give Attack/Hold/Fall Back orders that override the team stance (colored dot shows the order; Esc deselects).</li>
+            <li><strong className="text-white">Troop Control:</strong> <span className="text-amber-400">Click your own unit</span> to select it (squads select together), <span className="text-amber-400">double-click for all of that type</span>, then give Attack/Hold/Fall Back orders that override the team stance. A badge over each unit shows its order — a <span className="text-green-400">forward arrow</span> to attack, an <span className="text-amber-400">amber pause symbol</span> to hold (the troops hunker down where they stand), a <span className="text-red-400">back arrow</span> to fall back. Esc deselects.</li>
             <li><strong className="text-white">Entrench:</strong> Foot soldiers holding still under <span className="text-amber-400">Hold</span> orders dig in after ~6s: <span className="text-amber-400">-45% direct fire damage</span> until they move. Explosives ignore foxholes.</li>
+            <li><strong className="text-white">Strongpoints:</strong> Line infantry (riflemen, snipers, special forces, paras) <span className="text-amber-400">occupy buildings</span> — the first team to reach one raises its flag. Men inside are sheltered and fire from the windows; a <span className="text-amber-400">5/30 counter</span> shows how full it is (bigger houses hold more). <span className="text-amber-400">Each damage stage throws the garrison out</span> and leaves the house up for grabs, so an assault can seize it without felling it. If it <span className="text-red-400">collapses</span> most of the garrison dies — so burn the enemy out before you storm past. Rifles and artillery only hurt a <em>manned</em> house, but an <span className="text-amber-400">airstrike, missile or nuke levels any building</span> (occupied or empty) — the way to crack a strongpoint you can't storm.</li>
             <li><strong className="text-white">Economy:</strong> Invest in up to 3 income upgrades (<span className="text-amber-400">+25% each</span>) — units now vs. money later.</li>
             <li><strong className="text-white">Rally Horn:</strong> ${RALLY_COST} for <span className="text-amber-400">+45% fire rate & +25% speed</span> for 8s — time it with your push.</li>
             <li><strong className="text-white">Field Repairs:</strong> Wounded units <span className="text-green-400">heal slowly near your own edge</span> when out of combat — rotate them back instead of losing them.</li>

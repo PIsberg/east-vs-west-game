@@ -42,7 +42,11 @@ export const UNIT_CONFIG = {
   [UnitType.ARTILLERY]: {
     cost: 80,
     health: 45,
-    damage: 38,
+    // Trimmed 38 -> 32: now that indirect fire walks its shell onto the densest
+    // cluster instead of the nearest man, each shell catches more, and the extra
+    // reliable hits pushed artillery well over the efficiency band. Still the
+    // long-range siege king — just no longer oppressive.
+    damage: 32,
     explosionRadius: 65,
     speed: 0.22,
     deployDistance: 80,
@@ -54,9 +58,14 @@ export const UNIT_CONFIG = {
     colorEast: '#7f1d1d',
   },
   [UnitType.SPECIAL_FORCES]: {
-    cost: 150,
-    health: 80,
-    damage: 20,
+    // Elite shock infantry. At the old 150/80/20 they were badly overpriced —
+    // per dollar a plain soldier out-DPS'd and out-HP'd them several times over,
+    // and the balance harness had them stuck at ~0.28 kill-value/$ (healthy band
+    // 0.5-1.5) across runs. Tougher and harder-hitting now so their $ buys the
+    // elite unit it promises, at a slightly lower price.
+    cost: 135,
+    health: 110,
+    damage: 28,
     speed: 0.72,
     range: 180,
     attackSpeed: 20,
@@ -245,11 +254,15 @@ export const UNIT_CONFIG = {
     colorEast: '#65a30d',
   },
   [UnitType.FLAMETHROWER]: {
+    // Short-ranged and fragile, it kept dying on the approach before its (strong,
+    // cover-ignoring) flame could do any work. A little tougher so it survives to
+    // close the distance — and it now burns garrisons out of buildings, giving it
+    // a clear role beside its anti-infantry/anti-cover work.
     cost: 70,
-    health: 32,
+    health: 44,
     damage: 8,
     speed: 0.44,
-    range: 88,
+    range: 100,
     attackSpeed: 10,
     width: 18,
     height: 18,
@@ -258,7 +271,7 @@ export const UNIT_CONFIG = {
   },
   [UnitType.MEDIC]: {
     cost: 45,
-    health: 22,
+    health: 32, // a field medic that folds to a single burst never delivers any
     damage: 0,
     healAmount: 9,
     speed: 0.58,
@@ -319,13 +332,20 @@ export const UNIT_CONFIG = {
     colorEast: '#1e293b',
   },
   [UnitType.MORTAR]: {
-    cost: 75,
-    health: 24,
+    // The infantry's own indirect fire — deliberately NOT a cut-price artillery.
+    // At 75/240/320 it was a strictly-worse ARTILLERY (half the range, a smaller
+    // blast, for $5 less) and sat dead last on efficiency (~0.42). Its identity
+    // is now cheap + RAPID + mobile: it lobs far more often than a howitzer, a
+    // foot team that wades rivers a towed gun can't cross, at the cost of short
+    // reach and a small blast. Artillery stays the expensive long-range siege
+    // piece; the mortar is forward harassment you can spam.
+    cost: 58,
+    health: 28,
     damage: 26,
-    explosionRadius: 40,
+    explosionRadius: 42,
     speed: 0.34,
     range: 320,
-    attackSpeed: 240,
+    attackSpeed: 175,
     width: 16,
     height: 16,
     colorWest: '#365314',
@@ -334,7 +354,11 @@ export const UNIT_CONFIG = {
   [UnitType.JEEP]: {
     cost: 60,
     health: 70,
-    damage: 8,
+    // The mounted gun did a limp 8/shot, so a jeep zipped to the front and died
+    // without threatening anything (~0.44 efficiency, 84% losses). Bumped to 13 so
+    // its speed actually buys a fast harasser that chews infantry, not a taxi with
+    // a pea-shooter. Still the one-seat taxi that rushes an engineer forward.
+    damage: 13,
     speed: 1.15,
     range: 150,
     attackSpeed: 14,
@@ -689,3 +713,20 @@ export const BUNKER_CALL_RANGE = 150;        // infantry told to hold within thi
 export const APC_SQUAD = 3;
 export const APC_DEPLOY_RANGE = 240;    // enemy within this → drop the ramp
 export const APC_DEPLOY_HP = 0.55;      // or when it's taken a beating
+
+// Occupiable buildings: contested strongpoints riflemen can garrison. The house
+// soaks fire for the men inside, so it carries a lot of HP — several tank shells'
+// worth — and only occupied houses can be destroyed (an empty one is permanent
+// cover). Capacity and HP both scale with the footprint.
+export const OCCUPIABLE_PER_MAP = 4;         // strongpoints seeded into each map's contested band
+export const BUILDING_HP_PER_SIZE = 26;      // structural HP ≈ size × this (size ~20–42 → ~520–1100 HP)
+export const BUILDING_ENTRY_RANGE = 34;      // a rifleman this close to a free/friendly house files inside
+export const BUILDING_FIRE_RANGE = 175;      // the garrison shoots out to here
+export const BUILDING_FIRE_COOLDOWN = 30;    // ticks between defensive volleys (~0.5s)
+export const BUILDING_MAX_GUNS = 6;          // windows that can fire at once — volley size cap
+export const BUILDING_GARRISON_DAMAGE = 11;  // damage per firing window (rifle-grade)
+export const BUILDING_COLLAPSE_SURVIVE = 0.3; // fraction of the garrison that scrambles clear when it falls
+export const BUILDING_NAPALM_BURN = 2.8;     // structural HP an airstrike's fire eats per tick (×300-tick burn ≈ levels a house)
+// Capacity tiers by footprint size — a small house shelters a squad, a large one a platoon.
+export const buildingCapacity = (size: number): number =>
+  Math.max(5, Math.min(30, Math.round((size - 12) * 1.05)));
