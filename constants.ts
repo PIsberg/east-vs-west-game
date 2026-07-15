@@ -254,11 +254,15 @@ export const UNIT_CONFIG = {
     colorEast: '#65a30d',
   },
   [UnitType.FLAMETHROWER]: {
+    // Short-ranged and fragile, it kept dying on the approach before its (strong,
+    // cover-ignoring) flame could do any work. A little tougher so it survives to
+    // close the distance — and it now burns garrisons out of buildings, giving it
+    // a clear role beside its anti-infantry/anti-cover work.
     cost: 70,
-    health: 32,
+    health: 44,
     damage: 8,
     speed: 0.44,
-    range: 88,
+    range: 100,
     attackSpeed: 10,
     width: 18,
     height: 18,

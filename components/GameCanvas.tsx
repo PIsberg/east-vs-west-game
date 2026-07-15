@@ -2755,6 +2755,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 }
               }
             });
+            // The same cover-ignoring flame licks any manned enemy house it's up
+            // against — the cheap, close-up way to burn a garrison out (the
+            // airstrike is the standoff version). A strongpoint is no shelter from
+            // fire pouring through the windows.
+            terrainRef.current.forEach(b => {
+              if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+              if (b.occupant == null || b.occupant === unit.team) return;
+              const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
+              const dx = Math.max(Math.abs(unit.position.x - b.x) - bw, 0);
+              const dy = Math.max(Math.abs(unit.position.y - b.y) - bh, 0);
+              if (Math.hypot(dx, dy) < range) {
+                b.health = (b.health ?? 0) - config.damage * vetMult * 1.5; // fire eats structure fast
+                fired = true;
+                for (let fp = 0; fp < 2; fp++) particlesRef.current.push({
+                  id: generateId(),
+                  position: { x: b.x + (Math.random() - 0.5) * bw, y: b.y + (Math.random() - 0.5) * bh },
+                  velocity: { x: (Math.random() - 0.5) * 1.2, y: -Math.random() * 1.4 },
+                  drag: 0.9, life: 18 + Math.random() * 10,
+                  color: Math.random() > 0.4 ? '#f97316' : '#fbbf24', size: 4 + Math.random() * 4,
+                  alt: 4 + Math.random() * 8, altVel: 0.5,
+                });
+              }
+            });
             if (fired) { soundService.playFlameSound(); unit.attackCooldown = Math.round(config.attackSpeed * vetReload); }
           } else if (unit.type === UnitType.ENGINEER) {
             // Defuse the nearest enemy mine in detection range (mines don't trigger on engineers)
