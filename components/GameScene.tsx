@@ -2612,7 +2612,11 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const roofProp = seed % 4; // 0 water tank, 1 AC units, 2 antenna, 3 bare
         const hasSetback = h > 52;
         const flicker = Math.floor(Date.now() / 110) % 2 === 0;
-        const occLabel = occ && occupant ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
+        // Always show the counter on a strongpoint (pale when it's still neutral),
+        // so a house you can take reads as an objective at a glance — even amid a
+        // block of ordinary buildings.
+        const occLabel = occ ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
+        const markR = Math.max(w, d) * 0.5;
         return (
             <ClickableGroup position={[item.x, h / 2, item.y]} onCanvasClick={onCanvasClick}>
                 <mesh castShadow receiveShadow>
@@ -2623,6 +2627,12 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                 {/* ── Occupiable strongpoint fittings ─────────────────────── */}
                 {occ && (
                     <group>
+                        {/* Objective marker ring on the ground — neutral grey while
+                            it's up for grabs, the holder's colour once taken */}
+                        <mesh position={[0, -h / 2 + 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                            <ringGeometry args={[markR + 4, markR + 8, 40]} />
+                            <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
+                        </mesh>
                         {/* Flag on a rooftop pole — team colors when held, a pale
                             neutral pennant when the house is still up for grabs */}
                         <group position={[w * 0.34, h / 2 + (hasSetback ? 13 : 1), d * 0.3]}>
