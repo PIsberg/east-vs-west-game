@@ -1,5 +1,20 @@
 # Changelog
 
+## Rivers that flow, houses on solid ground (July 2026)
+
+- **The water actually looks like water now.** The river shader dumped a hard on/off foam threshold over a flat blue fill — it read as TV static on a painted strip. It's been rebuilt: two noise layers drift downstream at different speeds so the surface *moves*, the channel is darker and deeper down its middle and lightens toward the banks (a rounded cross-section instead of a flat slab), a **foam line** traces where the water meets the land, soft ripple highlights replace the hard specks, and sparse sun-glints drift across it. The islands' straits use the same shader in a deeper ocean blue.
+- **Strongpoints stop perching on hilltops.** House placement only ever avoided water and other buildings, so a strongpoint could spawn straddling a hillside or with a tree or boulder punching up through its floor. The preferred siting now keeps a house clear of hills, trees and rocks; the guarantee pass that seeds a cramped, hill-choked map still relaxes the rule so you never end up with zero strongpoints.
+
+## The ground comes alive (July 2026)
+
+- **The battlefield was a flat green slab; now it's a field.** The terrain used to be one solid colour with a scattering of 140 identical dark tufts — read as a painted plane, not ground. It's now planted: denser grass in **three tones** per map so the turf mottles instead of reading flat, blades at **varied heights**, and a scattering of **low faceted bushes** that break the horizon and give the field depth (coloured apart from the grey rock props so they don't read as boulders). The base ground gained gentle **two-tone patches** — sun-catch turf over damp earth — spread across the actual play area instead of half off-map.
+- **Every map keeps its character.** Countryside and the islands go lush green; the desert gets sparse dry brush and sun-bleached sand patches, no bushes crowding the dunes; the city streets stay bare rubble. Nothing sprouts in the rivers or on the bridge decks — the planting samples around the water, keeping the density up to the bank without a blade in the current. It's all on the instanced-mesh path — the whole meadow is two draw calls — and tuned low and muted so troops still pop against it.
+
+## The Tesla coil forks its lightning (July 2026)
+
+- **The Tesla coil chains now.** Its bolt used to be a five-round burst that dumped its whole charge into one man — 110 damage a shot into a 20-HP rifleman, over and over, while the squad packed in beside him went untouched. A coil is supposed to punish a *crowd*. So the shot now **forks**: it strikes the nearest man for full damage, then arcs to his nearest neighbour, then the next, up to four troops in a chain, each jump weaker than the last. One coil clears a squad instead of executing a single rifleman five times. The arc can walk clear of the coil's own range as it hops the mob, and it still ignores vehicles entirely — this is the answer to an infantry blob, nothing else.
+- **You can see it work.** The old single blue beam is now a visible zig-zag: a bright bolt to the first target and a spark of thinner arcs jumping man to man through the pack, so a coil catching a tight formation reads at a glance. Recharges a little faster to match its lighter per-shot punch (verified against the CPU-vs-CPU efficiency harness — it lands squarely in the healthy band, a crowd-control specialist rather than a single-target executioner).
+
 ## Orders you can read at a glance (July 2026)
 
 - **Every ordered unit now wears a clear command badge** instead of a tiny coloured dot: a **forward arrow** (green) for attack, a **pause symbol** (amber) for hold, a **back arrow** (red) to fall back. The arrows point the way the unit is headed, so a glance tells you what a selected squad has been told to do.

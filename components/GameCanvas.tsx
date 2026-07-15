@@ -49,6 +49,9 @@ import {
   APC_SQUAD,
   APC_DEPLOY_RANGE,
   APC_DEPLOY_HP,
+  TESLA_CHAIN_MAX,
+  TESLA_CHAIN_FALLOFF,
+  TESLA_CHAIN_RADIUS,
   MILLISECONDS_PER_FRAME,
   BUNKER_BUILD_MS,
   BUNKER_BUILD_START_HP,
@@ -740,6 +743,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
         return true;
       };
+      // Preferred siting also keeps a house off a hillside and clear of any tree
+      // or rock that would otherwise punch up through its floor/roof. This is the
+      // soft rule — the guarantee pass below drops it so a cramped, hill-choked
+      // map (Desert) still gets its strongpoints rather than none.
+      const hills = t.filter(o => o.type === 'hill');
+      const stumps = t.filter(o => o.type === 'tree' || o.type === 'rock');
+      const clearStrict = (x: number, y: number, w2: number, h2: number) => {
+        if (!clearFor(x, y, w2, h2)) return false;
+        if (hills.some(o => Math.hypot(o.x - x, o.y - y) < (o.size ?? 0) + Math.max(w2, h2) * 0.6)) return false;
+        if (stumps.some(o => Math.abs(o.x - x) < w2 + 8 && Math.abs(o.y - y) < h2 + 8)) return false;
+        return true;
+      };
       let placed = 0;
       for (let i = 0; i < OCCUPIABLE_PER_MAP * 60 && placed < OCCUPIABLE_PER_MAP; i++) {
         // Bias across three vertical lanes so they don't clump on one flank
@@ -749,7 +764,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const y = laneTop + Math.random() * (bandH / 3);
         const size = 20 + Math.random() * 22; // 20–42 footprint
         const width = size * 2.6, height = size * 2.0;
-        if (!clearFor(x, y, width / 2, height / 2)) continue;
+        if (!clearStrict(x, y, width / 2, height / 2)) continue;
         const hp = Math.round(size * BUILDING_HP_PER_SIZE);
         t.push({
           id: gid(), x, y, type: 'building', size, width, height,
@@ -2925,46 +2940,62 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               unit.attackCooldown = config.attackSpeed;
             }
           } else if (unit.type === UnitType.TESLA) {
-            // Tesla Targeting: STRICTLY Infantry Only
-            target = potentialTargets.find(o =>
-              o.team !== unit.team &&
-              (o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER || o.type === UnitType.SPECIAL_FORCES || o.type === UnitType.AIRBORNE) &&
-              !smokeBlocked(unit, o) &&
-              Math.sqrt((o.position.x - unit.position.x) ** 2 + (o.position.y - unit.position.y) ** 2) < range
+            // Tesla coil — infantry only, and its bolt FORKS. One shot arcs from
+            // the nearest man through a knot of his neighbours, each jump weaker
+            // than the last (TESLA_CHAIN_FALLOFF), so a single coil clears a
+            // squad instead of dumping its whole charge into one 20-HP rifleman
+            // (the old 5-round burst overkilled him five times and never touched
+            // the mob beside him). No fallback — it ignores vehicles entirely.
+            const isZappable = (o: Unit) =>
+              o.type === UnitType.SOLDIER || o.type === UnitType.SNIPER ||
+              o.type === UnitType.SPECIAL_FORCES || o.type === UnitType.AIRBORNE;
+            const primary = potentialTargets.find(o =>
+              o.team !== unit.team && isZappable(o) && !smokeBlocked(unit, o) &&
+              Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) < range
             );
-            // No fallback - completely ignores vehicles
 
-            // Burst Logic
-            if (target) {
-              if (unit.attackCooldown <= 0 || (unit.burstCount || 0) > 0) {
-                if (unit.attackCooldown <= 0) unit.burstCount = 5; // Start Burst
+            if (primary) {
+              soundService.playZapSound();
+              const zapped = new Set<string>([primary.id]);
+              let from = { x: unit.position.x, y: unit.position.y - 10 };
+              let link: Unit | undefined = primary;
+              let dmg = config.damage * vetMult;   // primary bolt; each jump falls off
 
-                if ((unit.burstCount || 0) > 0) {
-                  // Fire Lightning
-                  // Instant Hit
-                  target.health -= config.damage * vetMult;
-                  target.lastHitTime = Date.now();
-                  target.lastAttackerId = unit.id;
-                  soundService.playZapSound();
+              for (let hop = 0; hop < TESLA_CHAIN_MAX && link; hop++) {
+                link.health -= dmg;
+                link.lastHitTime = Date.now();
+                link.lastAttackerId = unit.id;
 
-                  // Visual Lightning (Blue Beam)
-                  particlesRef.current.push({
-                    id: generateId(),
-                    position: { x: unit.position.x, y: unit.position.y - 10 },
-                    velocity: { x: 0, y: 0 },
-                    life: 5,
-                    color: '#0ea5e9',
-                    size: 2,
-                    targetPos: { x: target.position.x, y: target.position.y }
-                  });
-                  // Add Sparks at target
-                  particlesRef.current.push({ id: generateId(), position: { ...target.position }, life: 10, color: '#bae6fd', size: 6 });
+                // Arc segment from the previous node to this man (a beam particle
+                // per link renders the whole zig-zag chain).
+                particlesRef.current.push({
+                  id: generateId(),
+                  position: { ...from },
+                  velocity: { x: 0, y: 0 },
+                  life: 5,
+                  color: '#7dd3fc',
+                  size: 2,
+                  targetPos: { x: link.position.x, y: link.position.y },
+                });
+                // Sparks where it strikes
+                particlesRef.current.push({ id: generateId(), position: { ...link.position }, life: 10, color: '#bae6fd', size: 6 });
 
-                  unit.burstCount = (unit.burstCount || 0) - 1;
-                  unit.attackCooldown = unit.burstCount > 0 ? 5 : Math.round(config.attackSpeed * vetReload);
+                // Fork to the nearest un-zapped man within arc reach — the chain
+                // can walk clear of the coil's own range as it hops the crowd.
+                from = { x: link.position.x, y: link.position.y };
+                const here = link;
+                let next: Unit | undefined;
+                let best = TESLA_CHAIN_RADIUS;
+                for (const o of spatialHash.current.query(here.position.x, here.position.y, TESLA_CHAIN_RADIUS)) {
+                  if (o.team === unit.team || o.health <= 0 || o.boarded || zapped.has(o.id) || !isZappable(o)) continue;
+                  const d = Math.hypot(o.position.x - here.position.x, o.position.y - here.position.y);
+                  if (d < best) { best = d; next = o; }
                 }
+                if (next) zapped.add(next.id);
+                link = next;
+                dmg *= TESLA_CHAIN_FALLOFF;
               }
-              // If waiting for cooldown, do nothing
+              unit.attackCooldown = Math.round(config.attackSpeed * vetReload);
             }
           } else {
             // Standard Unit Targeting
