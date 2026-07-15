@@ -354,7 +354,11 @@ export const UNIT_CONFIG = {
   [UnitType.JEEP]: {
     cost: 60,
     health: 70,
-    damage: 8,
+    // The mounted gun did a limp 8/shot, so a jeep zipped to the front and died
+    // without threatening anything (~0.44 efficiency, 84% losses). Bumped to 13 so
+    // its speed actually buys a fast harasser that chews infantry, not a taxi with
+    // a pea-shooter. Still the one-seat taxi that rushes an engineer forward.
+    damage: 13,
     speed: 1.15,
     range: 150,
     attackSpeed: 14,
