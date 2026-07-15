@@ -1,5 +1,10 @@
 # Changelog
 
+## Single-player fills the screen; aircraft get their own shelf (July 2026)
+
+- **The enemy's spawn panel is gone in single-player.** Those buttons were always disabled — you can't build for the CPU — so they were just a dead column eating a third of the width. A spawn panel now shows only for a *human* side: one panel in single-player (two in local 2-player, none when spectating), and the battlefield fills the reclaimed space. That's the difference between the game fitting a phone in landscape and only fitting a tablet or PC.
+- **Aircraft have their own button group.** Helicopter, Fighter and Drone moved out of the Vehicles column into a dedicated Aircraft shelf, so the air arm reads at a glance.
+
 ## Roster pass — every unit earns its slot, and some fight smarter (July 2026)
 
 An audit of the whole roster: which units felt worth building, and whose behaviour was blunt. Verified against the CPU-vs-CPU efficiency harness (a full pass ended a dead-even W51–E52).

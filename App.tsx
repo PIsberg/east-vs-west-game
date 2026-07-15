@@ -238,6 +238,12 @@ const App: React.FC = () => {
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
+  // A CPU side's spawn panel is all disabled buttons — dead space. Hide it and
+  // give the width back to the battlefield, so a single-player game (or a
+  // spectated one) fits a phone instead of only a tablet/PC. A human side always
+  // keeps its panel.
+  const westIsCpu = SPECTATE || cpuTeam === Team.WEST;
+  const eastIsCpu = SPECTATE || cpuTeam === Team.EAST;
   const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const [cmdHint, setCmdHint] = useState(false);
@@ -270,8 +276,9 @@ const App: React.FC = () => {
     const compute = () => {
       const headerH = headerRef.current?.getBoundingClientRect().height ?? 60;
       const cmdH = cmdBarRef.current?.getBoundingClientRect().height ?? 0;
-      const westW = westPanelRef.current?.getBoundingClientRect().width ?? 100;
-      const eastW = eastPanelRef.current?.getBoundingClientRect().width ?? 100;
+      // A hidden (CPU) panel contributes no width — the canvas fills that space.
+      const westW = westIsCpu ? 0 : (westPanelRef.current?.getBoundingClientRect().width ?? 100);
+      const eastW = eastIsCpu ? 0 : (eastPanelRef.current?.getBoundingClientRect().width ?? 100);
       const padX = compact ? 8 : 32;                  // page container horizontal padding
       const gapX = compact ? 8 : 16;                  // side-panel margins toward the canvas
       const padY = compact ? 8 : 32;
@@ -295,7 +302,7 @@ const App: React.FC = () => {
     const ro = new ResizeObserver(compute);
     [headerRef, westPanelRef, eastPanelRef, cmdBarRef].forEach(r => { if (r.current) ro.observe(r.current); });
     return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); ro.disconnect(); };
-  }, [compact, cpuLevel, playerSide]);
+  }, [compact, cpuLevel, playerSide, westIsCpu, eastIsCpu]);
 
   const handleStartClick = () => {
     soundService.playIntroJingle();
@@ -902,7 +909,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
-        {renderUnitButtons(Team.WEST, westPanelRef)}
+        {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
           <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
@@ -970,7 +977,7 @@ const App: React.FC = () => {
           </div>
           {renderCommandBar()}
         </div>
-        {renderUnitButtons(Team.EAST, eastPanelRef)}
+        {!eastIsCpu && renderUnitButtons(Team.EAST, eastPanelRef)}
       </div>
       {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
 
