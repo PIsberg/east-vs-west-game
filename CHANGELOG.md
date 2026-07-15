@@ -1,5 +1,9 @@
 # Changelog
 
+## Airstrikes level houses (July 2026)
+
+- **Air power flattens strongpoints.** A house used to shrug off an airstrike entirely — the napalm burned the men around it but never touched the structure. Now an airstrike (either side's) eats the building over its burn, and a missile strike, nuke or cruise hit does the same. It's the answer to a dug-in garrison you can't dislodge with rifles: one canister will bring a house down, occupied **or empty** (so you can also deny a key building before the enemy ever reaches it). Ground fire is unchanged — artillery and small arms still only chew a house that's actually manned.
+
 ## Infantry hold the houses (July 2026)
 
 - **Buildings are strongpoints now.** Every map seeds a handful of occupiable houses across the contested middle, and the first team whose line infantry reaches one raises its flag over it. Riflemen, snipers, special forces and paras can garrison; engineers and medics have work to do in the open and walk on past.

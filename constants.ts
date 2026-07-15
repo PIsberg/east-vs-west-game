@@ -702,6 +702,7 @@ export const BUILDING_FIRE_COOLDOWN = 30;    // ticks between defensive volleys 
 export const BUILDING_MAX_GUNS = 6;          // windows that can fire at once — volley size cap
 export const BUILDING_GARRISON_DAMAGE = 11;  // damage per firing window (rifle-grade)
 export const BUILDING_COLLAPSE_SURVIVE = 0.3; // fraction of the garrison that scrambles clear when it falls
+export const BUILDING_NAPALM_BURN = 2.8;     // structural HP an airstrike's fire eats per tick (×300-tick burn ≈ levels a house)
 // Capacity tiers by footprint size — a small house shelters a squad, a large one a platoon.
 export const buildingCapacity = (size: number): number =>
   Math.max(5, Math.min(30, Math.round((size - 12) * 1.05)));

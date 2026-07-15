@@ -65,6 +65,7 @@ import {
   BUILDING_MAX_GUNS,
   BUILDING_GARRISON_DAMAGE,
   BUILDING_COLLAPSE_SURVIVE,
+  BUILDING_NAPALM_BURN,
   buildingCapacity,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
@@ -1207,16 +1208,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     };
 
-    // Explosive damage to bridges; collapse blocks crossings until repaired
-    const damageBridges = (x: number, y: number, radius: number, dmg: number) => {
+    // Explosive damage to bridges; collapse blocks crossings until repaired.
+    // `levelsBuildings` (air-delivered ordnance — airstrikes, missile strikes,
+    // nukes, cruise) flattens ANY house in the blast, empty or manned; ground
+    // splash only chews a house that's actually garrisoned.
+    const damageBridges = (x: number, y: number, radius: number, dmg: number, levelsBuildings = false) => {
       // Props caught in any blast break too
       terrainRef.current.forEach(p => {
         if ((p.type !== 'crate' && p.type !== 'barrel') || p.state === 'broken') return;
         if (Math.abs(p.x - x) < radius + p.size && Math.abs(p.y - y) < radius + p.size) breakProp(p);
       });
-      // Manned buildings caught in a blast take structural damage too
+      // Buildings caught in a blast take structural damage
       terrainRef.current.forEach(b => {
-        if (b.type !== 'building' || !b.occupiable || b.state === 'burnt' || b.occupant == null) return;
+        if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+        if (b.occupant == null && !levelsBuildings) return; // empty house shrugs off ground splash
         const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
         if (Math.abs(b.x - x) < radius + bw && Math.abs(b.y - y) < radius + bh) damageBuilding(b, dmg, b.x, b.y);
       });
@@ -1529,8 +1534,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           size: isNuke ? 170 : m.isCruise ? 72 : 42,
           isGroundDecal: true
         });
-        // Bridges in the blast take structural damage (nuke capped to its epicenter)
-        damageBridges(m.target.x, m.target.y, Math.min(radius || 60, 300), damage || 200);
+        // Bridges in the blast take structural damage (nuke capped to its
+        // epicenter); a missile/nuke/cruise strike also levels any house it hits.
+        damageBridges(m.target.x, m.target.y, Math.min(radius || 60, 300), damage || 200, true);
         // Explosion particles ( Standard )
         if (!isNuke) {
           particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fde68a', size: (radius || 60) * 1.4, isShockwave: true });
@@ -1900,6 +1906,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             if (dist < burnRadius) {
               other.health -= burnDamage;
             }
+          }
+        });
+        // The fire also eats any house it's burning on — an airstrike (from
+        // either side) can level a strongpoint, garrisoned or empty. Raw HP over
+        // the ~5s burn; the napalm's own flames and the building's burning state
+        // carry the visuals (no per-tick dust — it would swamp the particle budget).
+        terrainRef.current.forEach(b => {
+          if (b.type !== 'building' || !b.occupiable || b.state === 'burnt') return;
+          const bw = (b.width || b.size * 2.6) / 2, bh = (b.height || b.size * 2.0) / 2;
+          if (Math.abs(b.x - unit.position.x) < burnRadius + bw && Math.abs(b.y - unit.position.y) < burnRadius + bh) {
+            b.health = (b.health ?? 0) - BUILDING_NAPALM_BURN;
           }
         });
         return;
