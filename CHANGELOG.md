@@ -1,5 +1,14 @@
 # Changelog
 
+## Playtest pass — fewer blowouts, smarter CPU, sharper strongpoints (July 2026)
+
+- **A losing CPU regroups instead of dying.** The "fall back and consolidate when outmatched" generalship was hard-only; on normal, a losing computer just kept marching everything into the meatgrinder and got pinned at its own spawn. Normal now pulls back too — conservatively, only once it's clearly losing — so the beaten side holds a line and fights back. Across all four maps the loser's share of the surviving army roughly doubled (15% → 34%) and matches got closer.
+- **The CPU cracks strongpoints with airstrikes.** It never used to buy an airstrike at all. Now, when you turtle infantry into a building, it calls one down on the fullest one — the one thing that levels a garrisoned house.
+- **Special Forces are finally worth $150.** They were badly overpriced (per dollar a plain soldier out-shot and out-lived them several times over) and sat at the bottom of the efficiency table. Retuned to 135/110/28 — tough, hard-hitting elites that now earn their keep and get fielded.
+- **The CPU stops over-smoking.** Smoke was its biggest single expense — more than tanks — and hung a permanent grey haze over the field. It now uses one cloud at a time, only against a real enemy battery: cleaner battlefield, more money for troops.
+- **Strongpoints read as objectives.** Every occupiable house now carries a ground marker ring (grey until taken, then the holder's colour), an always-visible occupancy counter, a sandbag barricade at its base, and a flag-raise puff when captured — so a house you can hold stands out from the scenery.
+- **URBAN streets open up.** Fewer, better-spaced city blocks leave driveable lanes so armour stops wedging into dead-ends.
+
 ## Airstrikes level houses (July 2026)
 
 - **Air power flattens strongpoints.** A house used to shrug off an airstrike entirely — the napalm burned the men around it but never touched the structure. Now an airstrike (either side's) eats the building over its burn, and a missile strike, nuke or cruise hit does the same. It's the answer to a dug-in garrison you can't dislodge with rifles: one canister will bring a house down, occupied **or empty** (so you can also deny a key building before the enemy ever reaches it). Ground fire is unchanged — artillery and small arms still only chew a house that's actually manned.
