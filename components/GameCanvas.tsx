@@ -669,18 +669,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const span = CANVAS_HEIGHT - HORIZON_Y - 130;
       t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.28 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
       t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.72 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
-      // Buildings both sides
+      // City blocks both sides. Kept a touch sparser and better-spaced than the
+      // old grid: 13-a-side with tight gaps funnelled tanks into dead-ends and
+      // wedged them (~11% of 3s windows went nowhere). Wider spacing leaves
+      // driveable streets between blocks while still reading as a dense city.
       const placeBuilding = (xMin: number, xMax: number) => {
-        for (let attempt = 0; attempt < 10; attempt++) {
+        for (let attempt = 0; attempt < 14; attempt++) {
           const x = xMin + Math.random() * (xMax - xMin);
           const y = HORIZON_Y + 22 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 44);
-          const size = 18 + Math.random() * 24;
-          if (!avoidCheck(x, y, size, wallSegs, 30) && !t.some(o => o.type === 'building' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < size + (o.size || 0) + 65))
+          const size = 18 + Math.random() * 22;
+          if (!avoidCheck(x, y, size, wallSegs, 34) && !t.some(o => o.type === 'building' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < size + (o.size || 0) + 84))
             { t.push({ id: gid(), x, y, type: 'building', size, width: size * 2.6, height: size * 2.0 }); return; }
         }
       };
-      for (let i = 0; i < 13; i++) placeBuilding(22, wallX - 28);
-      for (let i = 0; i < 13; i++) placeBuilding(wallX + 28, CANVAS_WIDTH - 22);
+      for (let i = 0; i < 10; i++) placeBuilding(22, wallX - 28);
+      for (let i = 0; i < 10; i++) placeBuilding(wallX + 28, CANVAS_WIDTH - 22);
       // Rubble mounds (small hills = elevation bonus)
       placeHills(2, 35, wallX - 50, wallSegs, 40);
       placeHills(2, wallX + 50, CANVAS_WIDTH - 35, wallSegs, 40);
@@ -3785,6 +3788,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // --- Special tactics (override normal spawn with a chance) ---
         let specialSpawned = false;
 
+        // Burn the foe out of a strongpoint. A garrisoned house shelters its
+        // troops from rifle fire, but an airstrike levels the whole structure —
+        // so when the enemy is dug into a building, call one in on the fullest
+        // one. (This is the CPU's only use of the airstrike, and the answer to
+        // the occupiable-buildings the human can turtle in.)
+        const foeForts = terrainRef.current.filter(b =>
+          b.type === 'building' && b.occupiable && b.state !== 'burnt' &&
+          b.occupant === FOE && (b.garrisonUnits?.length || 0) >= 3);
+        if (!specialSpawned && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special) {
+          const fort = foeForts.reduce((a, b) => ((b.garrisonUnits?.length || 0) > (a.garrisonUnits?.length || 0) ? b : a));
+          spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } });
+          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
+          specialSpawned = true;
+        }
+
         // Smoke blinds the foe's long-range battery: dropped ON their
         // artillery/snipers/mortars, the cloud stops them firing out while my
         // units close the distance. (Never on my own troops — smoke blocks
@@ -3986,6 +4004,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           WEST: unitsRef.current.filter(u => u.team === Team.WEST).length,
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
+        weather: weatherRef.current,
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
         projectiles: projectilesRef.current.length,
