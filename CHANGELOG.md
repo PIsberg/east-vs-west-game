@@ -11,6 +11,7 @@ An audit of the whole roster: which units felt worth building, and whose behavio
 - **The jeep has teeth.** Its mounted gun was a pea-shooter, so its speed bought nothing but a quick death. Hits hard enough now to be a real fast harasser. (0.44 → 1.0.)
 - **Special Forces are elite again** (135/110/28), fixing their bottom-of-the-table pricing. (0.28 → 1.2.)
 - **Medics work from the rear.** They stopped charging the firing line and dying without healing anyone — a medic trails the push and only side-steps to casualties level with it or fallen back, and it's a little tougher, so it lives to treat the reserve.
+- **Anti-air isn't idle without planes to shoot.** With a clear sky it now depresses its guns and rakes enemy infantry — flak that shreds soft targets but can't punch armour, at short ground range and half damage. Air always takes priority; it's just never a wasted buy against a foe who skipped aircraft. (0.79 → 1.06.)
 
 ## Playtest pass — fewer blowouts, smarter CPU, sharper strongpoints (July 2026)
 
