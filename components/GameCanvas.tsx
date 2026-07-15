@@ -3683,14 +3683,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (cpuTimerRef.current[ME] >= spawnInterval) {
         cpuTimerRef.current[ME] = 0;
 
-        // Hard CPU generalship: read the balance of forces and set the army
-        // stance — fall back to regroup (and heal) when badly outmatched,
-        // dig in when slightly weaker, push when stronger.
-        if (DIFF.stanceIQ) {
+        // CPU generalship: read the balance of forces and set the army stance —
+        // fall back to regroup (and heal) when outmatched, dig in when slightly
+        // weaker, push when stronger. This is the main brake on blowouts: a
+        // losing CPU that keeps marching everything forward just feeds the
+        // meatgrinder and gets pinned at its own spawn. Hard reads the balance
+        // early and reacts decisively; normal only pulls back once it's clearly
+        // losing (preserving the difficulty gap); easy never regroups.
+        if (DIFF.stanceIQ || DIFF.commands > 0) {
           const val = (us: Unit[]) => us.reduce((s, u) => s + ((UNIT_CONFIG[u.type] as any).cost || 0), 0);
           const myVal = val(myActive), foeVal = val(foeActive);
-          const desired: Stance = foeVal > 200 && myVal < foeVal * 0.5 ? 'retreat'
-            : foeVal > 200 && myVal < foeVal * 0.75 ? 'hold'
+          const retreatAt = DIFF.stanceIQ ? 0.5 : 0.4;
+          const holdAt = DIFF.stanceIQ ? 0.75 : 0.6;
+          const desired: Stance = foeVal > 200 && myVal < foeVal * retreatAt ? 'retreat'
+            : foeVal > 200 && myVal < foeVal * holdAt ? 'hold'
             : 'advance';
           if (stancesRef.current[ME] !== desired) {
             stancesRef.current[ME] = desired;
@@ -4005,6 +4011,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
         weather: weatherRef.current,
+        stances: { WEST: stancesRef.current[Team.WEST], EAST: stancesRef.current[Team.EAST] },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
         projectiles: projectilesRef.current.length,
