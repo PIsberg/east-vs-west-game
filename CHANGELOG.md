@@ -1,5 +1,17 @@
 # Changelog
 
+## Roster pass — every unit earns its slot, and some fight smarter (July 2026)
+
+An audit of the whole roster: which units felt worth building, and whose behaviour was blunt. Verified against the CPU-vs-CPU efficiency harness (a full pass ended a dead-even W51–E52).
+
+- **Snipers act like snipers.** A marksman now spends his slow, powerful shot on the most valuable soft target in view — an enemy sniper, special-forces trooper, medic, engineer or mortar crew, finishing wounded marks first — instead of whatever rifleman is nearest. Armour is ignored. (1.0 → 1.4.)
+- **Artillery and mortars walk the shell onto the crowd.** Indirect fire aims at the densest cluster in range, not the nearest man — the whole point of an area weapon. Artillery's damage was trimmed a touch so the smarter aim didn't make it oppressive.
+- **The mortar is worth building.** It was a strictly-worse artillery (half the range, smaller blast, dead-last efficiency). Recast as the infantry's cheap, rapid, river-wading indirect option — spammable forward harassment, distinct from artillery's long-range siege. (0.42 → 0.74.)
+- **The flamethrower has a job.** It burns garrisons out of buildings now — the cheap, close-up counterpart to the airstrike — and it's tougher and slightly longer-ranged so it survives the approach. (0.53 → 1.1.)
+- **The jeep has teeth.** Its mounted gun was a pea-shooter, so its speed bought nothing but a quick death. Hits hard enough now to be a real fast harasser. (0.44 → 1.0.)
+- **Special Forces are elite again** (135/110/28), fixing their bottom-of-the-table pricing. (0.28 → 1.2.)
+- **Medics work from the rear.** They stopped charging the firing line and dying without healing anyone — a medic trails the push and only side-steps to casualties level with it or fallen back, and it's a little tougher, so it lives to treat the reserve.
+
 ## Playtest pass — fewer blowouts, smarter CPU, sharper strongpoints (July 2026)
 
 - **A losing CPU regroups instead of dying.** The "fall back and consolidate when outmatched" generalship was hard-only; on normal, a losing computer just kept marching everything into the meatgrinder and got pinned at its own spawn. Normal now pulls back too — conservatively, only once it's clearly losing — so the beaten side holds a line and fights back. Across all four maps the loser's share of the surviving army roughly doubled (15% → 34%) and matches got closer.
