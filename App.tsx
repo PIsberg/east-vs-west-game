@@ -633,13 +633,15 @@ const App: React.FC = () => {
           { type: UnitType.TESLA, label: "TESLA", icon: <TeslaIcon size={16} />, special: true },
           { type: UnitType.APC, label: "APC", icon: <Truck size={16} /> },
           { type: UnitType.ARTILLERY, label: "ARTY", icon: <ArtilleryIcon size={16} /> },
-          { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
-          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
           { type: UnitType.ANTI_AIR, label: "ANTI-AIR", icon: <AntiAirIcon size={16} /> },
-          { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
           { type: UnitType.MINE_TANK, label: "T.MINE", icon: <TankMineIcon size={16} /> },
           { type: UnitType.BUNKER, label: "BUNKER", icon: <Building2 size={16} /> },
           { type: UnitType.GUNBOAT, label: "GUNBOAT", icon: <Ship size={16} /> }
+        ])}
+        {renderGroup("Aircraft", [
+          { type: UnitType.HELICOPTER, label: "HELI", icon: <HelicopterIcon size={16} /> },
+          { type: UnitType.FIGHTER, label: "FIGHTER", icon: <PlaneTakeoff size={16} /> },
+          { type: UnitType.DRONE, label: "DRONE", icon: <Radio size={16} /> },
         ])}
         {renderGroup("Airstrikes", [
           { type: UnitType.AIRBORNE, label: "DROP", icon: <ParachuteIcon size={16} /> },
