@@ -271,7 +271,7 @@ export const UNIT_CONFIG = {
   },
   [UnitType.MEDIC]: {
     cost: 45,
-    health: 22,
+    health: 32, // a field medic that folds to a single burst never delivers any
     damage: 0,
     healAmount: 9,
     speed: 0.58,

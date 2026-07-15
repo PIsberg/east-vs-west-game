@@ -2188,6 +2188,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
+        // Medics work from the rear, not the firing line. They used to advance
+        // shoulder-to-shoulder with the assault and die at the front (~96% losses)
+        // having healed no one — and "chase the nearest wounded" only made it
+        // worse, because the wounded ARE at the front. A medic now trails the
+        // push at a walk and only side-steps to a casualty that's level with it
+        // or fallen back (never forward into the fight), so it survives to keep
+        // the reserve patched up.
+        if (unit.type === UnitType.MEDIC && stance === 'advance' && !unit.boarded) {
+          const fwd = unit.team === Team.WEST ? 1 : -1;
+          moveX *= 0.3; // trail — never lead the charge
+          let patient: Unit | null = null, pd = 200;
+          spatialHash.current.queryCallback(unit.position.x, unit.position.y, 200, o => {
+            if (o.team !== unit.team || o.id === unit.id || o.boarded || o.health <= 0 || o.health >= o.maxHealth) return;
+            if ((UNIT_CONFIG[o.type] as any).isFlying) return;
+            // don't chase a casualty deeper toward the enemy than we already are
+            if (fwd > 0 ? o.position.x > unit.position.x + 25 : o.position.x < unit.position.x - 25) return;
+            const d = Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y);
+            if (d < pd) { pd = d; patient = o; }
+          });
+          if (patient) {
+            const p = patient as Unit;
+            const a = Math.atan2(p.position.y - unit.position.y, p.position.x - unit.position.x);
+            moveX = Math.cos(a) * config.speed;   // toward a safe (rearward/level) casualty
+            moveY = Math.sin(a) * config.speed;
+          }
+        }
+
         // Suppression: units recently hit slow to a crawl (infantry only)
         const isUnderFire = !config.isFlying && !!unit.lastHitTime && (Date.now() - unit.lastHitTime) < 650;
 
