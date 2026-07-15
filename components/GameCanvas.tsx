@@ -3823,9 +3823,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Smoke blinds the foe's long-range battery: dropped ON their
         // artillery/snipers/mortars, the cloud stops them firing out while my
         // units close the distance. (Never on my own troops — smoke blocks
-        // targeting both ways, so that would blind my own push.)
+        // targeting both ways, so that would blind my own push.) Used to fire
+        // on a 0.2 reflex up to two clouds at once — the single biggest line in
+        // the CPU's budget ($4.7k/session, more than it spent on tanks) and a
+        // permanent grey haze over the field. Now one cloud at a time, and only
+        // when the foe fields a real battery (≥3), so it's a considered play.
         const foeLongRange = foeUnits.filter(u => u.type === UnitType.ARTILLERY || u.type === UnitType.SNIPER || u.type === UnitType.MORTAR);
-        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 2 && smokesRef.current.length < 2 && Math.random() < 0.2 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && Math.random() < 0.14 * DIFF.special) {
           const cx = foeLongRange.reduce((s, u) => s + u.position.x, 0) / foeLongRange.length;
           const cy = foeLongRange.reduce((s, u) => s + u.position.y, 0) / foeLongRange.length;
           spawnUnit(ME, UnitType.SMOKE, { absolutePos: { x: cx, y: cy } });
