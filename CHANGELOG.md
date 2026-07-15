@@ -3,7 +3,7 @@
 ## The ground comes alive (July 2026)
 
 - **The battlefield was a flat green slab; now it's a field.** The terrain used to be one solid colour with a scattering of 140 identical dark tufts — read as a painted plane, not ground. It's now planted: denser grass in **three tones** per map so the turf mottles instead of reading flat, blades at **varied heights**, and a scattering of **low faceted bushes** that break the horizon and give the field depth (coloured apart from the grey rock props so they don't read as boulders). The base ground gained gentle **two-tone patches** — sun-catch turf over damp earth — spread across the actual play area instead of half off-map.
-- **Every map keeps its character.** Countryside and the islands go lush green; the desert gets sparse dry brush and sun-bleached sand patches, no bushes crowding the dunes; the city streets stay bare rubble. It's all on the instanced-mesh path — the whole meadow is two draw calls — and tuned low and muted so troops still pop against it.
+- **Every map keeps its character.** Countryside and the islands go lush green; the desert gets sparse dry brush and sun-bleached sand patches, no bushes crowding the dunes; the city streets stay bare rubble. Nothing sprouts in the rivers or on the bridge decks — the planting samples around the water, keeping the density up to the bank without a blade in the current. It's all on the instanced-mesh path — the whole meadow is two draw calls — and tuned low and muted so troops still pop against it.
 
 ## The Tesla coil forks its lightning (July 2026)
 

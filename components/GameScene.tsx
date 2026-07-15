@@ -3234,7 +3234,7 @@ const UrbanRoadMarkings = React.memo(({ mapType }: { mapType: MapType }) => {
 });
 
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
-const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
+const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terrain: TerrainObject[] }) => {
     const grassRef = useRef<THREE.InstancedMesh>(null!);
     const bushRef = useRef<THREE.InstancedMesh>(null!);
     const active = mapType !== MapType.URBAN; // city streets stay bare
@@ -3260,13 +3260,26 @@ const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
         const dummy = new THREE.Object3D();
         const col = new THREE.Color();
 
+        // Nothing grows in the river. Reject any planting that lands on a water
+        // channel or a bridge deck (bridges span the water). Resampling keeps the
+        // density up right to the bank instead of leaving a bald strip.
+        const blockers = terrain
+            .filter(t => t.type === 'river' || t.type === 'bridge')
+            .map(t => ({ x: t.x, y: t.y, hw: (t.width || 40) / 2, hh: (t.height || 22) / 2 }));
+        const inWater = (x: number, z: number, margin: number) =>
+            blockers.some(b => Math.abs(x - b.x) < b.hw + margin && Math.abs(z - b.y) < b.hh + margin);
+
         // Grass tufts — dense, colour-varied, some blades standing taller than others
         if (grassRef.current) {
             const tones = plan.grassTones.map(c => new THREE.Color(c));
             for (let i = 0; i < plan.tufts; i++) {
-                const x = 20 + rand(i, 1) * (CANVAS_WIDTH - 40);
-                const z = HORIZON_Y + 16 + rand(i, 2) * (CANVAS_HEIGHT - HORIZON_Y - 32);
-                const s = 1.1 + rand(i, 3) * 2.1;
+                let x = 0, z = 0;
+                for (let tries = 0; tries < 5; tries++) {
+                    x = 20 + rand(i, tries === 0 ? 1 : 20 + tries) * (CANVAS_WIDTH - 40);
+                    z = HORIZON_Y + 16 + rand(i, tries === 0 ? 2 : 40 + tries) * (CANVAS_HEIGHT - HORIZON_Y - 32);
+                    if (!inWater(x, z, 8)) break;
+                }
+                const s = inWater(x, z, 8) ? 0 : 1.1 + rand(i, 3) * 2.1; // still wet after retries → hide
                 dummy.position.set(x, 2, z);
                 dummy.scale.set(s, s * (1.5 + rand(i, 5) * 0.7), s);
                 dummy.rotation.set(0, rand(i, 4) * Math.PI * 2, 0);
@@ -3283,9 +3296,13 @@ const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
         if (bushRef.current) {
             const base = new THREE.Color(plan.bushTone);
             for (let i = 0; i < plan.bushes; i++) {
-                const x = 30 + rand(i, 11) * (CANVAS_WIDTH - 60);
-                const z = HORIZON_Y + 22 + rand(i, 12) * (CANVAS_HEIGHT - HORIZON_Y - 44);
-                const s = 3.5 + rand(i, 13) * 3.5;
+                let x = 0, z = 0;
+                for (let tries = 0; tries < 5; tries++) {
+                    x = 30 + rand(i, tries === 0 ? 11 : 50 + tries) * (CANVAS_WIDTH - 60);
+                    z = HORIZON_Y + 22 + rand(i, tries === 0 ? 12 : 70 + tries) * (CANVAS_HEIGHT - HORIZON_Y - 44);
+                    if (!inWater(x, z, 16)) break;
+                }
+                const s = inWater(x, z, 16) ? 0 : 3.5 + rand(i, 13) * 3.5; // still wet after retries → hide
                 dummy.position.set(x, s * 0.55, z);
                 dummy.scale.set(s * 1.3, s, s * 1.3);
                 dummy.rotation.set(0, rand(i, 14) * Math.PI * 2, 0);
@@ -3296,7 +3313,7 @@ const GroundScatter = React.memo(({ mapType }: { mapType: MapType }) => {
             bushRef.current.instanceMatrix.needsUpdate = true;
             if (bushRef.current.instanceColor) bushRef.current.instanceColor.needsUpdate = true;
         }
-    }, [mapType, active, plan]);
+    }, [mapType, active, plan, terrain]);
 
     if (!active) return null;
     return (
@@ -3498,7 +3515,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
-                <GroundScatter mapType={mapType} />
+                <GroundScatter mapType={mapType} terrain={terrain} />
                 <UrbanRoadMarkings mapType={mapType} />
                 <RiverRenderer terrain={terrain} mapType={mapType} />
                 {/* Dirt roads leading up to each bridge */}
