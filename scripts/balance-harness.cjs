@@ -60,7 +60,7 @@ const SPEED = 6;
   // exactly that factor. A $25 SOLDIER buy spawns a squad of 3; a $70 AIRBORNE
   // drop puts 3 troopers down (see spawnUnit) — pricing each trooper at the full
   // $70 is what made paratroopers look like a 0.1 catastrophe.
-  const COSTS = { TANK: 110, SOLDIER: 25 / 3, ARTILLERY: 80, SPECIAL_FORCES: 135, HELICOPTER: 155, SNIPER: 90, AIRBORNE: 70 / 4, MISSILE_STRIKE: 125, MINE_PERSONAL: 20, MINE_TANK: 45, DRONE: 45, ANTI_AIR: 80, TESLA: 165, FLAMETHROWER: 70, MEDIC: 45, ENGINEER: 55, APC: 95, BUNKER: 155, GUNSHIP: 225, NUKE: 2500, AIRSTRIKE: 100, MORTAR: 75, JEEP: 60, FIGHTER: 140, TRANSPORT: 70, SMOKE: 70, GUNBOAT: 145 };
+  const COSTS = { TANK: 110, SOLDIER: 25 / 3, ARTILLERY: 80, SPECIAL_FORCES: 135, HELICOPTER: 155, SNIPER: 90, AIRBORNE: 70 / 4, MISSILE_STRIKE: 125, MINE_PERSONAL: 20, MINE_TANK: 45, DRONE: 45, ANTI_AIR: 80, TESLA: 165, FLAMETHROWER: 70, MEDIC: 45, ENGINEER: 55, APC: 95, BUNKER: 155, GUNSHIP: 225, NUKE: 2500, AIRSTRIKE: 100, MORTAR: 58, JEEP: 60, FIGHTER: 140, TRANSPORT: 70, SMOKE: 70, GUNBOAT: 145 };
   console.log('\ntype              spawned  kills  killVal  lost  spent$  killVal/$');
   Object.entries(agg)
     .map(([t, a]) => ({ t, ...a, spent: a.spawned * (COSTS[t] ?? 0) }))

@@ -2924,6 +2924,52 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               ) || null;
             }
 
+            // Indirect fire (artillery, mortar) walks its shell onto the DENSEST
+            // cluster in range rather than the nearest man — the whole point of an
+            // area weapon is to catch several at once. Only overrides the general
+            // pass when it actually spots a knot of two or more.
+            if (!target && INDIRECT.has(unit.type)) {
+              const blast = config.explosionRadius || 50;
+              const inRange = potentialTargets.filter(o => o.team !== unit.team && o.health > 0 &&
+                !(UNIT_CONFIG[o.type] as any).isFlying &&
+                o.type !== UnitType.NAPALM && o.type !== UnitType.MINE_PERSONAL && o.type !== UnitType.MINE_TANK &&
+                !smokeBlocked(unit, o) &&
+                Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) < range);
+              let best: Unit | null = null, bestCount = 1;
+              for (const c of inRange) {
+                let count = 0;
+                for (const o of inRange) if (Math.hypot(o.position.x - c.position.x, o.position.y - c.position.y) < blast) count++;
+                if (count > bestCount) { bestCount = count; best = c; }
+              }
+              if (best) target = best;
+            }
+
+            // Sniper's eye: a marksman spends his slow, powerful shot on the most
+            // valuable soft target in view — an enemy sniper, special-forces
+            // trooper, medic, engineer or mortar crew — not the nearest rifleman.
+            // He ignores armour (the round pings off) and only falls through to
+            // the general pass if there's no worthwhile mark. This is what makes a
+            // sniper feel like a sniper instead of an expensive, slow rifle.
+            if (!target && unit.type === UnitType.SNIPER) {
+              let best: Unit | null = null, bestVal = -1;
+              for (const o of potentialTargets) {
+                if (o.team === unit.team || o.health <= 0) continue;
+                if ((UNIT_CONFIG[o.type] as any).isFlying || isMechanical(o.type)) continue;
+                if (o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) continue;
+                if (smokeBlocked(unit, o)) continue;
+                if (Math.hypot(o.position.x - unit.position.x, o.position.y - unit.position.y) > range) continue;
+                // Worth = unit cost, with a bump for the high-value support/elite
+                // roles a marksman most wants gone (killing the medic hurts more
+                // than its price tag). Wounded marks are finished off first.
+                const prime = (o.type === UnitType.SNIPER || o.type === UnitType.SPECIAL_FORCES ||
+                  o.type === UnitType.MEDIC || o.type === UnitType.ENGINEER || o.type === UnitType.MORTAR) ? 60 : 0;
+                const woundBonus = o.health < o.maxHealth ? 25 : 0;
+                const v = ((UNIT_CONFIG[o.type] as any).cost || 0) + prime + woundBonus;
+                if (v > bestVal) { bestVal = v; best = o; }
+              }
+              if (best) target = best;
+            }
+
             // Primary pass: ground targets (all unit types)
             if (!target) {
               target = potentialTargets.find(o => {

@@ -42,7 +42,11 @@ export const UNIT_CONFIG = {
   [UnitType.ARTILLERY]: {
     cost: 80,
     health: 45,
-    damage: 38,
+    // Trimmed 38 -> 32: now that indirect fire walks its shell onto the densest
+    // cluster instead of the nearest man, each shell catches more, and the extra
+    // reliable hits pushed artillery well over the efficiency band. Still the
+    // long-range siege king — just no longer oppressive.
+    damage: 32,
     explosionRadius: 65,
     speed: 0.22,
     deployDistance: 80,
@@ -324,13 +328,20 @@ export const UNIT_CONFIG = {
     colorEast: '#1e293b',
   },
   [UnitType.MORTAR]: {
-    cost: 75,
-    health: 24,
+    // The infantry's own indirect fire — deliberately NOT a cut-price artillery.
+    // At 75/240/320 it was a strictly-worse ARTILLERY (half the range, a smaller
+    // blast, for $5 less) and sat dead last on efficiency (~0.42). Its identity
+    // is now cheap + RAPID + mobile: it lobs far more often than a howitzer, a
+    // foot team that wades rivers a towed gun can't cross, at the cost of short
+    // reach and a small blast. Artillery stays the expensive long-range siege
+    // piece; the mortar is forward harassment you can spam.
+    cost: 58,
+    health: 28,
     damage: 26,
-    explosionRadius: 40,
+    explosionRadius: 42,
     speed: 0.34,
     range: 320,
-    attackSpeed: 240,
+    attackSpeed: 175,
     width: 16,
     height: 16,
     colorWest: '#365314',
