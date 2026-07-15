@@ -723,20 +723,46 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     {
       const riverSegs = t.filter(o => o.type === 'river');
       const xMinBand = CANVAS_WIDTH * 0.28, xMaxBand = CANVAS_WIDTH * 0.72;
+      const bandTop = HORIZON_Y + 40, bandH = CANVAS_HEIGHT - HORIZON_Y - 80;
+      // A house can't sit on water, a bridge or another building. It CAN sit on
+      // open ground near a dune — checking hills too let a dune-heavy map (Desert)
+      // reject every spot and place zero strongpoints. Water/building clearance is
+      // the only hard rule.
+      const clearFor = (x: number, y: number, w2: number, h2: number) => {
+        if (riverSegs.some(s => Math.abs(s.x - x) < (s.width ?? 40) / 2 + w2 + 8 && Math.abs(s.y - y) < (s.height ?? 22) / 2 + h2 + 8)) return false;
+        if (t.some(o => o.type === 'bridge' && Math.abs(o.x - x) < (o.width || 60) / 2 + w2 + 12 && Math.abs(o.y - y) < (o.height || 40) / 2 + h2 + 12)) return false;
+        if (t.some(o => o.type === 'building' &&
+          Math.abs(o.x - x) < (o.width || o.size * 2.6) / 2 + w2 + 26 &&
+          Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
+        return true;
+      };
       let placed = 0;
-      for (let i = 0; i < OCCUPIABLE_PER_MAP * 40 && placed < OCCUPIABLE_PER_MAP; i++) {
+      for (let i = 0; i < OCCUPIABLE_PER_MAP * 60 && placed < OCCUPIABLE_PER_MAP; i++) {
         // Bias across three vertical lanes so they don't clump on one flank
         const lane = placed % 3;
-        const laneTop = HORIZON_Y + 40 + lane * ((CANVAS_HEIGHT - HORIZON_Y - 80) / 3);
+        const laneTop = bandTop + lane * (bandH / 3);
         const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
-        const y = laneTop + Math.random() * ((CANVAS_HEIGHT - HORIZON_Y - 80) / 3);
+        const y = laneTop + Math.random() * (bandH / 3);
         const size = 20 + Math.random() * 22; // 20–42 footprint
         const width = size * 2.6, height = size * 2.0;
-        // Clear of water, bridges, hills and other buildings (its own footprint)
-        if (avoidCheck(x, y, size, riverSegs, 40)) continue;
-        if (t.some(o => o.type === 'building' &&
-          Math.abs(o.x - x) < (width / 2 + (o.width || o.size * 2.6) / 2 + 30) &&
-          Math.abs(o.y - y) < (height / 2 + (o.height || o.size * 2.0) / 2 + 20))) continue;
+        if (!clearFor(x, y, width / 2, height / 2)) continue;
+        const hp = Math.round(size * BUILDING_HP_PER_SIZE);
+        t.push({
+          id: gid(), x, y, type: 'building', size, width, height,
+          occupiable: true, capacity: buildingCapacity(size),
+          occupant: null, garrisonUnits: [], state: 'normal',
+          health: hp, maxHealth: hp, fireCooldown: 0,
+        });
+        placed++;
+      }
+      // Guarantee at least a couple of strongpoints even on a cramped map: relax
+      // the lane bias and scan the whole band for any water/building-free spot.
+      for (let i = 0; placed < Math.min(2, OCCUPIABLE_PER_MAP) && i < 400; i++) {
+        const size = 20 + Math.random() * 16;
+        const width = size * 2.6, height = size * 2.0;
+        const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
+        const y = bandTop + Math.random() * bandH;
+        if (!clearFor(x, y, width / 2, height / 2)) continue;
         const hp = Math.round(size * BUILDING_HP_PER_SIZE);
         t.push({
           id: gid(), x, y, type: 'building', size, width, height,
@@ -3032,9 +3058,38 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Houses infantry can fortify. The first riflemen to reach a free house
     // capture it (a flag goes up); friendly riflemen reinforce up to capacity;
     // the men shelter inside (removed from the field) while the structure soaks
-    // fire on their behalf; the garrison shoots back out of the windows; and when
-    // the house is battered down most of them die in the rubble, a few scramble
-    // clear. Empty houses are indestructible cover — only a manned one is a target.
+    // fire on their behalf; the garrison shoots back out of the windows. Each
+    // time a shell knocks the house down a damage stage the shaken garrison is
+    // driven out into the open and the position is up for grabs again — so a
+    // strongpoint changes hands as it's chewed down. When it finally collapses
+    // most of whoever's inside dies in the rubble. Empty houses are
+    // indestructible cover — only a manned one is a target.
+    //
+    // Put the garrison back on the field. `survive` (0..1) is the per-man
+    // chance of making it out (undefined = all live); `pushClear` shoves them
+    // out the back beyond the entry radius so they don't just walk straight
+    // back in before the other side gets its chance. Returns the number lost.
+    const spillGarrison = (bld: TerrainObject, opts: { survive?: number, healthMult: number, pushClear?: boolean }): number => {
+      const g = bld.garrisonUnits || [];
+      const hw = (bld.width || bld.size * 2.6) / 2;
+      let lost = 0;
+      g.forEach((p, idx) => {
+        if (opts.survive != null && Math.random() >= opts.survive) { lost++; return; }
+        p.boarded = false;
+        p.health = Math.max(1, Math.floor(p.maxHealth * opts.healthMult));
+        p.lastHitTime = Date.now();
+        p.state = UnitState.MOVING;
+        p.suppressedUntil = 0;
+        const back = p.team === Team.WEST ? -1 : 1;
+        const outX = opts.pushClear ? (hw + BUILDING_ENTRY_RANGE + 18 + idx * 3) : (hw + 10 + idx * 4);
+        p.position.x = Math.max(10, Math.min(CANVAS_WIDTH - 10, bld.x + back * outX));
+        p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, bld.y + ((idx % 5) - 2) * 12));
+        if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
+      });
+      bld.garrisonUnits = [];
+      return lost;
+    };
+
     terrainRef.current.forEach(bld => {
       if (bld.type !== 'building' || !bld.occupiable || bld.state === 'burnt') return;
       bld.garrisonUnits = bld.garrisonUnits || [];
@@ -3110,26 +3165,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Damage states track structural integrity; 0 HP collapses the house.
       if ((bld.health ?? 0) <= 0) {
-        const g = bld.garrisonUnits;
-        const survivors = g.filter(() => Math.random() < BUILDING_COLLAPSE_SURVIVE);
-        survivors.forEach((p, idx) => {
-          p.boarded = false;
-          p.health = Math.max(1, Math.floor(p.maxHealth * 0.35));
-          p.lastHitTime = Date.now();
-          p.state = UnitState.MOVING;
-          const back = p.team === Team.WEST ? -1 : 1;
-          p.position.x = Math.max(10, Math.min(CANVAS_WIDTH - 10, bld.x + back * (hw + 10 + idx * 4)));
-          p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, bld.y + (idx - 1) * 12));
-          if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
-        });
-        const buried = g.length - survivors.length;
-        if (bld.occupant) {
-          statsRef.current[bld.occupant].lost += buried;
-          pushEvent('capture', `${teamName(bld.occupant)} strongpoint collapses`, bld.occupant);
+        const held = bld.occupant;
+        const buried = spillGarrison(bld, { survive: BUILDING_COLLAPSE_SURVIVE, healthMult: 0.35 });
+        if (held) {
+          statsRef.current[held].lost += buried;
+          pushEvent('capture', `${teamName(held)} strongpoint collapses`, held);
         }
         bld.state = 'burnt';
         bld.occupant = null;
-        bld.garrisonUnits = [];
         bld.health = 0;
         soundService.playLargeExplosion();
         shakeRef.current = Math.max(shakeRef.current, 6);
@@ -3146,7 +3189,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         particlesRef.current.push({ id: generateId(), position: { x: bld.x, y: bld.y }, life: 600, color: '#292524', size: (bld.width || 40) * 0.7, isGroundDecal: true });
       } else {
         const frac = (bld.health ?? 0) / (bld.maxHealth || 1);
-        bld.state = frac > 0.6 ? 'normal' : frac > 0.3 ? 'broken' : 'burning';
+        const newState = frac > 0.6 ? 'normal' : frac > 0.3 ? 'broken' : 'burning';
+        // Crossing into a worse stage (normal→broken, broken→burning) blows the
+        // garrison out into the open, shaken but alive, and hands the position
+        // back to whoever reaches it next — the enemy assaulting it, or the
+        // defenders scrambling back in. (Collapse, above, is the lethal stage.)
+        if (newState !== bld.state && (newState === 'broken' || newState === 'burning') && bld.garrisonUnits.length > 0) {
+          const held = bld.occupant;
+          spillGarrison(bld, { healthMult: 0.6, pushClear: true });
+          bld.occupant = null;
+          bld.fireCooldown = 0;
+          if (held) pushEvent('capture', `${teamName(held)} driven out of a crumbling strongpoint`, held);
+          soundService.playCrackSound();
+          shakeRef.current = Math.max(shakeRef.current, 3);
+          for (let k = 0; k < 12; k++) {
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: bld.x + (Math.random() - 0.5) * (bld.width || 40), y: bld.y + (Math.random() - 0.5) * (bld.height || 30) },
+              velocity: { x: (Math.random() - 0.5) * 1.8, y: (Math.random() - 0.5) * 1.8 },
+              drag: 0.9, life: 30 + Math.random() * 20,
+              color: k % 2 === 0 ? '#a8a29e' : '#78716c',
+              size: 4 + Math.random() * 6, alt: 3 + Math.random() * 12, altVel: 0.7,
+            });
+          }
+        }
+        bld.state = newState;
         // A house on fire coughs smoke so its state reads at a glance
         if (bld.state === 'burning' && tickCountRef.current % 8 === 0) {
           particlesRef.current.push({
