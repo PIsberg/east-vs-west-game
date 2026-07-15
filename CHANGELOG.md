@@ -2,7 +2,7 @@
 
 ## Orders you can read at a glance (July 2026)
 
-- **Every ordered unit now wears a clear command badge** instead of a tiny coloured dot: a **forward arrow** (green) for attack, a **diamond** (amber) for hold, a **back arrow** (red) to fall back. The arrows point the way the unit is headed, so a glance tells you what a selected squad has been told to do.
+- **Every ordered unit now wears a clear command badge** instead of a tiny coloured dot: a **forward arrow** (green) for attack, a **pause symbol** (amber) for hold, a **back arrow** (red) to fall back. The arrows point the way the unit is headed, so a glance tells you what a selected squad has been told to do.
 - **Held infantry hunker down.** Tell troops to hold (or let them dig in) and they drop into a low crouch where they stand, so a defensive line reads as men gone to ground rather than standing around waiting.
 
 ## Single-player fills the screen; aircraft get their own shelf (July 2026)

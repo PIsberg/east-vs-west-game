@@ -1685,12 +1685,15 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     const oc = unit.orders === 'advance' ? '#22c55e' : unit.orders === 'hold' ? '#f59e0b' : '#ef4444';
                     const oy = (unit.height || 16) + 17;
                     if (unit.orders === 'hold') {
+                        // Pause symbol — two upright bars — reads as "stop here".
                         return (
                             <group position={[0, oy, 0]}>
-                                <mesh rotation={[0, Math.PI / 4, Math.PI / 4]}>
-                                    <boxGeometry args={[3.6, 3.6, 3.6]} />
-                                    <meshBasicMaterial color={oc} toneMapped={false} />
-                                </mesh>
+                                {[-1.4, 1.4].map((dx, i) => (
+                                    <mesh key={i} position={[dx, 0, 0]}>
+                                        <boxGeometry args={[1.5, 5.4, 1.5]} />
+                                        <meshBasicMaterial color={oc} toneMapped={false} />
+                                    </mesh>
+                                ))}
                             </group>
                         );
                     }
