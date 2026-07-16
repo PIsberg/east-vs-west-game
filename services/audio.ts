@@ -18,6 +18,7 @@ class SoundService {
   private panLow: StereoPannerNode[] = [];
   private panIdx = 0;
   private camFocusX = 400;
+  private duckNode: GainNode | null = null;
   private lastPlayed: Map<string, number> = new Map();
   private muted = false;
   private musicOn = true;
@@ -48,10 +49,15 @@ class SoundService {
       compressor.release.value = 0.12;
       const master = this.ctx.createGain();
       master.gain.value = this.muted ? 0 : this.volume;
-      master.connect(compressor);
+      // Shell-shock duck sits between the master and the compressor: nothing
+      // else ever touches it, so it can't fight the zoom listener's bus gains
+      const duck = this.ctx.createGain();
+      master.connect(duck);
+      duck.connect(compressor);
       compressor.connect(this.ctx.destination);
       this.dest = master;
       this.master = master;
+      this.duckNode = duck;
       // Music runs through its own bus so it stays quiet under the SFX
       const musicBus = this.ctx.createGain();
       musicBus.gain.value = 0.55;
@@ -698,6 +704,31 @@ class SoundService {
           l.start(s); l.stop(s + beat * 0.45);
         });
       }
+    }
+  }
+
+  // ── Shell shock: a high ring in deafened ears while the war ducks under it ─
+  public shellShock(strength: number) {
+    if (!this.ctx || !this.dest || strength < 0.15 || !this.canPlay('shock', 1500)) return;
+    this.ensureContext();
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 3400;
+    const dur = 1.6 + strength * 1.2;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.11 * strength, t + 0.04); // rides above the duck below
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g); g.connect(this.dest);
+    osc.start(t); osc.stop(t + dur + 0.05);
+    // Everything else drops away, then bleeds back in
+    if (this.duckNode) {
+      const d = this.duckNode.gain;
+      d.cancelScheduledValues(t);
+      d.setValueAtTime(d.value, t);
+      d.linearRampToValueAtTime(1 - 0.7 * strength, t + 0.05);
+      d.setTargetAtTime(1, t + 0.4 + 0.5 * strength, 0.5);
     }
   }
 

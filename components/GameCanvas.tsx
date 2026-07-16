@@ -486,6 +486,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const LASER_LIFE = 235;     // designate + ~3s burn
   const flashOpacity = useRef(0);
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
+  const shockRef = useRef(0); // shell-shock post-processing weight (0..1), decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
@@ -1537,6 +1538,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return inSmoke(o.position.x, o.position.y) || inSmoke(shooter.position.x, shooter.position.y);
     };
 
+    // Shell shock: heavy ordnance landing inside the camera's view punches the
+    // viewer — post-processing weight for GameScene plus the deafened-ears ring.
+    // Strength falls off with how far from the camera focus the blast landed;
+    // off-screen blasts don't concuss anyone.
+    const shockCam = (x: number, strength: number) => {
+      const cam = camApiRef.current?.state();
+      if (!cam) return;
+      const span = Math.min(CANVAS_WIDTH, cam.dist * 1.09) / 2 + 60;
+      const d = Math.abs(x - cam.tx);
+      if (d > span) return;
+      const s = strength * (1 - (d / span) * 0.6);
+      if (s > shockRef.current) shockRef.current = Math.min(1, s);
+      soundService.shellShock(s);
+    };
+
     if (flashOpacity.current > 0) flashOpacity.current -= 0.02; // Flash decay
     // Spawn queue processed in useEffect now to avoid frame-loop race conditions
 
@@ -1662,6 +1678,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const isNuke = !!(m as any).isNuke;
         if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound(m.current.x);
         shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : m.isCruise ? 14 : 8);
+        shockCam(m.current.x, isNuke ? 1 : m.isCruise ? 0.8 : 0.6);
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
         const damage = m.customDamage ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage);
         const radius = m.customRadius ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius);
@@ -3963,6 +3980,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // hit sound from one loop and the blast from the other.
         if (p.explosionRadius) soundService.playExplosionSound(p.position.x);
         else if (hit) soundService.playHitSound(p.position.x);
+        // A heavy shell bursting in view rattles the viewer too (mildly)
+        if (p.explosionRadius && p.damage >= 80) shockCam(p.position.x, 0.35);
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
@@ -4820,6 +4839,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         weather={weatherRef.current}
         mapType={mapType}
         shake={shakeRef}
+        shock={shockRef}
         capture={captureRef.current}
         flanks={flankCapsRef.current}
         onUnitClick={handleUnitClick}

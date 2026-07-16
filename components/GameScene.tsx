@@ -3,7 +3,7 @@ import React, { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, useGLTF, useAnimations } from '@react-three/drei';
 import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
-import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { EffectComposer, Bloom, ChromaticAberration, HueSaturation, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS } from '../constants';
@@ -34,6 +34,7 @@ interface GameSceneProps {
     cb?: boolean; // colorblind-assist: East identity color becomes amber
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
+    shock?: React.MutableRefObject<number>; // shell-shock post weight (0..1), decays here
     capture?: CapturePoint;
     flanks?: CapturePoint[];
     onUnitClick?: (unit: Unit) => void;
@@ -104,6 +105,29 @@ const ShakeRig = ({ shake, children }: { shake?: React.MutableRefObject<number>,
         }
     });
     return <group ref={ref}>{children}</group>;
+};
+
+// Shell-shock driver: mutates the mounted post-effects' uniforms from a
+// decaying 0..1 ref set by the engine when heavy ordnance bursts in view.
+// The effects stay MOUNTED at weight 0 — swapping composer passes mid-battle
+// causes hitches, and per-frame prop changes would recreate the effects.
+const ShockDriver = ({ shock, chromaRef, hueRef, vigRef }: {
+    shock?: React.MutableRefObject<number>,
+    chromaRef: React.MutableRefObject<any>,
+    hueRef: React.MutableRefObject<any>,
+    vigRef: React.MutableRefObject<any>,
+}) => {
+    useFrame(() => {
+        const s = shock?.current || 0;
+        if (chromaRef.current?.offset) chromaRef.current.offset.set(0.0016 * s, 0.001 * s);
+        const sat = hueRef.current?.uniforms?.get?.('saturation');
+        if (sat) sat.value = -0.55 * s;
+        const dark = vigRef.current?.uniforms?.get?.('darkness');
+        if (dark) dark.value = 0.5 * Math.min(1, s * 1.25);
+        if (shock && s > 0.002) shock.current = s * 0.975; // ~2s clear
+        else if (shock) shock.current = 0;
+    });
+    return null;
 };
 
 const RainEffect = () => {
@@ -3558,7 +3582,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3567,6 +3591,15 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // clamp it on update); pan slides target + camera along the screen-right
     // axis projected on the ground plane, with the target kept on the map.
     const controlsRef = useRef<any>(null);
+
+    // Shell-shock post-effect handles (uniforms driven by ShockDriver). The
+    // zero offset is memoized — a fresh Vector2 per render would recreate the
+    // ChromaticAberration effect every frame.
+    const shockChromaRef = useRef<any>(null);
+    const shockHueRef = useRef<any>(null);
+    const shockVigRef = useRef<any>(null);
+    const shockZeroOffset = useMemo(() => new THREE.Vector2(0, 0), []);
+
     useEffect(() => {
         const api = {
             zoom: (factor: number) => {
@@ -3736,9 +3769,15 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
             {fx !== 'low' && (
-                <EffectComposer>
-                    <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
-                </EffectComposer>
+                <>
+                    <EffectComposer>
+                        <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+                        <ChromaticAberration ref={shockChromaRef} offset={shockZeroOffset} />
+                        <HueSaturation ref={shockHueRef} saturation={0} />
+                        <Vignette ref={shockVigRef} darkness={0} offset={0.3} />
+                    </EffectComposer>
+                    <ShockDriver shock={shock} chromaRef={shockChromaRef} hueRef={shockHueRef} vigRef={shockVigRef} />
+                </>
             )}
         </Canvas>
     );
