@@ -101,6 +101,7 @@ The first team to reach **100 Points** wins.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
 - **Winter map — frozen river**: The channel is iced over. Infantry walk **straight across the ice anywhere** (slowed, and caught in the open), while vehicles still funnel over the bridges — hold the crossings or get flanked over the ice. Gunboats can't anchor in a frozen channel, and it snows instead of raining.
 - **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
+- **Wrecks are cover**: A destroyed tank doesn't vanish — it burns where it died. The hulk is real terrain: your infantry duck behind it like a boulder, vehicles drive around it, and it smolders for the better part of a minute before sinking away. The battlefield ends up telling the story of the fight — and a knocked-out vehicle in a chokepoint changes the next push through it.
 
 ---
 

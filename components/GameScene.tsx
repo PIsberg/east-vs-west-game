@@ -2484,6 +2484,57 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         );
     }
 
+    if (item.type === 'wreck') {
+        const s = item.size;
+        const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
+        const yaw = (seed % 628) / 100;
+        const burning = item.state === 'burning';
+        const life = item.health ?? 0;
+        const fade = Math.min(1, life / 300); // sink + flatten over the last ~5s
+        const tracked = item.wreckOf === UnitType.TANK || item.wreckOf === UnitType.ARTILLERY || item.wreckOf === UnitType.APC;
+        const flicker = Math.floor(Date.now() / 90) % 2 === 0;
+        const ember = burning ? (flicker ? '#f97316' : '#b45309') : '#000000';
+        return (
+            <group position={[item.x, (fade - 1) * s, item.y]} rotation={[0, yaw, 0]} scale={[1, fade, 1]}>
+                {/* Charred hull, slumped on a blown track/axle */}
+                <mesh position={[0, s * 0.35, 0]} rotation={[0.06, 0, 0.1]} castShadow>
+                    <boxGeometry args={[s * 2.1, s * 0.75, s * 1.25]} />
+                    <meshStandardMaterial color="#1c1917" roughness={1} />
+                </mesh>
+                {tracked ? (
+                    <group>
+                        {/* Turret knocked askew, barrel drooping at the ground */}
+                        <mesh position={[-s * 0.2, s * 0.85, s * 0.15]} rotation={[0.12, yaw, -0.1]} castShadow>
+                            <boxGeometry args={[s * 0.95, s * 0.5, s * 0.8]} />
+                            <meshStandardMaterial color="#292524" roughness={1} />
+                        </mesh>
+                        <mesh position={[s * 0.6, s * 0.7, s * 0.15]} rotation={[0, 0, Math.PI / 2 - 1.25]} castShadow>
+                            <cylinderGeometry args={[s * 0.07, s * 0.09, s * 1.4, 6]} />
+                            <meshStandardMaterial color="#292524" roughness={1} />
+                        </mesh>
+                    </group>
+                ) : (
+                    /* Blown-open cab shell folded over the hull */
+                    <mesh position={[-s * 0.35, s * 0.8, 0]} rotation={[0, 0, 0.22]} castShadow>
+                        <boxGeometry args={[s * 0.9, s * 0.55, s * 1.1]} />
+                        <meshStandardMaterial color="#292524" roughness={1} />
+                    </mesh>
+                )}
+                {/* Fire glowing out of the burnt-open core while it burns —
+                    crowns above the hull so the blaze reads from any angle */}
+                <mesh position={[0, s * 0.82, 0]} scale={[1, flicker ? 1.15 : 0.9, 1]}>
+                    <sphereGeometry args={[s * 0.5, 8, 6]} />
+                    <meshStandardMaterial color="#0c0a09" emissive={ember} emissiveIntensity={burning ? 2.4 : 0} toneMapped={false} roughness={1} transparent opacity={burning ? 0.95 : 0.4} />
+                </mesh>
+                {/* Scorched ground under the kill */}
+                <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[s * 1.7, 12]} />
+                    <meshBasicMaterial color="#0c0a09" transparent opacity={0.35 * fade} depthWrite={false} />
+                </mesh>
+            </group>
+        );
+    }
+
     if (item.type === 'crate' || item.type === 'barrel') {
         const s = item.size;
         const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));

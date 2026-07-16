@@ -60,13 +60,14 @@ export interface TerrainObject {
   id: string;
   x: number;
   y: number;
-  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel';
+  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel' | 'wreck';
   size: number;
   width?: number;
   height?: number;
   state?: 'normal' | 'burning' | 'burnt' | 'broken';
   health?: number; // Burn time or durability
   frozen?: boolean; // river segment iced over (Winter): infantry cross anywhere, boats can't anchor
+  wreckOf?: UnitType; // 'wreck' only: which vehicle died here — picks the hulk silhouette
   // Occupiable buildings — infantry strongpoints. A house with `occupiable` set
   // can be garrisoned: the first team whose riflemen reach it captures it (a flag
   // goes up), soldiers shelter inside (removed from the field), the structure
