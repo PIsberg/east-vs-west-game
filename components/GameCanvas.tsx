@@ -1463,12 +1463,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const dirX = mx / mag, dirY = my / mag;
       const look = AVOID_LOOKAHEAD * (speed > 0 ? Math.min(1.4, 0.6 + speed) : 1);
 
+      // Tracked hulls don't steer around vegetation — they drive through it
+      // and the knockdown pass flattens it under them. Rocks/wrecks stay solid.
+      const plowsVegetation = getMoveClass(unit.type) === 'tracked';
+
       // Nearest thing sitting in the corridor ahead
       let block: TerrainObject | null = null;
       let blockT = Infinity, blockLat = 0, blockClear = 0;
       for (const o of terrainRef.current) {
         const isSolid = o.type === 'building' ||
-          (solidProps && (o.type === 'tree' || o.type === 'rock' || o.type === 'wreck' ||
+          (solidProps && ((o.type === 'tree' && !plowsVegetation && o.state !== 'broken') ||
+            o.type === 'rock' || o.type === 'wreck' ||
             ((o.type === 'crate' || o.type === 'barrel') && o.state !== 'broken')));
         if (!isSolid) continue;
         const dx = o.x - unit.position.x, dy = o.y - unit.position.y;
@@ -2089,10 +2094,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           pushEvent('bridge', 'Bridge reopened');
         }
       });
-      // Broken prop debris fades from the field after ~12s (health is the timer)
+      // Broken prop debris fades from the field after ~12s (health is the timer);
+      // flattened vegetation is swept the same way — cover loss is permanent
       for (let i = terrainRef.current.length - 1; i >= 0; i--) {
         const p = terrainRef.current[i];
-        if ((p.type === 'crate' || p.type === 'barrel') && p.state === 'broken') {
+        if ((p.type === 'crate' || p.type === 'barrel' || p.type === 'tree' || p.type === 'bush') && p.state === 'broken') {
           p.health = (p.health ?? 0) - 10;
           if (p.health <= 0) terrainRef.current.splice(i, 1);
         }
@@ -2143,8 +2149,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Terrain Logic (Burning & Destruction)
     terrainRef.current.forEach(t => {
-      if (t.type === 'tree') {
-        // Burning Logic
+      if (t.type === 'tree' || t.type === 'bush') {
+        // Burning Logic (strikes set bushes burning too — they burn down the same)
         if (t.state === 'burning') {
           t.health = (t.health || 0) * 0.99 - 0.1; // Burn down
           if ((t.health || 0) <= 0) {
@@ -2152,16 +2158,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
-        // Tank Crushing Logic
-        if (t.state !== 'broken' && t.state !== 'burnt') { // Can crush normal or burning trees
-          // Find heavy vehicles colliding with tree
+        // Knockdown: any tracked hull flattens vegetation it drives through.
+        // The fallen trunk is debris, not terrain — it stops being cover and
+        // a steering solid immediately, and the sweep below despawns it.
+        if (t.state !== 'broken' && t.state !== 'burnt') {
           const crusher = unitsRef.current.find(u =>
-            (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY) && // Check Types
-            Math.abs(u.position.x - t.x) < 20 && Math.abs(u.position.y - t.y) < 20 // Collision box
+            getMoveClass(u.type) === 'tracked' && u.health > 0 && !u.boarded &&
+            Math.abs(u.position.x - t.x) < 20 && Math.abs(u.position.y - t.y) < 20
           );
           if (crusher) {
             t.state = 'broken';
-            soundService.playHitSound(t.x); // Crunch sound?
+            t.health = 720; // debris timer — swept like prop debris (~12s)
+            soundService.playCrackSound(t.x);
+            // Splintered wood + a flurry of leaves off the falling crown
+            for (let k = 0; k < 10; k++) {
+              const leafy = t.type === 'bush' || k % 2 === 0;
+              particlesRef.current.push({
+                id: generateId(),
+                position: { x: t.x + (Math.random() - 0.5) * 16, y: t.y + (Math.random() - 0.5) * 12 },
+                velocity: { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.5) * 1.6 },
+                drag: 0.92,
+                life: 20 + Math.random() * 25,
+                color: leafy ? (Math.random() < 0.5 ? '#16a34a' : '#365314') : (Math.random() < 0.5 ? '#713f12' : '#92400e'),
+                size: 2.5 + Math.random() * 4,
+                alt: 4 + Math.random() * 10, altVel: leafy ? 0.15 : -0.2,
+              });
+            }
+            // Anyone sheltering behind it is suddenly in the open
+            unitsRef.current.forEach(o => {
+              if (o.isInCover && Math.hypot(o.position.x - t.x, o.position.y - t.y) < 30) {
+                o.isInCover = false;
+                o.coverEnterTime = undefined;
+              }
+            });
           }
         }
       }
@@ -2734,6 +2763,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const cover = terrainRef.current.find(t => {
                   // Wrecks are battlefield cover too — the fight creates its own
                   if (t.type !== 'tree' && t.type !== 'rock' && t.type !== 'wreck') return false;
+                  if (t.type === 'tree' && t.state === 'broken') return false; // flattened — nothing left to hide behind
                   if (t.id === unit.lastCoverId) return false;
                   if (unit.team === Team.WEST ? t.x < unit.position.x - coverBackBias : t.x > unit.position.x + coverBackBias) return false;
                   const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
@@ -2752,6 +2782,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   } else {
                     moveX = 0; moveY = 0;
                     unit.isInCover = true;
+                    // Records what he's behind — the sniper's ghillie only takes in foliage
+                    unit.coverType = cover.type === 'tree' ? 'tree' : 'rock';
                     unit.coverEnterTime = Date.now();
                     unit.coverDuration = isUnderFire
                       ? 2500 + Math.random() * 3500
