@@ -2689,6 +2689,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
+        // A sniper told to hold slips into nearby forest the same way — the
+        // hold freeze means he could otherwise never reach the treeline, and
+        // camouflage that can't be reached isn't a mechanic (playtest: the
+        // camo counter never fired once across whole matches without this).
+        if (stance === 'hold' && unit.type === UnitType.SNIPER && !unit.boarded && !unit.isInCover) {
+          const tree = terrainRef.current.find(t =>
+            t.type === 'tree' && t.state !== 'broken' && t.state !== 'burnt' &&
+            Math.hypot(t.x - unit.position.x, t.y - unit.position.y) < 175 &&
+            !unitsRef.current.some(o => o.team === unit.team && o.id !== unit.id &&
+              Math.hypot(o.position.x - t.x, o.position.y - t.y) < 28));
+          if (tree) {
+            const d = Math.hypot(tree.x - unit.position.x, tree.y - unit.position.y);
+            if (d > 20) {
+              const a = Math.atan2(tree.y - unit.position.y, tree.x - unit.position.x);
+              moveX = Math.cos(a) * config.speed;
+              moveY = Math.sin(a) * config.speed;
+            } else {
+              unit.isInCover = true;
+              unit.coverType = 'tree';
+              unit.coverEnterTime = Date.now();
+              unit.coverDuration = 4500 + Math.random() * 9000;
+            }
+          }
+        }
+
         // Medics work from the rear, not the firing line. They used to advance
         // shoulder-to-shoulder with the assault and die at the front (~96% losses)
         // having healed no one — and "chase the nearest wounded" only made it
@@ -3159,6 +3184,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (still && holding && unit.isInCover && unit.coverType === 'tree' &&
               tickCountRef.current >= (unit.camoRevealAt ?? 0)) {
             unit.camoTicks = (unit.camoTicks ?? 0) + 1;
+            // Ordered to stay: the cover dwell timer doesn't run out from under
+            // the ghillie while he holds (it resumes when the order changes)
+            unit.coverEnterTime = Date.now();
           } else {
             unit.camoTicks = 0;
           }
