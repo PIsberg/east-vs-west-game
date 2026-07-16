@@ -14,6 +14,13 @@
  *
  * All probes run early in the match, before the CPUs' own strike logic can
  * lock the clocks we assert on.
+ *
+ * Also asserts GAME_TEMPO — measured at spectate speed 1, where the sim must
+ * run ~75 ticks/s (60 × 1.25) and a reading of ~60 means the tempo multiplier
+ * or its fractional-tick carry has been lost. Speed 1 matters: at higher
+ * speeds a slow headless frame hits the 240-ticks/frame catch-up cap and
+ * silently drops ticks, so the measured rate sags below nominal and the
+ * assertion would flake. At speed 1 the cap can never bite.
  */
 const puppeteer = require('puppeteer-core');
 
@@ -30,12 +37,30 @@ const puppeteer = require('puppeteer-core');
     { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.waitForFunction('!!(window.__ewDebug && window.__ewDebug.airOps)', { timeout: 60000 });
 
-  // 1. Rearm clock: first launch accepted, second vetoed, clock visibly set.
-  const cd = await p.evaluate(() => {
-    const first = __ewDebug.spawn('WEST', 'MISSILE_STRIKE', 500, 300);
-    const second = __ewDebug.spawn('WEST', 'AIRSTRIKE', 450, 280);
-    return { first, second };
-  });
+  // 0. Sim tempo: a separate speed-1 page (cap-proof, see header), 6s window.
+  const pt = await b.newPage();
+  await pt.evaluateOnNewDocument(() => localStorage.setItem('ewv-fx', 'low'));
+  await pt.goto('http://localhost:3000/east-vs-west-game/?spectate&map=COUNTRYSIDE&speed=1',
+    { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await pt.waitForFunction('!!(window.__ewDebug && window.__ewDebug.tickCount)', { timeout: 60000 });
+  const t0 = await pt.evaluate(() => ({ tick: __ewDebug.tickCount, ms: Date.now() }));
+  await new Promise(r => setTimeout(r, 6000));
+  const t1 = await pt.evaluate(() => ({ tick: __ewDebug.tickCount, ms: Date.now() }));
+  await pt.close();
+  const tickRate = (t1.tick - t0.tick) / (t1.ms - t0.ms) * 1000;
+
+  // 1. Rearm clock. The WEST CPU shares this clock and may already hold it
+  //    (the sim runs ~5x wall time here — "early in the match" is seconds),
+  //    so don't assume a virgin clock: wait for a free window, launch, then
+  //    assert the IMMEDIATE second launch is vetoed.
+  let first = false;
+  for (let i = 0; i < 30 && !first; i++) {
+    first = await p.evaluate(() =>
+      __ewDebug.airOps.WEST === 0 ? __ewDebug.spawn('WEST', 'MISSILE_STRIKE', 500, 300) : false);
+    if (!first) await new Promise(r => setTimeout(r, 500));
+  }
+  const second = await p.evaluate(() => __ewDebug.spawn('WEST', 'AIRSTRIKE', 450, 280));
+  const cd = { first, second };
   await new Promise(r => setTimeout(r, 400)); // let the debug snapshot refresh
   const lock0 = await p.evaluate(() => __ewDebug.airOps.WEST);
 
@@ -73,6 +98,7 @@ const puppeteer = require('puppeteer-core');
   }
   await b.close();
 
+  console.log(`sim rate              : ${Math.round(tickRate)} ticks/s (expect ~75 = 60 x tempo 1.25 at speed 1)`);
   console.log(`first strike accepted : ${cd.first}`);
   console.log(`second strike vetoed  : ${cd.second === false}`);
   console.log(`rearm ticks after use : ${lock0} -> ${lock1} (must be >0 and falling)`);
@@ -80,6 +106,7 @@ const puppeteer = require('puppeteer-core');
   console.log(`plane shot down       : ${shotDown}`);
 
   const fail = [];
+  if (tickRate < 68 || tickRate > 83) fail.push(`sim rate ${Math.round(tickRate)} ticks/s outside 68-83 — GAME_TEMPO or its tick carry is off (60 = tempo lost entirely)`);
   if (!cd.first) fail.push('first strike rejected — clock started locked or spawn hook broke');
   if (cd.second !== false) fail.push('second strike accepted immediately — the shared rearm veto is dead');
   if (!(lock0 > 0)) fail.push('airOps ticks not set after a launch');

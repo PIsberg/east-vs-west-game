@@ -691,6 +691,15 @@ export const CLASS_PROFILE: Record<MoveClass, {
 // slower than a road march; the crossing is where infantry is caught in the open.
 export const ICE_CROSS_MULT = 0.8;
 
+// ── Game tempo ───────────────────────────────────────────────────────────────
+// Uniform sim-rate multiplier: the loop runs this many ticks per rAF frame
+// (fractional ticks carry over between frames). Everything — movement, reload,
+// projectiles, income — speeds up TOGETHER, so relative balance is untouched;
+// the game simply plays out ~25% faster. Distinct from the 2x speed toggle,
+// which multiplies on top. Tune HERE for pacing, never via UNIT_CONFIG speeds
+// (those are tuned relative to each other within move classes).
+export const GAME_TEMPO = 1.25;
+
 // ── Air Command ──────────────────────────────────────────────────────────────
 // All air-delivered ordnance shares ONE readiness clock per team: after any
 // strike the squadron rearms before the next can launch. This paces the game's

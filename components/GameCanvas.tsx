@@ -47,6 +47,7 @@ import {
   WRECK_MAX,
   AIR_OPS_COOLDOWN_TICKS,
   AIR_OPS_NUKE_TICKS,
+  GAME_TEMPO,
   AVOID_LOOKAHEAD,
   AVOID_COMMIT_MS,
   STUCK_SAMPLE_TICKS,
@@ -4347,6 +4348,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
         elapsedMs: Date.now() - matchStartRef.current,
+        tickCount: tickCountRef.current, // with elapsedMs: measured sim rate (GAME_TEMPO probe)
         score: { ...scoreRef.current },
         baseHP: { ...baseHPRef.current },
         money: { WEST: Math.floor(moneyRef.current[Team.WEST]), EAST: Math.floor(moneyRef.current[Team.EAST]) },
@@ -4452,20 +4454,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Game Loop - Stable Identity
   const lastFrameTimeRef = useRef(0);
+  const tempoCarryRef = useRef(0); // fractional ticks carried between frames
   const tick = useCallback(() => {
     if (!gameOverRef.current) {
       try {
         if (!speedRef.current.paused) {
           // Spectator/balance mode: catch up on wall-clock time so low headless
           // frame rates still simulate at the requested speed. Normal play stays
-          // strictly frame-locked (speed ticks per rAF).
-          let ticks = speedRef.current.speed;
+          // frame-locked (speed × GAME_TEMPO ticks per rAF); GAME_TEMPO is
+          // fractional, so leftover fractions accumulate across frames — at
+          // 1.25 that's five ticks every four frames, not a lost quarter-tick.
+          let ticksF = speedRef.current.speed * GAME_TEMPO;
           if (cpuRef.current.teams.length === 2) {
             const now = performance.now();
             const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
             lastFrameTimeRef.current = now;
-            ticks = Math.min(240, Math.max(1, Math.round((elapsed / 16.7) * speedRef.current.speed)));
+            ticksF = Math.min(240, Math.max(1, (elapsed / 16.7) * speedRef.current.speed * GAME_TEMPO));
           }
+          tempoCarryRef.current += ticksF;
+          const ticks = Math.floor(tempoCarryRef.current);
+          tempoCarryRef.current -= ticks;
           for (let s = 0; s < ticks; s++) {
             updateRef.current();
             if (gameOverRef.current) break;

@@ -23,7 +23,7 @@ No API keys or environment variables are required.
 
 ## Architecture
 
-**East vs West 3D** is a lane-defense (tug-of-war) strategy game inspired by the Commodore Amiga classic *North & South* (Infogrames, 1989). Game logic runs at 60 FPS in a mutable ref loop, completely decoupled from React's render cycle. First team to 100 points wins; units score by reaching the far edge.
+**East vs West 3D** is a lane-defense (tug-of-war) strategy game inspired by the Commodore Amiga classic *North & South* (Infogrames, 1989). Game logic runs in a mutable ref loop, completely decoupled from React's render cycle, at `GAME_TEMPO` (1.25) sim ticks per rAF frame — fractional ticks carry across frames, so the whole sim plays ~25% faster than one-tick-per-frame with relative balance untouched. **Pacing is tuned via `GAME_TEMPO`, never via `UNIT_CONFIG` speeds** (those are tuned relative to each other). The 2× speed toggle multiplies on top; smoke21 asserts the measured tick rate so a lost multiplier can't slip through. First team to 100 points wins; units score by reaching the far edge.
 
 There is also an `architecture.md` at the repo root with a longer prose overview — note it is partially stale (it describes a `/src` directory that doesn't exist; files live at the repo root).
 

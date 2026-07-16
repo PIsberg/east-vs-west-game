@@ -1,5 +1,9 @@
 # Changelog
 
+## The war moves at combat pace (July 2026)
+
+- **Everything happens ~25% faster.** The whole simulation now runs at 1.25× tempo — units cross the field quicker, guns cycle quicker, income flows quicker — so the front forms sooner and the action never sags. Because *everything* scales together, no unit got stronger or weaker relative to any other; the same battle simply plays out with less waiting. The 2× speed toggle still works on top of it.
+
 ## Air power gets a leash — and a counter (July 2026)
 
 - **Air Command: strikes now share a rearm clock.** Airstrike, paradrop, missile strike, cruise, gunship and nuke draw from one per-team readiness timer (~22 seconds between launches, a full minute of silence after a nuke). Money alone no longer buys a strike chain that deletes an army with no warning — the game's most disruptive purchases now have a rhythm you can play around. Locked buttons show the countdown, hotkeys respect it, and the CPU plays by exactly the same clock (it also now pays only for strikes that actually launch — it used to charge itself even when a launch was refused).
