@@ -1,4 +1,7 @@
 const BAR_LEN = 2.5; // seconds per music bar (4/4 at 96 BPM)
+const INTENSITY_DOWNSHIFT_MS = 3000; // computed level must hold this long before the march calms
+
+export type MusicIntensity = 0 | 1 | 2;
 
 class SoundService {
   private ctx: AudioContext | null = null;
@@ -11,6 +14,9 @@ class SoundService {
   private musicTimer: ReturnType<typeof setInterval> | null = null;
   private musicBar = 0;
   private nextBarTime = 0;
+  private musicLevel: MusicIntensity = 0;
+  private musicTension = false;
+  private levelHeldSince = 0;
 
   private volume = 0.85;
 
@@ -59,6 +65,25 @@ class SoundService {
     if (!this.muted && this.master && this.ctx) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
     try { localStorage.setItem('ewv-volume', String(this.volume)); } catch { /* ignore */ }
   }
+  // ── Adaptive march ────────────────────────────────────────────────────────
+  // Level 0: quiet skirmish march. 1: snare+bass firefight. 2: brass/overdrive assault.
+  // Tension swaps the harmony to a desperate minor pulse (base nearly dead / match point).
+  // Escalation is instant; de-escalation waits INTENSITY_DOWNSHIFT_MS so the music
+  // doesn't flap on every lull. Layer changes land at bar boundaries automatically —
+  // the scheduler only keeps ~1 bar queued.
+  public setMusicIntensity(level: MusicIntensity, tension = false) {
+    this.musicTension = tension;
+    const now = Date.now();
+    if (level >= this.musicLevel) {
+      this.musicLevel = level;
+      this.levelHeldSince = now;
+    } else if (now - this.levelHeldSince > INTENSITY_DOWNSHIFT_MS) {
+      this.musicLevel = level;
+      this.levelHeldSince = now;
+    }
+  }
+  public getMusicIntensity(): MusicIntensity { return this.musicLevel; }
+
   public isMusicOn() { return this.musicOn; }
   public setMusicOn(on: boolean) {
     this.musicOn = on;
@@ -452,16 +477,23 @@ class SoundService {
     if (!this.ctx || !this.musicDest || this.musicTimer !== null) return;
     this.ensureContext();
     this.musicBar = 0;
+    this.musicLevel = 0;
+    this.musicTension = false;
+    this.levelHeldSince = 0;
     this.nextBarTime = this.ctx.currentTime + 0.1;
     // Look-ahead scheduler: keep ~1 bar queued so tab jank never gaps the beat
     this.musicTimer = setInterval(() => {
       if (!this.ctx) return;
-      while (this.nextBarTime < this.ctx.currentTime + BAR_LEN) {
+      while (this.nextBarTime < this.ctx.currentTime + this.barLen()) {
         this.scheduleMusicBar(this.nextBarTime, this.musicBar++);
-        this.nextBarTime += BAR_LEN;
+        // Tempo rides intensity: the next bar starts sooner at full battle pitch.
+        // Advancing from the previous bar's start keeps the grid gap-free.
+        this.nextBarTime += this.barLen();
       }
     }, 250);
   }
+
+  private barLen() { return this.musicLevel === 2 ? BAR_LEN / 1.1 : BAR_LEN; }
 
   public stopMusic() {
     if (this.musicTimer !== null) { clearInterval(this.musicTimer); this.musicTimer = null; }
@@ -470,21 +502,34 @@ class SoundService {
   private scheduleMusicBar(t: number, bar: number) {
     const out = this.musicDest!;
     const ctx = this.ctx!;
-    const beat = BAR_LEN / 4;
+    const barLen = this.barLen();
+    const beat = barLen / 4;
+    const level = this.musicLevel;
+    const tension = this.musicTension;
 
     // March percussion: kick on 1 & 3, snare on 2 & 4 with a ghost before 4
     this.kick(t, 0.34, out);
     this.kick(t + 2 * beat, 0.28, out);
-    this.snare(t + beat, 0.11, out);
+    this.snare(t + beat, level >= 1 ? 0.16 : 0.11, out);
     this.snare(t + 3 * beat - beat * 0.25, 0.045, out);
-    this.snare(t + 3 * beat, 0.12, out);
+    this.snare(t + 3 * beat, level >= 1 ? 0.17 : 0.12, out);
     if (bar % 4 === 3) { // little roll into the next phrase
       this.snare(t + 3.5 * beat, 0.05, out);
       this.snare(t + 3.75 * beat, 0.07, out);
     }
+    if (level >= 2) {
+      // Rapid snare rolls under the fanfare — sixteenth pickups into beats 2 and 4
+      for (let i = 0; i < 3; i++) {
+        this.snare(t + beat * (0.25 + i * 0.25), 0.05 + i * 0.02, out);
+        this.snare(t + beat * (2.25 + i * 0.25), 0.05 + i * 0.02, out);
+      }
+    }
 
-    // Low drone: one sustained root note per bar, walking a minor lament bass
-    const roots = [65.41, 58.27, 51.91, 49.0]; // C2 Bb1 Ab1 G1
+    // Low drone: one sustained root note per bar, walking a minor lament bass.
+    // Tension walks a tighter, darker line that refuses to resolve.
+    const roots = tension
+      ? [65.41, 61.74, 65.41, 69.3] // C2 B1 C2 Db2 — chromatic unease
+      : [65.41, 58.27, 51.91, 49.0]; // C2 Bb1 Ab1 G1
     const root = roots[Math.floor(bar / 2) % roots.length];
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -492,21 +537,90 @@ class SoundService {
     osc.frequency.value = root;
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.05, t + 0.3);
-    g.gain.setValueAtTime(0.05, t + BAR_LEN - 0.4);
-    g.gain.linearRampToValueAtTime(0, t + BAR_LEN);
+    g.gain.setValueAtTime(0.05, t + barLen - 0.4);
+    g.gain.linearRampToValueAtTime(0, t + barLen);
     osc.connect(g); g.connect(out);
-    osc.start(t); osc.stop(t + BAR_LEN);
+    osc.start(t); osc.stop(t + barLen);
+
+    // Firefight layer: a walking eighth-note bassline on the root
+    if (level >= 1) {
+      const steps = tension ? [1, 1, 1, 1, 1, 1, 1, 1] : [1, 1, 1.5, 1, 1, 2, 1.5, 1];
+      for (let i = 0; i < 8; i++) {
+        const b = ctx.createOscillator();
+        const bg = ctx.createGain();
+        b.type = 'square';
+        b.frequency.value = root * 2 * steps[i];
+        const s = t + i * (beat / 2);
+        bg.gain.setValueAtTime(0.028, s);
+        bg.gain.exponentialRampToValueAtTime(0.0001, s + beat * 0.42);
+        b.connect(bg); bg.connect(out);
+        b.start(s); b.stop(s + beat * 0.45);
+      }
+    }
+
+    // Desperate-defense pad: a pulsing low fifth that leans on every off-beat
+    if (tension) {
+      [root * 3, root * 4.5].forEach((f) => {
+        for (let i = 0; i < 4; i++) {
+          const p = ctx.createOscillator();
+          const pg = ctx.createGain();
+          p.type = 'sawtooth';
+          p.frequency.value = f;
+          const s = t + (i + 0.5) * beat;
+          pg.gain.setValueAtTime(0, s);
+          pg.gain.linearRampToValueAtTime(0.022, s + 0.05);
+          pg.gain.exponentialRampToValueAtTime(0.0001, s + beat * 0.5);
+          p.connect(pg); pg.connect(out);
+          p.start(s); p.stop(s + beat * 0.55);
+        }
+      });
+    }
 
     // Distant bugle motif every 4th bar, rotating through three phrases
     if (bar % 4 === 2) {
-      const C4 = 261.63, Eb4 = 311.13, F4 = 349.23, G4 = 392, Bb4 = 466.16, C5 = 523.25;
-      const motifs: [number, number, number][][] = [
-        [[C4, 0, 0.3], [Eb4, 0.35, 0.3], [G4, 0.7, 0.55]],
-        [[G4, 0, 0.25], [F4, 0.3, 0.25], [Eb4, 0.6, 0.25], [C4, 0.9, 0.5]],
-        [[C4, 0, 0.2], [C4, 0.25, 0.2], [G4, 0.5, 0.35], [Bb4, 0.95, 0.3], [C5, 1.3, 0.6]],
-      ];
+      const C4 = 261.63, Eb4 = 311.13, F4 = 349.23, G4 = 392, Bb4 = 466.16, C5 = 523.25, B3 = 246.94;
+      const motifs: [number, number, number][][] = tension
+        ? [
+          [[C4, 0, 0.25], [B3, 0.3, 0.25], [C4, 0.6, 0.5]],
+          [[Eb4, 0, 0.2], [C4, 0.25, 0.2], [B3, 0.5, 0.45]],
+        ]
+        : [
+          [[C4, 0, 0.3], [Eb4, 0.35, 0.3], [G4, 0.7, 0.55]],
+          [[G4, 0, 0.25], [F4, 0.3, 0.25], [Eb4, 0.6, 0.25], [C4, 0.9, 0.5]],
+          [[C4, 0, 0.2], [C4, 0.25, 0.2], [G4, 0.5, 0.35], [Bb4, 0.95, 0.3], [C5, 1.3, 0.6]],
+        ];
       const phrase = motifs[Math.floor(bar / 4) % motifs.length];
-      phrase.forEach(([f, off, dur]) => this.trumpet(f, t + beat + off, dur, 0.085, out));
+      const vol = level >= 2 ? 0.13 : 0.085;
+      phrase.forEach(([f, off, dur]) => this.trumpet(f, t + beat + off, dur, vol, out));
+    }
+
+    // Assault layer: brass fanfare stabs + an overdriven synth lead line
+    if (level >= 2) {
+      const C4 = 261.63, Eb4 = 311.13, G4 = 392, C5 = 523.25;
+      if (bar % 2 === 0) {
+        this.trumpet(tension ? Eb4 : G4, t, 0.18, 0.1, out);
+        this.trumpet(tension ? C4 : C5, t + 0.2, 0.3, 0.11, out);
+      }
+      // Overdrive lead: detuned saw pair, one bite per beat
+      const leadNotes = tension ? [C4, 246.94 /* B3 */, Eb4, C4] : [C4, Eb4, G4, Eb4];
+      for (let i = 0; i < 4; i++) {
+        const f = leadNotes[i] * 2;
+        [f, f * 1.007].forEach((freq) => {
+          const l = ctx.createOscillator();
+          const lg = ctx.createGain();
+          const lf = ctx.createBiquadFilter();
+          l.type = 'sawtooth';
+          l.frequency.value = freq;
+          lf.type = 'lowpass';
+          lf.frequency.value = 2200;
+          lf.Q.value = 4; // resonant bite reads as overdrive without a waveshaper
+          const s = t + i * beat + beat * 0.5;
+          lg.gain.setValueAtTime(0.02, s);
+          lg.gain.exponentialRampToValueAtTime(0.0001, s + beat * 0.4);
+          l.connect(lf); lf.connect(lg); lg.connect(out);
+          l.start(s); l.stop(s + beat * 0.45);
+        });
+      }
     }
   }
 

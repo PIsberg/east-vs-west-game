@@ -868,6 +868,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
 
+  // Adaptive-march probe surface (drives __ewDebug.music)
+  const musicDebugRef = useRef({ calls: 0, level: 0, tension: false });
+
   // Air Command readiness: the tick at which each team may launch its next
   // air-delivered strike (shared across all strike types)
   const airOpsRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
@@ -4345,6 +4348,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (Date.now() - lastUiUpdateRef.current > 100) {
       onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
+
+      // Adaptive march: intensity from the battle's actual temperature, tension from
+      // the scoreboard. Computed here (10fps) — never on the sim tick. The sound
+      // service owns the de-escalation hysteresis, so this can report raw levels.
+      {
+        const firing = unitsRef.current.reduce((n, u) => n + (u.state === UnitState.ATTACKING && !u.boarded ? 1 : 0), 0);
+        const rallyOn = Date.now() < rallyRef.current[Team.WEST].until || Date.now() < rallyRef.current[Team.EAST].until;
+        const level = (firing > 15 || rallyOn) ? 2 : firing > 4 ? 1 : 0;
+        const tension = gameModeRef.current === 'basehp'
+          ? Math.min(baseHPRef.current[Team.WEST], baseHPRef.current[Team.EAST]) < BASE_HP * 0.35
+          : Math.min(scoreRef.current[Team.WEST], scoreRef.current[Team.EAST]) >= WIN_SCORE * 0.9;
+        soundService.setMusicIntensity(level, tension);
+        musicDebugRef.current = { calls: musicDebugRef.current.calls + 1, level: soundService.getMusicIntensity(), tension };
+      }
+
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
         elapsedMs: Date.now() - matchStartRef.current,
@@ -4367,6 +4385,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
         suppressed: unitsRef.current.filter(u => u.suppressedUntil && Date.now() < u.suppressedUntil).length,
+        music: { ...musicDebugRef.current }, // adaptive-march probe: calls is monotonic, level post-hysteresis
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
