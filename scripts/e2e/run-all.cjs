@@ -18,7 +18,8 @@
  * suppression — fires, foot units only, wears off (smoke18), the Winter
  * frozen river — infantry cross the ice, armor doesn't, gunboats vetoed,
  * no rain (smoke19), vehicle wrecks — appear, cap, decay, despawn (smoke20),
- * and the victory-screen battle timeline (timeline-test).
+ * Air Command rearm clock + AA interception actually downing a plane
+ * (smoke21), and the victory-screen battle timeline (timeline-test).
  *
  * Notes for writing new tests (hard-won):
  *  - Pin localStorage 'ewv-fx' to 'high' unless testing the auto-drop — the

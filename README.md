@@ -102,6 +102,7 @@ The first team to reach **100 Points** wins.
 - **Winter map — frozen river**: The channel is iced over. Infantry walk **straight across the ice anywhere** (slowed, and caught in the open), while vehicles still funnel over the bridges — hold the crossings or get flanked over the ice. Gunboats can't anchor in a frozen channel, and it snows instead of raining.
 - **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
 - **Wrecks are cover**: A destroyed tank doesn't vanish — it burns where it died. The hulk is real terrain: your infantry duck behind it like a boulder, vehicles drive around it, and it smolders for the better part of a minute before sinking away. The battlefield ends up telling the story of the fight — and a knocked-out vehicle in a chokepoint changes the next push through it.
+- **Air Command**: All air-delivered strikes — airstrike, paradrop, missile, cruise, gunship, nuke — share one **rearm clock** (~22s, 60s after a nuke). No more back-to-back strike chains; locked buttons show the countdown. And strikes can be **shot down**: Anti-Air guns lead incoming strike aircraft, and a downed plane takes its payload with it — an AA screen is a real answer to an air-happy opponent.
 
 ---
 

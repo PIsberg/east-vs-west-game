@@ -691,6 +691,14 @@ export const CLASS_PROFILE: Record<MoveClass, {
 // slower than a road march; the crossing is where infantry is caught in the open.
 export const ICE_CROSS_MULT = 0.8;
 
+// ── Air Command ──────────────────────────────────────────────────────────────
+// All air-delivered ordnance shares ONE readiness clock per team: after any
+// strike the squadron rearms before the next can launch. This paces the game's
+// most disruptive purchases — no back-to-back strike chains deleting an army —
+// without touching their damage. Tick-based so pause/speed behave.
+export const AIR_OPS_COOLDOWN_TICKS = 1350; // ~22s between air operations
+export const AIR_OPS_NUKE_TICKS = 3600;     // ~60s of silence after a nuke
+
 // ── Wrecks ───────────────────────────────────────────────────────────────────
 // A destroyed ground vehicle stays on the field as a burning hulk: infantry
 // take cover behind it like a rock, vehicles steer around it. It burns hard,

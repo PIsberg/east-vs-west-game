@@ -159,6 +159,11 @@ const INFANTRY_ALLOWED = new Set([
   UnitType.SOLDIER, UnitType.SNIPER, UnitType.SPECIAL_FORCES, UnitType.FLAMETHROWER,
   UnitType.MEDIC, UnitType.ENGINEER, UnitType.MORTAR, UnitType.MINE_PERSONAL,
 ]);
+// Air-delivered ordnance sharing the Air Command rearm clock (mirrors the engine set)
+const AIR_OPS_UI = new Set([
+  UnitType.AIRSTRIKE, UnitType.AIRBORNE, UnitType.MISSILE_STRIKE,
+  UnitType.CRUISE, UnitType.NUKE, UnitType.GUNSHIP,
+]);
 
 // Number-row hotkeys spawn for the player's side (badge shown in the tooltip)
 const SPAWN_HOTKEYS: Record<string, UnitType> = {
@@ -368,6 +373,7 @@ const App: React.FC = () => {
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     if (activeChallenge?.infantryOnly && team === playerSide && !INFANTRY_ALLOWED.has(type)) return; // Boots Only
+    if (AIR_OPS_UI.has(type) && (gameState.airOpsReadyIn?.[team] ?? 0) > 0) return; // Air Command rearming (also guards hotkeys)
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
       if ([UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.MINE_PERSONAL, UnitType.MINE_TANK, UnitType.NUKE, UnitType.BUNKER, UnitType.GUNBOAT, UnitType.GUNSHIP, UnitType.SATELLITE, UnitType.CRUISE, UnitType.SMOKE].includes(type)) setTargetingInfo({ team, type });
@@ -500,6 +506,8 @@ const App: React.FC = () => {
     const isWest = team === Team.WEST;
     const colorClass = isWest ? "blue" : "red";
     const money = gameState.money[team];
+    // Air Command rearm: all air-delivered strikes share one readiness clock
+    const airWait = gameState.airOpsReadyIn?.[team] ?? 0;
 
     const UNIT_COUNTERS: Record<UnitType, React.ReactNode[]> = {
       [UnitType.SOLDIER]: [<User size={8} key="u" />],
@@ -544,11 +552,17 @@ const App: React.FC = () => {
               title={label}
               className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
               onClick={() => handleSpawnRequest(team, type)}
-              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type))}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (airWait > 0 && AIR_OPS_UI.has(type)) || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type))}
             >
               <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
               <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
               <span className="text-[8px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
+              {/* Rearm countdown over locked air ordnance */}
+              {airWait > 0 && AIR_OPS_UI.has(type) && (
+                <span data-testid="airops-lock" className="absolute inset-0 flex items-center justify-center bg-black/65 rounded text-amber-300 text-[10px] font-bold">
+                  {airWait}s
+                </span>
+              )}
 
               {/* Tooltip Popup */}
               <div className={`hidden group-hover:flex absolute top-1/2 -translate-y-1/2 ${isWest ? 'left-full ml-2' : 'right-full mr-2'} bg-stone-950 border border-stone-600 p-2 rounded shadow-2xl z-[100] flex-col gap-1 w-max pointer-events-none items-center`}>
@@ -1008,6 +1022,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Field Repairs:</strong> Wounded units <span className="text-green-400">heal slowly near your own edge</span> when out of combat — rotate them back instead of losing them.</li>
             <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
                 <li><strong className="text-white">Winter ice:</strong> On the Winter map the river is <span className="text-sky-300">frozen</span> — infantry walk across the ice anywhere (slowed, and caught in the open), while vehicles still need the bridges. Gunboats can't anchor in ice.</li>
+                <li><strong className="text-white">Air Command:</strong> All air-delivered strikes (airstrike, paradrop, missiles, cruise, gunship, nuke) share one <span className="text-amber-400">rearm clock</span> — after a launch the squadron needs ~22s before the next (60s after a nuke). Locked buttons show the countdown. <span className="text-cyan-300">Anti-Air</span> guns also engage incoming strike aircraft: a downed plane takes its payload with it.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>
