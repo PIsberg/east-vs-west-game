@@ -3,7 +3,8 @@ import React, { Suspense, useEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, useGLTF, useAnimations } from '@react-three/drei';
 import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
-import { EffectComposer, Bloom, ChromaticAberration, HueSaturation, Vignette } from '@react-three/postprocessing';
+import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { ChromaticAberrationEffect, HueSaturationEffect, VignetteEffect } from 'postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
 import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS, FOW_W, FOW_H, FOW_CELL } from '../constants';
@@ -108,22 +109,27 @@ const ShakeRig = ({ shake, children }: { shake?: React.MutableRefObject<number>,
     return <group ref={ref}>{children}</group>;
 };
 
-// Shell-shock driver: mutates the mounted post-effects' uniforms from a
-// decaying 0..1 ref set by the engine when heavy ordnance bursts in view.
-// The effects stay MOUNTED at weight 0 — swapping composer passes mid-battle
-// causes hitches, and per-frame prop changes would recreate the effects.
-const ShockDriver = ({ shock, chromaRef, hueRef, vigRef }: {
-    shock?: React.MutableRefObject<number>,
-    chromaRef: React.MutableRefObject<any>,
-    hueRef: React.MutableRefObject<any>,
-    vigRef: React.MutableRefObject<any>,
-}) => {
+// Shell-shock post effects: constructed directly from `postprocessing` and
+// mounted as <primitive>s — the @react-three/postprocessing prop wrappers
+// JSON.stringify their props for memoization, which chokes on anything
+// carrying r3f's circular __r3f state (and per-frame prop changes would
+// recreate the effects anyway). The driver mutates uniforms in useFrame from
+// a decaying 0..1 ref set by the engine when heavy ordnance bursts in view;
+// the effects stay MOUNTED at weight 0 — swapping composer passes mid-battle
+// causes hitches.
+interface ShockFx { chroma: ChromaticAberrationEffect; hue: HueSaturationEffect; vig: VignetteEffect }
+const makeShockFx = (): ShockFx => ({
+    chroma: new ChromaticAberrationEffect({ offset: new THREE.Vector2(0, 0), radialModulation: false, modulationOffset: 0.15 }),
+    hue: new HueSaturationEffect({ saturation: 0 }),
+    vig: new VignetteEffect({ offset: 0.3, darkness: 0 }),
+});
+const ShockDriver = ({ shock, fx }: { shock?: React.MutableRefObject<number>, fx: ShockFx }) => {
     useFrame(() => {
         const s = shock?.current || 0;
-        if (chromaRef.current?.offset) chromaRef.current.offset.set(0.0016 * s, 0.001 * s);
-        const sat = hueRef.current?.uniforms?.get?.('saturation');
+        fx.chroma.offset.set(0.0016 * s, 0.001 * s);
+        const sat = fx.hue.uniforms.get('saturation');
         if (sat) sat.value = -0.55 * s;
-        const dark = vigRef.current?.uniforms?.get?.('darkness');
+        const dark = fx.vig.uniforms.get('darkness');
         if (dark) dark.value = 0.5 * Math.min(1, s * 1.25);
         if (shock && s > 0.002) shock.current = s * 0.975; // ~2s clear
         else if (shock) shock.current = 0;
@@ -3657,13 +3663,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // axis projected on the ground plane, with the target kept on the map.
     const controlsRef = useRef<any>(null);
 
-    // Shell-shock post-effect handles (uniforms driven by ShockDriver). The
-    // zero offset is memoized — a fresh Vector2 per render would recreate the
-    // ChromaticAberration effect every frame.
-    const shockChromaRef = useRef<any>(null);
-    const shockHueRef = useRef<any>(null);
-    const shockVigRef = useRef<any>(null);
-    const shockZeroOffset = useMemo(() => new THREE.Vector2(0, 0), []);
+    // Shell-shock post effects — one set per mount, uniforms driven by ShockDriver
+    const shockFx = useMemo(makeShockFx, []);
 
     useEffect(() => {
         const api = {
@@ -3840,11 +3841,11 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 <>
                     <EffectComposer>
                         <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
-                        <ChromaticAberration ref={shockChromaRef} offset={shockZeroOffset} />
-                        <HueSaturation ref={shockHueRef} saturation={0} />
-                        <Vignette ref={shockVigRef} darkness={0} offset={0.3} />
+                        <primitive object={shockFx.chroma} />
+                        <primitive object={shockFx.hue} />
+                        <primitive object={shockFx.vig} />
                     </EffectComposer>
-                    <ShockDriver shock={shock} chromaRef={shockChromaRef} hueRef={shockHueRef} vigRef={shockVigRef} />
+                    <ShockDriver shock={shock} fx={shockFx} />
                 </>
             )}
         </Canvas>
