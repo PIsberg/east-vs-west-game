@@ -92,6 +92,8 @@ import {
   FOW_H,
   FOW_BLIND_SCATTER,
   getVision,
+  CRATER_MAX,
+  CRATER_SLOW,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -510,6 +512,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const smokesRef = useRef<SmokeZone[]>([]);
   // Armed C4 satchels in the field (engineer ability) — fuse counts down in ticks
   const c4Ref = useRef<{ id: string, team: Team, x: number, y: number, fuse: number, ownerId: string }[]>([]);
+  // Craters live in terrainRef (cover-seek finds them there) but are mirrored
+  // here so the per-unit wallow check stays O(craters), not O(terrain)
+  const cratersRef = useRef<TerrainObject[]>([]);
 
   // ── Fog of war ────────────────────────────────────────────────────────────
   // One coarse visibility layer per team (0 hidden / 1 explored / 2 visible),
@@ -1640,6 +1645,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       soundService.shellShock(s);
     };
 
+    // Heavy ordnance gouges a crater: real terrain that slows wheels/tracks
+    // and shelters infantry. Never on water or a bridge deck (a hole there
+    // would fight the crossing logic — the wreck lesson), capped at CRATER_MAX
+    // with the oldest filled in first.
+    const gougeCrater = (x: number, y: number, size: number) => {
+      const nearWater = terrainRef.current.some(t =>
+        (t.type === 'river' && Math.abs(t.x - x) < (t.width ?? 40) / 2 + 14 && Math.abs(t.y - y) < (t.height ?? 22) / 2 + 14) ||
+        (t.type === 'bridge' && Math.abs(t.x - x) < (t.width ?? 85) / 2 + 14 && Math.abs(t.y - y) < (t.height ?? 40) / 2 + 14));
+      if (nearWater) return;
+      if (cratersRef.current.length >= CRATER_MAX) {
+        const oldest = cratersRef.current.shift()!;
+        const ti = terrainRef.current.indexOf(oldest);
+        if (ti >= 0) terrainRef.current.splice(ti, 1);
+      }
+      const crater: TerrainObject = { id: generateId(), x, y, type: 'crater', size };
+      cratersRef.current.push(crater);
+      terrainRef.current.push(crater);
+    };
+
     // Fog restamp every 6 ticks: decay visible→explored, then stamp vision
     // discs for every living unit (hill lookouts see ~30% further) and each
     // garrisoned strongpoint. The team's spawn strip never goes dark. O(units ×
@@ -1799,6 +1823,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound(m.current.x);
         shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : m.isCruise ? 14 : 8);
         shockCam(m.current.x, isNuke ? 1 : m.isCruise ? 0.8 : 0.6);
+        gougeCrater(m.current.x, m.current.y, isNuke ? 52 : m.isCruise ? 30 : 24);
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
         const damage = m.customDamage ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage);
         const radius = m.customRadius ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].radius : config.radius);
@@ -2899,8 +2924,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const coverBackBias = isUnderFire ? 60 : 30;
                 const coverSearchRadius = isUnderFire ? 240 : 175;
                 const cover = terrainRef.current.find(t => {
-                  // Wrecks are battlefield cover too — the fight creates its own
-                  if (t.type !== 'tree' && t.type !== 'rock' && t.type !== 'wreck') return false;
+                  // Wrecks and shell craters are battlefield cover too — the
+                  // fight creates its own
+                  if (t.type !== 'tree' && t.type !== 'rock' && t.type !== 'wreck' && t.type !== 'crater') return false;
                   if (t.type === 'tree' && t.state === 'broken') return false; // flattened — nothing left to hide behind
                   if (t.id === unit.lastCoverId) return false;
                   if (unit.team === Team.WEST ? t.x < unit.position.x - coverBackBias : t.x > unit.position.x + coverBackBias) return false;
@@ -3043,6 +3069,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // the branches above recompute speed and would walk out from under it
         if (unit.type === UnitType.TANK && (unit.abilityUntil ?? 0) > tickCountRef.current) {
           moveX *= OVERDRIVE_SPEED_MULT; moveY *= OVERDRIVE_SPEED_MULT;
+        }
+        // Cratered ground: wheels and tracks wallow crossing a shell hole
+        if (getMoveClass(unit.type) !== 'foot' && cratersRef.current.length > 0) {
+          for (const cr of cratersRef.current) {
+            if (Math.abs(cr.x - unit.position.x) < cr.size && Math.abs(cr.y - unit.position.y) < cr.size) {
+              moveX *= CRATER_SLOW; moveY *= CRATER_SLOW;
+              break;
+            }
+          }
         }
 
         // Inertia: a tank leans into a turn, a soldier just turns. Smoothing the
@@ -3945,6 +3980,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
       soundService.playMineExplosion(c.x);
       shakeRef.current = Math.max(shakeRef.current, 6);
+      gougeCrater(c.x, c.y, 18);
       particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, life: 18, color: '#f97316', size: C4_RADIUS, isShockwave: true });
       for (let k = 0; k < 14; k++) {
         particlesRef.current.push({
@@ -4103,6 +4139,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         else if (hit) soundService.playHitSound(p.position.x);
         // A heavy shell bursting in view rattles the viewer too (mildly)
         if (p.explosionRadius && p.damage >= 80) shockCam(p.position.x, 0.35);
+        // ...and sometimes gouges a shell hole (throttled — the cap would churn)
+        if (p.explosionRadius && p.explosionRadius >= 45 && p.damage >= 80 && Math.random() < 0.3) {
+          gougeCrater(p.position.x, p.position.y, 14 + p.explosionRadius * 0.18);
+        }
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
@@ -4815,6 +4855,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         camouflaged: unitsRef.current.filter(u => u.camouflaged).length,
         overdrive: unitsRef.current.filter(u => (u.abilityUntil ?? 0) > tickCountRef.current).length,
         c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
+        craters: cratersRef.current.map(cr => ({ x: Math.round(cr.x), y: Math.round(cr.y), size: Math.round(cr.size) })),
         // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
         fogOn: fogOnRef.current,
         fog: (team: 'WEST' | 'EAST', x: number, y: number) => fogCellState(team === 'WEST' ? Team.WEST : Team.EAST, x, y),

@@ -60,7 +60,7 @@ export interface TerrainObject {
   id: string;
   x: number;
   y: number;
-  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel' | 'wreck';
+  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel' | 'wreck' | 'crater';
   size: number;
   width?: number;
   height?: number;

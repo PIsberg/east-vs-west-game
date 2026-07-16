@@ -2598,6 +2598,32 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         );
     }
 
+    if (item.type === 'crater') {
+        const s = item.size;
+        const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
+        // A shell hole: dark bowl, a raised earthen rim, a few thrown clods.
+        // Flat discs (no real depression) — cheap, and reads correctly from the
+        // battle camera's height.
+        return (
+            <group position={[item.x, 0, item.y]} rotation={[0, (seed % 628) / 100, 0]}>
+                <mesh position={[0, 0.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[s, 20]} />
+                    <meshBasicMaterial color="#171310" transparent opacity={0.85} depthWrite={false} />
+                </mesh>
+                <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[s * 0.92, s * 1.22, 20]} />
+                    <meshBasicMaterial color="#3f3226" transparent opacity={0.8} depthWrite={false} />
+                </mesh>
+                {[0.7, 2.1, 3.6, 5.1].map((a, i) => (
+                    <mesh key={i} position={[Math.cos(a + seed % 3) * s * 1.05, 1.2, Math.sin(a + seed % 3) * s * 1.05]} rotation={[a, a * 2, 0]} castShadow>
+                        <dodecahedronGeometry args={[1.6 + ((seed + i) % 3), 0]} />
+                        <meshStandardMaterial color="#44403c" roughness={1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+
     if (item.type === 'crate' || item.type === 'barrel') {
         const s = item.size;
         const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));

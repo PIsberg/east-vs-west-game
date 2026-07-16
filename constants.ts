@@ -44,6 +44,12 @@ export const FOW_BLIND_SCATTER = 45;
 // more good hit pounds it to dust for good
 export const RUBBLE_HP = 140;
 
+// Craters: heavy ordnance gouges the ground. Wheels and tracks wallow across
+// a shell hole; infantry treats it as cover (it joins the cover-seek list).
+// The field cap evicts the oldest — the WRECK_MAX pattern.
+export const CRATER_MAX = 12;
+export const CRATER_SLOW = 0.6;
+
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
     cost: 110,
