@@ -188,7 +188,7 @@ const App: React.FC = () => {
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
   const [commandQueue, setCommandQueue] = useState<{ team: Team, cmd: TeamCommand }[]>([]);
-  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order: Stance | null }[]>([]);
+  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' }[]>([]);
   const [selection, setSelection] = useState<{ team: Team, ids: string[] } | null>(null);
   const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
@@ -981,7 +981,20 @@ const App: React.FC = () => {
             if (liveIds.length === 0) return null;
             const isWest = selection.team === Team.WEST;
             const issue = (order: Stance | null) => setOrderQueue(prev => [...prev, { ids: liveIds, order }]);
+            const issueAbility = (ability: 'overdrive' | 'c4') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
             const btn = 'px-2 py-1 rounded border text-[9px] font-bold uppercase tracking-tight transition-colors active:scale-95';
+            // Ability buttons appear when the selection contains a capable type;
+            // disabled (with a countdown) while every such unit is on cooldown
+            const selUnits = gameState.units.filter(u => liveIds.includes(u.id));
+            const tick = gameState.tick ?? 0;
+            const abilityState = (type: UnitType) => {
+              const capable = selUnits.filter(u => u.type === type);
+              if (capable.length === 0) return null;
+              const soonest = Math.min(...capable.map(u => u.abilityReadyAt ?? 0));
+              return { ready: soonest <= tick, waitSec: Math.max(0, Math.ceil((soonest - tick) / 60)) };
+            };
+            const od = abilityState(UnitType.TANK);
+            const c4 = abilityState(UnitType.ENGINEER);
             return (
               <div className="absolute bottom-[70px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-stone-900/95 border border-stone-500 rounded-lg px-2.5 py-1.5 shadow-2xl">
                 <span className={`text-[10px] font-black uppercase mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
@@ -990,6 +1003,18 @@ const App: React.FC = () => {
                 <button onClick={() => issue('advance')} title="Selected troops push toward the enemy edge" className={`${btn} border-green-600 text-green-400 hover:bg-green-900/60`}>⚔ Attack</button>
                 <button onClick={() => issue('hold')} title="Selected troops stop and defend (infantry can entrench)" className={`${btn} border-amber-600 text-amber-400 hover:bg-amber-900/60`}>⛨ Hold</button>
                 <button onClick={() => issue('retreat')} title="Selected troops withdraw toward your edge (they heal there)" className={`${btn} border-red-600 text-red-400 hover:bg-red-900/60`}>⏪ Fall Back</button>
+                {od && (
+                  <button data-testid="ability-overdrive" disabled={!od.ready} onClick={() => issueAbility('overdrive')}
+                    title="Tank Overdrive: +40% speed for 6s, main gun locked — flank or fall back"
+                    className={`${btn} ${od.ready ? 'border-cyan-500 text-cyan-300 hover:bg-cyan-900/60' : 'border-stone-700 text-stone-600'}`}>
+                    ⚡ Overdrive{!od.ready && od.waitSec > 0 ? ` ${od.waitSec}s` : ''}</button>
+                )}
+                {c4 && (
+                  <button data-testid="ability-c4" disabled={!c4.ready} onClick={() => issueAbility('c4')}
+                    title="Engineer C4: he runs to the nearest enemy bridge, bunker or held strongpoint and sets a 5s demolition charge"
+                    className={`${btn} ${c4.ready ? 'border-orange-500 text-orange-300 hover:bg-orange-900/60' : 'border-stone-700 text-stone-600'}`}>
+                    💣 C4{!c4.ready && c4.waitSec > 0 ? ` ${c4.waitSec}s` : ''}</button>
+                )}
                 <button onClick={() => issue(null)} title="Clear their orders — follow the team stance again" className={`${btn} border-stone-600 text-stone-400 hover:text-white`}>Follow Team</button>
                 <button onClick={() => setSelection(null)} title="Deselect (Esc)" className={`${btn} border-stone-700 text-stone-500 hover:text-white`}>✕</button>
               </div>

@@ -133,6 +133,17 @@ export interface Unit {
   buildUntil?: number;    // under construction until this timestamp: can't fire, HP still rising
   garrison?: number;      // infantry manning it — more guns in the slits, capped
   buildHp?: number;       // integrity gained from curing so far (kept separate from battle damage)
+  // Active abilities (tick-based like the Air Command clock, so pause/2× behave)
+  abilityUntil?: number;  // tick the active effect ends (tank overdrive)
+  abilityReadyAt?: number;// tick the ability may fire again
+  // Sniper camouflage: builds while motionless under 'hold' in forest cover,
+  // broken (and locked out) by firing
+  camoTicks?: number;
+  camouflaged?: boolean;
+  camoRevealAt?: number;  // tick before which camo cannot rebuild (just fired)
+  // Engineer C4: the demolition point he was ordered to (trumps the job list)
+  c4X?: number;
+  c4Y?: number;
 }
 
 export interface Projectile {
@@ -211,6 +222,7 @@ export interface GameState {
     [Team.WEST]: number;
     [Team.EAST]: number;
   };
+  tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
 }
 
 export type GameMode = 'points' | 'basehp';

@@ -77,6 +77,15 @@ import {
   BUILDING_COLLAPSE_SURVIVE,
   BUILDING_NAPALM_BURN,
   buildingCapacity,
+  OVERDRIVE_DURATION_TICKS,
+  OVERDRIVE_COOLDOWN_TICKS,
+  OVERDRIVE_SPEED_MULT,
+  CAMO_DELAY_TICKS,
+  CAMO_REVEAL_TICKS,
+  C4_FUSE_TICKS,
+  C4_COOLDOWN_TICKS,
+  C4_DAMAGE,
+  C4_RADIUS,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -366,7 +375,7 @@ interface GameCanvasProps {
   commandQueue: { team: Team, cmd: TeamCommand }[];
   clearCommandQueue: () => void;
   // Per-unit orders: null order = clear the override (follow team stance)
-  orderQueue: { ids: string[], order: Stance | null }[];
+  orderQueue: { ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' }[];
   clearOrderQueue: () => void;
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
@@ -460,6 +469,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const cratesRef = useRef<SupplyCrate[]>([]);
   const nextCrateTickRef = useRef(1500); // first drop ~25s in
   const smokesRef = useRef<SmokeZone[]>([]);
+  // Armed C4 satchels in the field (engineer ability) — fuse counts down in ticks
+  const c4Ref = useRef<{ id: string, team: Team, x: number, y: number, fuse: number, ownerId: string }[]>([]);
   const SMOKE_LIFE = 780; // ~13s of concealment
   const ENTRENCH_TICKS = 360; // ~6s stationary under 'hold' orders to dig in
   // Battle-event feed shown in the HUD; new array identity per emit so React sees the change
@@ -1134,15 +1145,50 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commandQueue, clearCommandQueue]);
 
-  // Per-unit order overrides from the selection panel
+  // Per-unit order overrides and ability triggers from the selection panel
   useEffect(() => {
     if (orderQueue.length > 0) {
-      orderQueue.forEach(({ ids, order }) => {
+      orderQueue.forEach(({ ids, order, ability }) => {
         const idSet = new Set(ids);
+        if (ability) {
+          const now = tickCountRef.current;
+          unitsRef.current.forEach(u => {
+            if (!idSet.has(u.id) || u.health <= 0 || u.boarded) return;
+            if ((u.abilityReadyAt ?? 0) > now) return;
+            if (ability === 'overdrive' && u.type === UnitType.TANK) {
+              u.abilityUntil = now + OVERDRIVE_DURATION_TICKS;
+              u.abilityReadyAt = now + OVERDRIVE_COOLDOWN_TICKS;
+            } else if (ability === 'c4' && u.type === UnitType.ENGINEER) {
+              // Resolve the demolition target NOW: nearest among enemy-half
+              // bridges, enemy bunkers and enemy-held strongpoints. Restricting
+              // bridges to the foe's half keeps a mis-click from sending him to
+              // blow your own column's crossing.
+              const FOE = u.team === Team.WEST ? Team.EAST : Team.WEST;
+              const foeHalf = (x: number) => u.team === Team.WEST ? x > CANVAS_WIDTH / 2 : x < CANVAS_WIDTH / 2;
+              let bx: number | null = null, by = 0, best = Infinity;
+              const consider = (x: number, y: number) => {
+                const d = Math.hypot(x - u.position.x, y - u.position.y);
+                if (d < best) { best = d; bx = x; by = y; }
+              };
+              for (const b of terrainRef.current) {
+                if (b.type === 'bridge' && b.state !== 'broken' && foeHalf(b.x)) consider(b.x, b.y);
+                else if (b.type === 'building' && b.occupiable && b.state !== 'burnt' && b.occupant === FOE) consider(b.x, b.y);
+              }
+              for (const e of unitsRef.current) {
+                if (e.team === FOE && e.type === UnitType.BUNKER && e.health > 0) consider(e.position.x, e.position.y);
+              }
+              if (bx !== null) {
+                u.c4X = bx; u.c4Y = by;
+                u.abilityReadyAt = now + C4_COOLDOWN_TICKS;
+              } // no target on the field: the order fizzles, no cooldown burned
+            }
+          });
+          return;
+        }
         unitsRef.current.forEach(u => {
           if (!idSet.has(u.id)) return;
           if (order === null) delete u.orders;
-          else u.orders = order;
+          else if (order !== undefined) u.orders = order;
         });
       });
       clearOrderQueue();
@@ -1473,9 +1519,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const inSmoke = (x: number, y: number) =>
       smokesRef.current.some(s => (x - s.x) ** 2 + (y - s.y) ** 2 < s.radius * s.radius);
     const smokeBlocked = (shooter: Unit, o: Unit) => {
+      const d2 = (o.position.x - shooter.position.x) ** 2 + (o.position.y - shooter.position.y) ** 2;
+      // Ghillie rule rides the smoke rule: a camouflaged sniper is invisible to
+      // every targeting pass beyond the same point-blank range that sees
+      // through smoke. Stray rounds and splash still hit him — he's hidden,
+      // not armored.
+      if (o.camouflaged && d2 >= 55 * 55) return true;
       if (smokesRef.current.length === 0) return false;
       if ((UNIT_CONFIG[o.type] as any).isFlying || (UNIT_CONFIG[shooter.type] as any).isFlying) return false;
-      const d2 = (o.position.x - shooter.position.x) ** 2 + (o.position.y - shooter.position.y) ** 2;
       if (d2 < 55 * 55) return false; // close enough to see through the haze
       return inSmoke(o.position.x, o.position.y) || inSmoke(shooter.position.x, shooter.position.y);
     };
@@ -2558,6 +2609,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (jobX !== null) { unit.jobX = jobX; unit.jobY = jobY; }
               else { delete unit.jobX; delete unit.jobY; }
             }
+            // A C4 order trumps the routine job list — demolition is why he
+            // was sent (re-asserted every tick so the search-tick scan above
+            // can't reassign him mid-mission)
+            if (unit.c4X !== undefined && unit.c4Y !== undefined) {
+              unit.jobX = unit.c4X; unit.jobY = unit.c4Y;
+            }
             // ...but steer to the job EVERY tick. Steering only on the search tick
             // let the advance stance push him back toward the enemy in between,
             // so he never closed on a job that lay behind him.
@@ -2569,6 +2626,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 moveY = Math.sin(a) * config.speed;
               } else {
                 moveX = 0; moveY = 0;   // on station: work
+                if (unit.c4X !== undefined && unit.c4Y !== undefined) {
+                  // On the objective: set the satchel and clear out
+                  c4Ref.current.push({ id: generateId(), team: unit.team, x: unit.c4X, y: unit.c4Y, fuse: C4_FUSE_TICKS, ownerId: unit.id });
+                  pushEvent('strike', `${teamName(unit.team)} engineer sets a C4 charge!`, unit.team);
+                  soundService.playHitSound(unit.c4X);
+                  delete unit.c4X; delete unit.c4Y;
+                  delete unit.jobX; delete unit.jobY;
+                }
               }
               movingToHill = true; // skip cover logic while on the job
             }
@@ -2804,6 +2869,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         if (rallyOn[unit.team]) { moveX *= RALLY_SPEED_MULT; moveY *= RALLY_SPEED_MULT; } // rally surge
+        // Overdrive sprint rides the same commit point as the rally surge —
+        // the branches above recompute speed and would walk out from under it
+        if (unit.type === UnitType.TANK && (unit.abilityUntil ?? 0) > tickCountRef.current) {
+          moveX *= OVERDRIVE_SPEED_MULT; moveY *= OVERDRIVE_SPEED_MULT;
+        }
 
         // Inertia: a tank leans into a turn, a soldier just turns. Smoothing the
         // heading also kills the tick-to-tick jitter that let a vehicle vibrate
@@ -2826,6 +2896,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         unit.position.x += moveX; unit.position.y += moveY;
         unit.position.y = Math.max(HORIZON_Y + 10, Math.min(CANVAS_HEIGHT - 10, unit.position.y));
+
+        // Sniper camouflage builds while he is motionless under 'hold' in
+        // forest cover, and cannot rebuild inside the reveal window after a
+        // shot. Read where movement is COMMITTED — same lesson as suppression.
+        if (unit.type === UnitType.SNIPER) {
+          const still = Math.abs(moveX) + Math.abs(moveY) < 0.01;
+          const holding = (unit.orders ?? stancesRef.current[unit.team]) === 'hold';
+          if (still && holding && unit.isInCover && unit.coverType === 'tree' &&
+              tickCountRef.current >= (unit.camoRevealAt ?? 0)) {
+            unit.camoTicks = (unit.camoTicks ?? 0) + 1;
+          } else {
+            unit.camoTicks = 0;
+          }
+          unit.camouflaged = (unit.camoTicks ?? 0) >= CAMO_DELAY_TICKS;
+        }
 
         // Stuck watchdog: a unit that wants to move but has gained no ground for
         // a second is wedged — a building corner, a scrum of friendlies, a prop.
@@ -3342,8 +3427,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (found) target = { position: { x: bx, y: by }, type: UnitType.SOLDIER } as unknown as Unit;
             }
 
+            // Overdrive trade-off: the sprint locks the main gun
+            if (unit.type === UnitType.TANK && (unit.abilityUntil ?? 0) > tickCountRef.current) target = null;
+
             if (target) {
               const targetIsAir = !!(UNIT_CONFIG[target.type] as any).isFlying;
+
+              // Any shot breaks a sniper's camouflage and locks it out briefly
+              if (unit.type === UnitType.SNIPER) {
+                unit.camoTicks = 0;
+                unit.camouflaged = false;
+                unit.camoRevealAt = tickCountRef.current + CAMO_REVEAL_TICKS;
+              }
 
               // Sniper Accuracy Check
               if (unit.type === UnitType.SNIPER) {
@@ -3634,6 +3729,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
     });
+
+    // ── C4 charges: armed satchels on a short fuse ──────────────────────────
+    for (let i = c4Ref.current.length - 1; i >= 0; i--) {
+      const c = c4Ref.current[i];
+      c.fuse -= 1;
+      // Arming blink so both sides can see the plant (the defender's window)
+      if (c.fuse % 24 === 0) {
+        particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y - 2 }, life: 10, color: '#ef4444', size: 3 });
+      }
+      if (c.fuse > 0) continue;
+      c4Ref.current.splice(i, 1);
+      // Structures take the brunt — a demolition charge levels occupied houses
+      // the way air ordnance does
+      damageBridges(c.x, c.y, C4_RADIUS, C4_DAMAGE, true);
+      // Units nearby (both sides — a satchel doesn't check IDs); air is immune.
+      // The bunker eats full demolition damage: it's the target this tool is for.
+      spatialHash.current.queryCallback(c.x, c.y, C4_RADIUS, u => {
+        if ((UNIT_CONFIG[u.type] as any).isFlying || u.health <= 0) return;
+        const d = Math.hypot(u.position.x - c.x, u.position.y - c.y);
+        if (d > C4_RADIUS) return;
+        const mult = u.type === UnitType.BUNKER || u.type === UnitType.GUNBOAT ? 1 : 0.5;
+        u.health -= C4_DAMAGE * mult * (1 - (d / C4_RADIUS) * 0.6);
+        u.lastHitTime = Date.now();
+        u.lastAttackerId = c.ownerId; // kill credit, or the engineer earns nothing
+      });
+      soundService.playMineExplosion(c.x);
+      shakeRef.current = Math.max(shakeRef.current, 6);
+      particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, life: 18, color: '#f97316', size: C4_RADIUS, isShockwave: true });
+      for (let k = 0; k < 14; k++) {
+        particlesRef.current.push({
+          id: generateId(), position: { x: c.x + (Math.random() - 0.5) * 20, y: c.y + (Math.random() - 0.5) * 20 },
+          velocity: { x: (Math.random() - 0.5) * 3, y: (Math.random() - 0.5) * 3 }, drag: 0.9,
+          life: 25 + Math.random() * 20, color: k % 3 === 0 ? '#fbbf24' : k % 3 === 1 ? '#f97316' : '#57534e',
+          size: 5 + Math.random() * 8, alt: 3 + Math.random() * 6, altVel: 0.6,
+        });
+      }
+      particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, life: 900, color: '#1c1917', size: 16, isGroundDecal: true });
+    }
 
     // Projectiles Logic — the ONE place a round moves and resolves (backwards:
     // loop splices). Everything a shot obeys lives here: cover and foxholes, the
@@ -4439,7 +4572,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -4487,6 +4620,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
         suppressed: unitsRef.current.filter(u => u.suppressedUntil && Date.now() < u.suppressedUntil).length,
         music: { ...musicDebugRef.current }, // adaptive-march probe: calls is monotonic, level post-hysteresis
+        // Ability probes
+        camouflaged: unitsRef.current.filter(u => u.camouflaged).length,
+        overdrive: unitsRef.current.filter(u => (u.abilityUntil ?? 0) > tickCountRef.current).length,
+        c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,

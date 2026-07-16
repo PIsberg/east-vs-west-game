@@ -13,6 +13,22 @@ export const MILLISECONDS_PER_FRAME = 1000 / FPS;
 export const WIN_SCORE = 100;
 export const BASE_HP = 50; // Base HP mode: breakthroughs damage the defender's base instead of scoring
 
+// ── Active abilities (selected-unit specials; tick-based like AIR_OPS) ──────
+// Tank Overdrive: sprint with the gun locked — flanking and retreats, not free DPS
+export const OVERDRIVE_DURATION_TICKS = 360;   // ~6s
+export const OVERDRIVE_COOLDOWN_TICKS = 2100;  // ~35s
+export const OVERDRIVE_SPEED_MULT = 1.4;
+// Sniper camouflage: motionless under 'hold' in forest cover → untargetable
+// beyond point-blank until he fires (the miss-dust already telegraphs the hide)
+export const CAMO_DELAY_TICKS = 240;   // ~4s still before the ghillie takes
+export const CAMO_REVEAL_TICKS = 150;  // ~2.5s exposed after any shot
+// Engineer C4: walks to the nearest demolition target (enemy-half bridge,
+// enemy bunker, enemy-held strongpoint), sets a satchel on a short fuse
+export const C4_FUSE_TICKS = 300;      // ~5s from plant to blast
+export const C4_COOLDOWN_TICKS = 1800; // ~30s per engineer
+export const C4_DAMAGE = 600;          // several tank shells' worth of structure
+export const C4_RADIUS = 55;
+
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
     cost: 110,
