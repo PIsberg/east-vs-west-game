@@ -205,6 +205,8 @@ export interface GameState {
   flankOwners?: (Team | null)[]; // [top post, bottom post]
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
   rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
+  // Air Command rearm time per team, in whole seconds (0 = ready to launch)
+  airOpsReadyIn?: { [Team.WEST]: number; [Team.EAST]: number };
   baseHP?: {
     [Team.WEST]: number;
     [Team.EAST]: number;

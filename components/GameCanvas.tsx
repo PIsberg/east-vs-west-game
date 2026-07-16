@@ -45,6 +45,9 @@ import {
   WRECK_LIFE_TICKS,
   WRECK_SMOLDER_TICKS,
   WRECK_MAX,
+  AIR_OPS_COOLDOWN_TICKS,
+  AIR_OPS_NUKE_TICKS,
+  GAME_TEMPO,
   AVOID_LOOKAHEAD,
   AVOID_COMMIT_MS,
   STUCK_SAMPLE_TICKS,
@@ -126,6 +129,9 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
 // ~7fps. Terrain (river, bridges, hills, buildings), smoke, the capture point and
 // every fielded unit as a team-colored dot; air units render as a small cross.
 const AIR_TYPES = new Set([UnitType.HELICOPTER, UnitType.FIGHTER, UnitType.DRONE, UnitType.GUNSHIP]);
+// Air-delivered ordnance governed by the shared Air Command readiness clock
+const AIR_OPS_TYPES = new Set([UnitType.AIRSTRIKE, UnitType.AIRBORNE, UnitType.MISSILE_STRIKE,
+  UnitType.CRUISE, UnitType.NUKE, UnitType.GUNSHIP]);
 
 // Imperative camera controls handed up by GameScene (buttons + minimap viewport)
 export type CamApi = {
@@ -862,6 +868,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
 
+  // Air Command readiness: the tick at which each team may launch its next
+  // air-delivered strike (shared across all strike types)
+  const airOpsRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
+
   // Team commands: economy upgrades (permanent income levels) and the rally
   // horn (short team-wide surge on a long cooldown)
   const incomeLevelRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
@@ -911,6 +921,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
       soundService.playZapSound();
       return;
+    }
+
+    // Air Command: every air-delivered strike shares one per-team readiness
+    // clock — after a launch the squadron rearms before the next can go.
+    // Vetoed like the gunboat's water check: return false, nothing is charged.
+    if (AIR_OPS_TYPES.has(type) && options?.absolutePos) {
+      if (tickCountRef.current < airOpsRef.current[team]) {
+        // Feed the rejection only to a human — the CPU checks readiness
+        // before rolling, so its rare vetoes shouldn't spam the feed
+        if (!cpuRef.current.teams.includes(team)) {
+          const secs = Math.ceil((airOpsRef.current[team] - tickCountRef.current) / 60);
+          pushEvent('command', `${teamName(team)} air command rearming — ready in ${secs}s`, team);
+        }
+        return false;
+      }
+      airOpsRef.current[team] = tickCountRef.current +
+        (type === UnitType.NUKE ? AIR_OPS_NUKE_TICKS : AIR_OPS_COOLDOWN_TICKS);
     }
 
     // Cruise missile: launched from a ship somewhere off the bottom edge
@@ -1779,7 +1806,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // ... (Rest of flyover update check if needed, but we are inside update loop)
       const fly = flyoversRef.current[i];
       if (fly.health <= 0) {
-        for (let p = 0; p < 12; p++) particlesRef.current.push({ id: generateId(), position: { x: fly.currentX, y: fly.altitudeY }, life: 25, color: '#333', size: 4 });
+        // Shot down. If the payload was still aboard, the strike dies with the
+        // plane — that unfired ordnance is the whole reason AA screens matter.
+        const payloadLost = !fly.dropped || (fly.missileCount || 0) > 0;
+        if (fly.type === UnitType.NUKE && payloadLost) {
+          pushEvent('kill', `☢ ${teamName(fly.team)} nuclear strike INTERCEPTED!`, fly.team);
+        } else {
+          pushEvent('kill', `${teamName(fly.team)} strike aircraft shot down${payloadLost ? ' — payload lost' : ''}`, fly.team);
+        }
+        soundService.playLargeExplosion();
+        // Fireball + burning debris raining from the flight line
+        for (let p = 0; p < 10; p++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: fly.currentX + (Math.random() - 0.5) * 24, y: fly.altitudeY + (Math.random() - 0.5) * 10 },
+            life: 22 + Math.random() * 14,
+            color: p % 2 === 0 ? '#f97316' : '#fbbf24', size: 6 + Math.random() * 8,
+            alt: 60 + Math.random() * 20, altVel: -(0.4 + Math.random() * 0.5),
+          });
+        }
+        for (let p = 0; p < 12; p++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: fly.currentX + (Math.random() - 0.5) * 30, y: fly.altitudeY + (Math.random() - 0.5) * 12 },
+            velocity: { x: (Math.random() - 0.5) * 1.4, y: (Math.random() - 0.5) * 0.6 },
+            drag: 0.98, life: 50 + Math.random() * 50,
+            color: p % 3 === 0 ? '#292524' : '#57534e', size: 4 + Math.random() * 5,
+            alt: 55 + Math.random() * 20, altVel: -(0.8 + Math.random() * 0.6),
+          });
+        }
         flyoversRef.current.splice(i, 1); continue;
       }
       fly.currentX += fly.speed;
@@ -2839,11 +2894,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
 
           if (!target) {
-            // Check flyovers (Airstrikes/Missiles)
+            // Check flyovers (strike aircraft). LEAD the shot: the plane
+            // crosses at fly.speed px/tick and rounds are stepped twice per
+            // tick (see the combat-resolution notes), so aiming at where the
+            // plane IS guarantees a miss at any real distance — solve the
+            // intercept point instead. This is what makes an AA screen an
+            // actual answer to strike spam rather than decorative tracer fire.
             const fly = flyoversRef.current.find(f => f.team !== unit.team && Math.sqrt((f.currentX - unit.position.x) ** 2 + (f.altitudeY - unit.position.y) ** 2) < range);
             if (fly) {
-              const a = Math.atan2(fly.altitudeY - unit.position.y, fly.currentX - unit.position.x);
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+              const rs = roundSpeed(unit.type) * 2; // effective px/tick (double-step)
+              let aimX = fly.currentX;
+              for (let it = 0; it < 3; it++) {
+                const t = Math.hypot(aimX - unit.position.x, fly.altitudeY - unit.position.y) / rs;
+                aimX = fly.currentX + fly.speed * t;
+              }
+              const a = Math.atan2(fly.altitudeY - unit.position.y, aimX - unit.position.x);
+              // The intercept point can sit a little beyond the launch range —
+              // let the round live long enough to get there
+              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range * 1.2, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
             } else {
               // Sky's clear — depress the guns and rake enemy infantry. Flak
@@ -4071,11 +4139,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const foeForts = terrainRef.current.filter(b =>
           b.type === 'building' && b.occupiable && b.state !== 'burnt' &&
           b.occupant === FOE && (b.garrisonUnits?.length || 0) >= 3);
-        if (!specialSpawned && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special) {
+        // Air Command gate: don't roll (or burn the one special slot per cycle)
+        // on ordnance the squadron can't launch yet. spawnUnit would veto it
+        // anyway — this keeps the CPU's tactics reads honest.
+        const airReady = tickCountRef.current >= airOpsRef.current[ME];
+        if (!specialSpawned && airReady && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special) {
           const fort = foeForts.reduce((a, b) => ((b.garrisonUnits?.length || 0) > (a.garrisonUnits?.length || 0) ? b : a));
-          spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } });
-          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
-          specialSpawned = true;
+          if (spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } }) !== false) {
+            moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
+            specialSpawned = true;
+          }
         }
 
         // Smoke blinds the foe's long-range battery: dropped ON their
@@ -4096,21 +4169,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Missile strike at enemy cluster
-        if (!specialSpawned && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
-          spawnUnit(ME, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } });
-          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any).cost;
-          specialSpawned = true;
+          if (spawnUnit(ME, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } }) !== false) {
+            moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any).cost;
+            specialSpawned = true;
+          }
         }
 
         // Cruise missile at a big enemy cluster
-        if (!specialSpawned && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
-          spawnUnit(ME, UnitType.CRUISE, { absolutePos: { x: cx, y: cy } });
-          moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.CRUISE] as any).cost;
-          specialSpawned = true;
+          if (spawnUnit(ME, UnitType.CRUISE, { absolutePos: { x: cx, y: cy } }) !== false) {
+            moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.CRUISE] as any).cost;
+            specialSpawned = true;
+          }
         }
 
         // Satellite laser on the foe's densest forward position when flush with cash
@@ -4127,7 +4202,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // cycle (0.2) and sank $6-7k a session into sticks that died to a man —
         // the single biggest hole in its economy. It now raids rarely, and only
         // when the sampling below actually finds a hole to land in.
-        if (!specialSpawned && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special) {
           // Drop into a GAP. This used to pick a blind random spot 80-200px from
           // the foe's edge — i.e. right on top of their spawn, the one place their
           // entire reinforcement stream walks through. The stick landed in the
@@ -4150,8 +4225,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
           // No hole worth landing in — keep the money. Dropping anyway is how the
           // stick used to end up on top of the enemy's spawn.
-          if (bestClear > 130) {
-            spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: drop });
+          if (bestClear > 130 && spawnUnit(ME, UnitType.AIRBORNE, { absolutePos: drop }) !== false) {
             moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRBORNE] as any).cost;
             specialSpawned = true;
           }
@@ -4269,11 +4343,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, baseHP: baseHPRef.current });
+      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
       // Balance-telemetry hook for headless harnesses
       (window as any).__ewDebug = {
         elapsedMs: Date.now() - matchStartRef.current,
+        tickCount: tickCountRef.current, // with elapsedMs: measured sim rate (GAME_TEMPO probe)
         score: { ...scoreRef.current },
         baseHP: { ...baseHPRef.current },
         money: { WEST: Math.floor(moneyRef.current[Team.WEST]), EAST: Math.floor(moneyRef.current[Team.EAST]) },
@@ -4295,6 +4370,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
+        airOps: {
+          WEST: Math.max(0, airOpsRef.current[Team.WEST] - tickCountRef.current),
+          EAST: Math.max(0, airOpsRef.current[Team.EAST] - tickCountRef.current),
+        },
+        flyovers: flyoversRef.current.length,
+        lastEvents: eventsRef.current.map(e => e.text), // feed is capped at 8, newest last
         wrecks: terrainRef.current.filter(t => t.type === 'wreck').map(w => ({
           x: Math.round(w.x), y: Math.round(w.y), of: w.wreckOf, health: w.health ?? 0,
         })),
@@ -4373,20 +4454,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Game Loop - Stable Identity
   const lastFrameTimeRef = useRef(0);
+  const tempoCarryRef = useRef(0); // fractional ticks carried between frames
   const tick = useCallback(() => {
     if (!gameOverRef.current) {
       try {
         if (!speedRef.current.paused) {
           // Spectator/balance mode: catch up on wall-clock time so low headless
           // frame rates still simulate at the requested speed. Normal play stays
-          // strictly frame-locked (speed ticks per rAF).
-          let ticks = speedRef.current.speed;
+          // frame-locked (speed × GAME_TEMPO ticks per rAF); GAME_TEMPO is
+          // fractional, so leftover fractions accumulate across frames — at
+          // 1.25 that's five ticks every four frames, not a lost quarter-tick.
+          let ticksF = speedRef.current.speed * GAME_TEMPO;
           if (cpuRef.current.teams.length === 2) {
             const now = performance.now();
             const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
             lastFrameTimeRef.current = now;
-            ticks = Math.min(240, Math.max(1, Math.round((elapsed / 16.7) * speedRef.current.speed)));
+            ticksF = Math.min(240, Math.max(1, (elapsed / 16.7) * speedRef.current.speed * GAME_TEMPO));
           }
+          tempoCarryRef.current += ticksF;
+          const ticks = Math.floor(tempoCarryRef.current);
+          tempoCarryRef.current -= ticks;
           for (let s = 0; s < ticks; s++) {
             updateRef.current();
             if (gameOverRef.current) break;

@@ -1,5 +1,15 @@
 # Changelog
 
+## The war moves at combat pace (July 2026)
+
+- **Everything happens ~25% faster.** The whole simulation now runs at 1.25× tempo — units cross the field quicker, guns cycle quicker, income flows quicker — so the front forms sooner and the action never sags. Because *everything* scales together, no unit got stronger or weaker relative to any other; the same battle simply plays out with less waiting. The 2× speed toggle still works on top of it.
+
+## Air power gets a leash — and a counter (July 2026)
+
+- **Air Command: strikes now share a rearm clock.** Airstrike, paradrop, missile strike, cruise, gunship and nuke draw from one per-team readiness timer (~22 seconds between launches, a full minute of silence after a nuke). Money alone no longer buys a strike chain that deletes an army with no warning — the game's most disruptive purchases now have a rhythm you can play around. Locked buttons show the countdown, hotkeys respect it, and the CPU plays by exactly the same clock (it also now pays only for strikes that actually launch — it used to charge itself even when a launch was refused).
+- **Anti-Air actually intercepts strike aircraft now.** AA guns always *fired at* passing planes — and always missed, because they aimed at where the plane was instead of where it would be. They now lead the target properly, and a plane that falls before the drop takes its payload with it (the feed reports it; an intercepted nuke gets the headline it deserves). Parking a couple of AA guns under the flight path is a genuine answer to an air-happy opponent, which is what makes the rearm clock a rhythm instead of a hard cap.
+
+
 ## The battlefield remembers (July 2026)
 
 - **Destroyed vehicles become burning wrecks — and the wreck is terrain.** A knocked-out tank used to be a dark smudge that faded in seven seconds. Now the hulk stays where it died: slumped hull, turret knocked askew, barrel drooping, fire crowning out of the burnt-open core with oily smoke rolling off it. Infantry take cover behind it exactly like a boulder; vehicles steer around it. It burns hard, dies down to a smoldering shell, and sinks away after most of a minute — capped at ten hulks so a long battle marks the field without clogging it. A vehicle killed on a bridge goes over the side instead (no wreck may block a crossing). Emergent bonus: a squad bailing out of a dead APC ducks behind its own vehicle's hulk.

@@ -691,6 +691,23 @@ export const CLASS_PROFILE: Record<MoveClass, {
 // slower than a road march; the crossing is where infantry is caught in the open.
 export const ICE_CROSS_MULT = 0.8;
 
+// ── Game tempo ───────────────────────────────────────────────────────────────
+// Uniform sim-rate multiplier: the loop runs this many ticks per rAF frame
+// (fractional ticks carry over between frames). Everything — movement, reload,
+// projectiles, income — speeds up TOGETHER, so relative balance is untouched;
+// the game simply plays out ~25% faster. Distinct from the 2x speed toggle,
+// which multiplies on top. Tune HERE for pacing, never via UNIT_CONFIG speeds
+// (those are tuned relative to each other within move classes).
+export const GAME_TEMPO = 1.25;
+
+// ── Air Command ──────────────────────────────────────────────────────────────
+// All air-delivered ordnance shares ONE readiness clock per team: after any
+// strike the squadron rearms before the next can launch. This paces the game's
+// most disruptive purchases — no back-to-back strike chains deleting an army —
+// without touching their damage. Tick-based so pause/speed behave.
+export const AIR_OPS_COOLDOWN_TICKS = 1350; // ~22s between air operations
+export const AIR_OPS_NUKE_TICKS = 3600;     // ~60s of silence after a nuke
+
 // ── Wrecks ───────────────────────────────────────────────────────────────────
 // A destroyed ground vehicle stays on the field as a burning hulk: infantry
 // take cover behind it like a rock, vehicles steer around it. It burns hard,
