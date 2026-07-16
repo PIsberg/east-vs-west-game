@@ -74,6 +74,7 @@ export interface TerrainObject {
   // soaks fire on their behalf until its `health` runs out, and when it collapses
   // most of the garrison dies. `capacity` scales with the footprint.
   occupiable?: boolean;
+  isRubble?: boolean;        // collapsed once: still occupiable low-profile cover — half capacity, no gun slits, fragile
   capacity?: number;         // max troops it can hold (by size)
   occupant?: Team | null;    // holding team, null = empty/neutral
   garrisonUnits?: Unit[];    // off-field soldiers sheltering inside

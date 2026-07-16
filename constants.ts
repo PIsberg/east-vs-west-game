@@ -29,6 +29,11 @@ export const C4_COOLDOWN_TICKS = 1800; // ~30s per engineer
 export const C4_DAMAGE = 600;          // several tank shells' worth of structure
 export const C4_RADIUS = 55;
 
+// Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —
+// the mound is still occupiable (half capacity, no defensive fire) but one
+// more good hit pounds it to dust for good
+export const RUBBLE_HP = 140;
+
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
     cost: 110,

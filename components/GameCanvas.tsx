@@ -86,6 +86,7 @@ import {
   C4_COOLDOWN_TICKS,
   C4_DAMAGE,
   C4_RADIUS,
+  RUBBLE_HP,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -3662,7 +3663,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (bld.occupant && bld.garrisonUnits.length === 0) bld.occupant = null;
 
       // Defensive fire: the garrison shoots the nearest enemy through the windows.
-      if (bld.occupant && bld.garrisonUnits.length > 0) {
+      // Rubble has no gun slits — troops in the mound are cover-holders, not a turret.
+      if (bld.occupant && bld.garrisonUnits.length > 0 && !bld.isRubble) {
         bld.fireCooldown = (bld.fireCooldown || 0) - 1;
         if (bld.fireCooldown <= 0) {
           let target: Unit | null = null;
@@ -3699,16 +3701,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Damage states track structural integrity; 0 HP collapses the house.
+      // A strongpoint dies in two steps: the first collapse leaves an
+      // occupiable rubble mound (half capacity, no gun slits, RUBBLE_HP), the
+      // second pounds it to dust for good — so key ground stays contested
+      // after it's leveled, but not forever.
       if ((bld.health ?? 0) <= 0) {
         const held = bld.occupant;
         const buried = spillGarrison(bld, { survive: BUILDING_COLLAPSE_SURVIVE, healthMult: 0.35 });
         if (held) {
           statsRef.current[held].lost += buried;
-          pushEvent('capture', `${teamName(held)} strongpoint collapses`, held);
+          pushEvent('capture', `${teamName(held)} strongpoint ${bld.isRubble ? 'rubble pounded to dust' : 'collapses'}`, held);
         }
-        bld.state = 'burnt';
-        bld.occupant = null;
-        bld.health = 0;
+        if (!bld.isRubble) {
+          bld.isRubble = true;
+          bld.occupant = null;
+          bld.fireCooldown = 0;
+          bld.capacity = Math.max(1, Math.ceil((bld.capacity || 0) / 2));
+          bld.maxHealth = RUBBLE_HP;
+          bld.health = RUBBLE_HP;
+          bld.state = 'broken';
+        } else {
+          bld.state = 'burnt';
+          bld.occupant = null;
+          bld.health = 0;
+        }
         soundService.playLargeExplosion(bld.x);
         shakeRef.current = Math.max(shakeRef.current, 6);
         for (let k = 0; k < 18; k++) {
@@ -3724,7 +3740,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         particlesRef.current.push({ id: generateId(), position: { x: bld.x, y: bld.y }, life: 600, color: '#292524', size: (bld.width || 40) * 0.7, isGroundDecal: true });
       } else {
         const frac = (bld.health ?? 0) / (bld.maxHealth || 1);
-        const newState = frac > 0.6 ? 'normal' : frac > 0.3 ? 'broken' : 'burning';
+        // Rubble never reads 'normal' — it's a mound, and it only worsens
+        const newState = bld.isRubble
+          ? (frac > 0.3 ? 'broken' : 'burning')
+          : (frac > 0.6 ? 'normal' : frac > 0.3 ? 'broken' : 'burning');
         // Crossing into a worse stage (normal→broken, broken→burning) blows the
         // garrison out into the open, shaken but alive, and hands the position
         // back to whoever reaches it next — the enemy assaulting it, or the
@@ -4679,6 +4698,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           x: Math.round(b.x), y: Math.round(b.y), occupant: b.occupant ?? null,
           garrison: b.garrisonUnits?.length ?? 0, capacity: b.capacity ?? 0,
           health: Math.round(b.health ?? 0), maxHealth: b.maxHealth ?? 0, state: b.state,
+          rubble: !!b.isRubble,
         })),
         selectedCount: (selectedIds ?? []).length,
         // Test hook: select the first n units of the first human team

@@ -2706,9 +2706,15 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const flagColor = occupant === Team.WEST ? '#3b82f6' : occupant === Team.EAST ? eastColor('#ef4444') : '#d6d3d1';
 
         // A collapsed strongpoint: a low pile of rubble where the house stood.
-        const isRubble = item.state === 'burnt';
-        if (isRubble) {
+        // First collapse leaves a LIVE mound (isRubble, still occupiable — it
+        // keeps its objective fittings at ground level); the second collapse
+        // ('burnt') is the dead pile.
+        const isRubblePile = item.state === 'burnt' || !!item.isRubble;
+        if (isRubblePile) {
             const rh = Math.min(14, h * 0.28);
+            const live = occ && item.state !== 'burnt';
+            const rubbleLabel = live ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
+            const rubbleFlicker = Math.floor(Date.now() / 110) % 2 === 0;
             return (
                 <ClickableGroup position={[item.x, rh / 2, item.y]} onCanvasClick={onCanvasClick}>
                     <mesh castShadow receiveShadow>
@@ -2729,6 +2735,35 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                             <meshStandardMaterial color="#44403c" roughness={1} />
                         </mesh>
                     ))}
+                    {live && (
+                        <group>
+                            {/* Objective ring survives the collapse — the ground still matters */}
+                            <mesh position={[0, -rh / 2 + 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                                <ringGeometry args={[Math.max(w, d) * 0.5 + 4, Math.max(w, d) * 0.5 + 8, 40]} />
+                                <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
+                            </mesh>
+                            {/* A stubborn flag jammed into the debris */}
+                            <group position={[w * 0.2, rh / 2, d * 0.15]}>
+                                <mesh position={[0, 7, 0]} castShadow>
+                                    <cylinderGeometry args={[0.5, 0.5, 14]} />
+                                    <meshStandardMaterial color="#57534e" />
+                                </mesh>
+                                <mesh position={[3.4, 11.5, 0]}>
+                                    <boxGeometry args={[6.5, 4, 0.4]} />
+                                    <meshStandardMaterial color={flagColor} emissive={flagColor} emissiveIntensity={occupant ? 0.35 : 0} side={THREE.DoubleSide} />
+                                </mesh>
+                            </group>
+                            {rubbleLabel && (
+                                <sprite position={[0, rh / 2 + 18, 0]} scale={[rubbleLabel.userData.w, rubbleLabel.userData.h, 1]} material={rubbleLabel} />
+                            )}
+                            {item.state === 'burning' && [[-w * 0.2, d * 0.1], [w * 0.15, -d * 0.12]].map(([lx, lz], i) => (
+                                <mesh key={`rf${i}`} position={[lx, rh / 2 + 3, lz]}>
+                                    <coneGeometry args={[3, 7, 6]} />
+                                    <meshBasicMaterial color={rubbleFlicker === (i % 2 === 0) ? '#f97316' : '#fbbf24'} toneMapped={false} />
+                                </mesh>
+                            ))}
+                        </group>
+                    )}
                 </ClickableGroup>
             );
         }
