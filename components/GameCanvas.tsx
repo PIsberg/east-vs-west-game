@@ -411,6 +411,10 @@ interface GameCanvasProps {
   cpuPersona?: CpuPersona; // 'random' resolves to a named commander once per mount
   fogOfWar?: boolean; // per-team visibility grid; App only enables it for single-human matches
   asymmetry?: boolean; // faction doctrine mode: FACTION_MODS stats + exclusive rosters
+  // Campaign plumbing (generic — challenges could use these too):
+  onGameOver?: (winner: Team, durSec: number) => void;
+  moneyMultByTeam?: Partial<Record<Team, number>>; // opening-funds handicap per side (overrides startMoneyMult)
+  bannedUnits?: Partial<Record<Team, UnitType[]>>; // roster locks (e.g. no airbase held → no strikes)
   mapType: MapType;
   paused: boolean;
   gameSpeed: number;
@@ -460,6 +464,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cpuPersona,
   fogOfWar,
   asymmetry,
+  onGameOver,
+  moneyMultByTeam,
+  bannedUnits,
   mapType,
   paused,
   gameSpeed,
@@ -530,6 +537,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Asymmetric doctrine mode (mirrored is the default and the harness baseline)
   const asymOnRef = useRef(!!asymmetry);
   useEffect(() => { asymOnRef.current = !!asymmetry; }, [asymmetry]);
+  // Campaign roster locks per team (empty = everything allowed)
+  const bannedRef = useRef(bannedUnits);
+  useEffect(() => { bannedRef.current = bannedUnits; }, [bannedUnits]);
   const fogRef = useRef<Record<Team, Uint8Array>>((() => {
     const make = (team: Team) => {
       const g = new Uint8Array(FOW_W * FOW_H);
@@ -709,6 +719,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
     else soundService.playDefeatSound();
     if (humanWon && challengeId && cpuRef.current.teams.length === 1) onChallengeWon?.(challengeId, Math.round((Date.now() - matchStartRef.current) / 1000));
+    onGameOver?.(gameOver, Math.round((Date.now() - matchStartRef.current) / 1000));
     // Record the result for the splash screen's Recent Battles panel
     try {
       const rec = {
@@ -1023,10 +1034,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
   const scoreRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
-  // Challenge handicap scales the HUMAN sides' opening funds only
+  // Challenge handicap scales the HUMAN sides' opening funds only; a campaign
+  // battle instead hands both sides explicit multipliers (strength difference)
   const moneyRef = useRef({
-    [Team.WEST]: INITIAL_MONEY * (cpuTeams.includes(Team.WEST) ? 1 : (startMoneyMult ?? 1)),
-    [Team.EAST]: INITIAL_MONEY * (cpuTeams.includes(Team.EAST) ? 1 : (startMoneyMult ?? 1)),
+    [Team.WEST]: INITIAL_MONEY * (moneyMultByTeam?.[Team.WEST] ?? (cpuTeams.includes(Team.WEST) ? 1 : (startMoneyMult ?? 1))),
+    [Team.EAST]: INITIAL_MONEY * (moneyMultByTeam?.[Team.EAST] ?? (cpuTeams.includes(Team.EAST) ? 1 : (startMoneyMult ?? 1))),
   });
   const spatialHash = useRef(new SpatialHash(60)); // 60px grid cell
 
@@ -1080,6 +1092,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // same return-false-nothing-charged pattern as the gunboat water check.
     // (NAPALM canisters pass: the exclusive is the AIRSTRIKE that drops them.)
     if (!factionAllowed(team, type, asymOnRef.current)) return false;
+    // Campaign roster locks (no airbase held → no strikes, etc.)
+    if (bannedRef.current?.[team]?.includes(type)) return false;
 
     // Fog of war: ordnance called onto ground the launching team cannot see
     // scatters off the aim point — scouting before striking is the counterplay
@@ -4552,7 +4566,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Affordable AND on this side's roster — every counter-pick, tactic
         // roll and fallback goes through here, so the CPU never wastes a cycle
         // wanting the other doctrine's exclusives
-        const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost && factionAllowed(ME, t, asymOnRef.current);
+        const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost && factionAllowed(ME, t, asymOnRef.current) &&
+          !bannedRef.current?.[ME]?.includes(t);
         const prio: Partial<Record<UnitType, number>> = {};
         // Persona doctrine multiplies every weight — counter-picks included, so
         // a specialist under-invests in answers it dislikes but never skips them
@@ -4774,7 +4789,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                                          UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE, UnitType.GUNBOAT]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
-                return cost > 0 && cost <= money && !noAiTypes.has(t) && factionAllowed(ME, t, asymOnRef.current);
+                return cost > 0 && cost <= money && !noAiTypes.has(t) && factionAllowed(ME, t, asymOnRef.current) &&
+                  !bannedRef.current?.[ME]?.includes(t);
               });
               if (affordable.length > 0) pool.push(...affordable);
             }

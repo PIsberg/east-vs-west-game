@@ -5,6 +5,11 @@ import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } fro
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST, factionAllowed } from './constants';
 import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
+import {
+  CampaignState, TERRITORIES, territory, createCampaign, campaignMove, applyBattleResult,
+  cpuCampaignTurn, reinforce, campaignWinner, battleSettings, bannedFor, saveCampaign, loadCampaign,
+} from './campaign';
+import type { TerritoryBonus } from './campaign';
 
 const TankIcon = ({ size = 20 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -205,7 +210,7 @@ const App: React.FC = () => {
   const [gameSpeed, setGameSpeed] = useState<number>(PARAM_SPEED);
   const [muted, setMuted] = useState(() => soundService.isMuted());
   const [musicOn, setMusicOn] = useState(() => soundService.isMusicOn());
-  const [playerSide, setPlayerSide] = useState<Team>(SAVED_PREFS.playerSide === Team.EAST ? Team.EAST : Team.WEST);
+  const [playerSidePref, setPlayerSide] = useState<Team>(SAVED_PREFS.playerSide === Team.EAST ? Team.EAST : Team.WEST);
   const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(
     SPECTATE ? 'normal' : (['off', 'easy', 'normal', 'hard'].includes(SAVED_PREFS.cpuLevel as string) ? SAVED_PREFS.cpuLevel as 'off' | 'easy' | 'normal' | 'hard' : 'off')
   );
@@ -255,12 +260,33 @@ const App: React.FC = () => {
     Object.values(MapType).includes(SAVED_PREFS.mapType as MapType) ? SAVED_PREFS.mapType as MapType : MapType.COUNTRYSIDE
   );
 
+  // ── Grand Campaign ─────────────────────────────────────────────────────
+  // Board state persists in ewv-campaign (one slot). campaignBattle carries
+  // the launched battle's handicaps/roster locks, pre-resolved at launch so a
+  // later board change can't leak into a running fight. While it's set, the
+  // player is forced to WEST vs a CPU EAST regardless of menu prefs.
+  const [campaign, setCampaign] = useState<CampaignState | null>(() => loadCampaign());
+  const [campaignOpen, setCampaignOpen] = useState(false);
+  const [selectedArmy, setSelectedArmy] = useState<string | null>(null);
+  const [campaignBattle, setCampaignBattle] = useState<{
+    name: string;
+    mult: Record<Team, number>;
+    banned: Record<Team, UnitType[]>;
+  } | null>(null);
+  const [campaignReturn, setCampaignReturn] = useState<Team | null>(null);
+  const campaignRef = useRef(campaign); campaignRef.current = campaign;
+  const campaignBattleRef = useRef(campaignBattle); campaignBattleRef.current = campaignBattle;
+  // Whose assault the running battle settles — decides what the CPU still owes
+  const campaignPhaseRef = useRef<'player' | 'cpu'>('player');
+
+  const playerSide = campaignBattle ? Team.WEST : playerSidePref;
+
   // Remember menu choices for the next visit
   useEffect(() => {
-    try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide, cpuLevel, gameMode, mapType, cpuPersona })); } catch { /* ignore */ }
-  }, [playerSide, cpuLevel, gameMode, mapType, cpuPersona]);
+    try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide: playerSidePref, cpuLevel, gameMode, mapType, cpuPersona })); } catch { /* ignore */ }
+  }, [playerSidePref, cpuLevel, gameMode, mapType, cpuPersona]);
 
-  const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
+  const cpuTeam = campaignBattle ? Team.EAST : (cpuLevel === 'off' ? null : (playerSidePref === Team.WEST ? Team.EAST : Team.WEST));
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
   // A CPU side's spawn panel is all disabled buttons — dead space. Hide it and
   // give the width back to the battlefield, so a single-player game (or a
@@ -389,10 +415,114 @@ const App: React.FC = () => {
     setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setWeather('clear'); setPaused(false);
   };
 
+  // ── Campaign actions ─────────────────────────────────────────────────────
+  // Fight the board state's pending battle: territory terrain picks the map,
+  // strength difference sets both sides' opening funds, held bonus territories
+  // decide the roster locks. Mode is always basehp — the attacker must break
+  // the defense, not out-farm it.
+  const launchCampaignBattle = (s: CampaignState) => {
+    const settings = battleSettings(s);
+    setMapType(settings.map);
+    setGameMode('basehp');
+    setChallenge(null);
+    setCampaignBattle({
+      name: settings.name,
+      mult: settings.moneyMult,
+      banned: { [Team.WEST]: bannedFor(s, Team.WEST), [Team.EAST]: bannedFor(s, Team.EAST) },
+    });
+    setCampaignOpen(false);
+    setCampaignReturn(null);
+    setGameKey(prev => prev + 1);
+    setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
+    setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setPaused(false);
+    handleStartClick();
+  };
+
+  const openCampaign = () => {
+    let s = campaignRef.current;
+    if (!s || campaignWinner(s)) {
+      // New war, new enemy commander — one named persona for the whole campaign
+      const personas = CPU_PERSONA_IDS.filter(p => p !== 'balanced');
+      s = createCampaign(personas[Math.floor(Math.random() * personas.length)]);
+      setCampaign(s); saveCampaign(s);
+    }
+    // A save quit mid-battle resumes straight into the fight
+    if (s.pendingBattle) {
+      campaignPhaseRef.current = s.pendingBattle.attacker === Team.WEST ? 'player' : 'cpu';
+      launchCampaignBattle(s);
+      return;
+    }
+    setSelectedArmy(null);
+    setCampaignOpen(true);
+  };
+
+  const abandonCampaign = () => {
+    setCampaign(null); saveCampaign(null);
+    setCampaignOpen(false);
+  };
+
+  // One player move drives the whole round: player → (battle?) → CPU →
+  // (battle?) → reinforce. Battles suspend the round; handleCampaignGameOver
+  // picks it back up where it stopped.
+  const doPlayerCampaignMove = (armyId: string, toId: string) => {
+    const cur = campaignRef.current;
+    if (!cur || cur.pendingBattle || campaignWinner(cur)) return;
+    let s = campaignMove(cur, armyId, toId);
+    if (s === cur) return; // not adjacent / not movable
+    setSelectedArmy(null);
+    if (s.pendingBattle) {
+      campaignPhaseRef.current = 'player';
+      setCampaign(s); saveCampaign(s);
+      launchCampaignBattle(s);
+      return;
+    }
+    s = cpuCampaignTurn(s);
+    if (s.pendingBattle) {
+      campaignPhaseRef.current = 'cpu';
+      setCampaign(s); saveCampaign(s);
+      launchCampaignBattle(s);
+      return;
+    }
+    s = reinforce(s);
+    setCampaign(s); saveCampaign(s);
+  };
+
+  // The 3D battle resolved: settle the board, run whatever the round still
+  // owes (CPU move after a player assault, reinforcement at round end), then
+  // wait for the player to hit Continue.
+  const handleCampaignGameOver = useCallback((winner: Team) => {
+    if (!campaignBattleRef.current || !campaignRef.current) return;
+    let s = applyBattleResult(campaignRef.current, winner);
+    if (!campaignWinner(s)) {
+      if (campaignPhaseRef.current === 'player') {
+        s = cpuCampaignTurn(s);
+        if (s.pendingBattle) campaignPhaseRef.current = 'cpu';
+        else s = reinforce(s);
+      } else {
+        s = reinforce(s);
+      }
+    }
+    setCampaign(s); saveCampaign(s);
+    setCampaignReturn(winner);
+  }, []);
+
+  const continueCampaign = () => {
+    setCampaignReturn(null);
+    setCampaignBattle(null);
+    const s = campaignRef.current;
+    if (s?.pendingBattle && !campaignWinner(s)) {
+      launchCampaignBattle(s); // the enemy's counterattack goes straight in
+    } else {
+      setShowSplash(true); setSplashFading(false);
+      setCampaignOpen(true);
+    }
+  };
+
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     if (activeChallenge?.infantryOnly && team === playerSide && !INFANTRY_ALLOWED.has(type)) return; // Boots Only
     if (!factionAllowed(team, type, asym)) return; // other doctrine's exclusive (also guards hotkeys)
+    if (campaignBattle?.banned[team]?.includes(type)) return; // campaign roster lock (hold the harbor/airbase/silo to unlock)
     if (AIR_OPS_UI.has(type) && (gameState.airOpsReadyIn?.[team] ?? 0) > 0) return; // Air Command rearming (also guards hotkeys)
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
@@ -572,7 +702,7 @@ const App: React.FC = () => {
               title={label}
               className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
               onClick={() => handleSpawnRequest(team, type)}
-              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (airWait > 0 && AIR_OPS_UI.has(type)) || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type))}
+              disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (airWait > 0 && AIR_OPS_UI.has(type)) || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type)) || (campaignBattle?.banned[team]?.includes(type) ?? false)}
             >
               <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
               <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
@@ -881,6 +1011,12 @@ const App: React.FC = () => {
                 })}
               </div>
             </div>
+            {/* Grand Campaign: the strategic board wrapping the battles */}
+            <button
+              data-testid="campaign-btn"
+              onClick={openCampaign}
+              className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 hover:border-amber-400 transition-all font-bold uppercase tracking-widest text-stone-200 ${compact ? 'px-3 py-1 text-[10px]' : 'px-5 py-2 text-xs'}`}
+            >🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — turn ${campaign.turn + 1}` : 'Grand Campaign'}</button>
             <button
               className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
@@ -972,7 +1108,7 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} fogOfWar={fow && cpuTeams.length === 1} asymmetry={asym} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={fow && cpuTeams.length === 1} asymmetry={asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again
@@ -1127,6 +1263,103 @@ const App: React.FC = () => {
         </div>
 
       </div>}
+
+      {/* ── Grand Campaign board ─────────────────────────────────────────── */}
+      {campaignOpen && campaign && (() => {
+        const s = campaign;
+        const winner = campaignWinner(s);
+        const persona = CPU_PERSONALITY[s.enemyPersona];
+        const sel = selectedArmy ? s.armies.find(a => a.id === selectedArmy) : null;
+        const reachable = new Set(sel ? territory(sel.territory).adjacent : []);
+        const bonusIcon = (b?: TerritoryBonus) => b === 'harbor' ? '⚓' : b === 'silo' ? '☢' : b === 'airbase' ? '✈' : b === 'income' ? '$' : '';
+        const clickTerritory = (tid: string) => {
+          if (winner) return;
+          if (sel && reachable.has(tid)) { doPlayerCampaignMove(sel.id, tid); return; }
+          const own = s.armies.find(a => a.territory === tid && a.team === Team.WEST);
+          setSelectedArmy(own ? own.id : null);
+        };
+        return (
+          <div data-testid="campaign-board" className="fixed inset-0 z-[80] bg-stone-950/[.97] flex flex-col p-3 md:p-5 overflow-auto">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div>
+                <h2 className="text-amber-400 font-black uppercase tracking-widest text-sm md:text-base">Grand Campaign — Turn {s.turn + 1}</h2>
+                <p className="text-stone-400 text-[11px]">Enemy commander: <span className="text-red-400 font-bold">{persona.name}</span> — {persona.blurb}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={abandonCampaign} className="px-2 py-1 rounded border border-red-800 text-red-400 text-[10px] font-bold uppercase hover:bg-red-950">Abandon</button>
+                <button onClick={() => setCampaignOpen(false)} className="px-2 py-1 rounded border border-stone-600 text-stone-300 text-[10px] font-bold uppercase hover:border-stone-400">Menu</button>
+              </div>
+            </div>
+            {winner && (
+              <div className={`mb-2 rounded border px-3 py-2 text-center font-black uppercase tracking-widest ${winner === Team.WEST ? 'border-blue-500 text-blue-300 bg-blue-950/60' : 'border-red-500 text-red-300 bg-red-950/60'}`}>
+                {winner === Team.WEST ? '★ Total victory — the East capitulates! ★' : 'Defeat — the West has fallen.'}
+                <button onClick={openCampaign} className="ml-3 px-2 py-0.5 rounded border border-amber-500 text-amber-300 text-[10px] hover:bg-amber-950">New Campaign</button>
+              </div>
+            )}
+            <div className="relative flex-1 min-h-[320px] rounded-lg border border-stone-700 bg-[#141a12]">
+              <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                {TERRITORIES.flatMap(t => t.adjacent.filter(a2 => a2 > t.id).map(a2 => {
+                  const o = territory(a2);
+                  return <line key={`${t.id}-${a2}`} x1={`${t.x}%`} y1={`${t.y}%`} x2={`${o.x}%`} y2={`${o.y}%`} stroke="#3f3f34" strokeWidth={1.5} strokeDasharray="4 3" />;
+                }))}
+              </svg>
+              {TERRITORIES.map(t => {
+                const own = s.owner[t.id];
+                const army = s.armies.find(a => a.territory === t.id);
+                const isSel = sel?.territory === t.id;
+                const canGo = !!sel && reachable.has(t.id);
+                const ring = own === Team.WEST ? 'border-blue-500' : own === Team.EAST ? 'border-red-500' : 'border-stone-500';
+                const bg = own === Team.WEST ? 'bg-blue-950/80' : own === Team.EAST ? 'bg-red-950/80' : 'bg-stone-800/80';
+                return (
+                  <button
+                    key={t.id}
+                    data-testid={`terr-${t.id}`}
+                    onClick={() => clickTerritory(t.id)}
+                    style={{ left: `${t.x}%`, top: `${t.y}%` }}
+                    className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border-2 ${ring} ${bg} px-1.5 py-1 text-center transition-all min-w-[64px]
+                      ${isSel ? 'ring-2 ring-amber-400 scale-110 z-10' : ''} ${canGo ? 'ring-2 ring-amber-300/70 animate-pulse z-10' : ''} hover:scale-105`}
+                  >
+                    <div className="text-[9px] font-bold text-stone-100 leading-tight whitespace-nowrap">
+                      {t.capital ? '★ ' : ''}{t.name} {bonusIcon(t.bonus)}
+                    </div>
+                    <div className="text-[8px] text-stone-400 uppercase">{t.terrain.toLowerCase()}</div>
+                    {army && (
+                      <div className={`mt-0.5 inline-block rounded px-1 text-[9px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}>
+                        ⚔ {army.strength}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
+              <div className="text-[10px] text-stone-400 leading-snug">
+                {sel
+                  ? <span className="text-amber-300">Army selected — click a highlighted territory to march (contested ground starts a battle).</span>
+                  : 'Click one of your armies (blue ⚔) to select it. Hold ⚓/✈/☢ territories to unlock gunboats & cruise, air strikes, and the nuke in battle.'}
+              </div>
+              <div className="text-[10px] text-stone-500 max-w-[46%]">
+                {s.log.slice(-3).map((l, i) => <div key={i}>• {l}</div>)}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Post-battle: settle the board and march on */}
+      {campaignBattle && campaignReturn && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75">
+          <div className="bg-stone-900 border border-stone-500 rounded-lg p-5 text-center shadow-2xl max-w-sm">
+            <h3 className={`font-black uppercase tracking-widest mb-1 ${campaignReturn === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
+              {campaignReturn === Team.WEST ? `${campaignBattle.name} is ours!` : `${campaignBattle.name} holds against us.`}
+            </h3>
+            <p className="text-stone-400 text-[11px] mb-3">The front lines shift. {campaign?.pendingBattle ? 'The enemy counterattacks at once!' : ''}</p>
+            <button data-testid="campaign-continue" onClick={continueCampaign} className="px-4 py-2 rounded border-2 border-amber-400 bg-amber-600 text-black font-black uppercase text-xs tracking-widest hover:bg-amber-500">
+              {campaign?.pendingBattle ? '⚔ To Battle' : 'Continue Campaign'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
