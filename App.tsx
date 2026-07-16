@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { GameCanvas } from './components/GameCanvas';
+import { GameCanvas, CPU_PERSONALITY, CPU_PERSONA_IDS } from './components/GameCanvas';
+import type { CpuPersona } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
 import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
@@ -178,7 +179,7 @@ const HAS_TOUCH = typeof window !== 'undefined' && window.matchMedia('(pointer: 
 const PARAM_SPEED = Math.max(1, Math.min(8, Number(URL_PARAMS.get('speed')) || (SPECTATE ? 4 : 1)));
 
 // Last-used menu choices survive reloads (URL params still win)
-const SAVED_PREFS: { playerSide?: string, cpuLevel?: string, gameMode?: string, mapType?: string } = (() => {
+const SAVED_PREFS: { playerSide?: string, cpuLevel?: string, gameMode?: string, mapType?: string, cpuPersona?: string } = (() => {
   try { return JSON.parse(localStorage.getItem('ewv-prefs') || '{}') || {}; } catch { return {}; }
 })();
 
@@ -211,6 +212,12 @@ const App: React.FC = () => {
   const [gameMode, setGameMode] = useState<GameMode>(
     URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
   );
+  // CPU commander persona. Spectate (the balance harness) pins the by-the-book
+  // commander so CPU-vs-CPU efficiency runs stay comparable across sessions.
+  const [cpuPersona, setCpuPersona] = useState<CpuPersona>(
+    SPECTATE ? 'balanced' :
+    (['random', ...CPU_PERSONA_IDS].includes(SAVED_PREFS.cpuPersona as string) ? SAVED_PREFS.cpuPersona as CpuPersona : 'random')
+  );
   // Active challenge (null = free play) + persisted completion badges
   const [challenge, setChallenge] = useState<string | null>(null);
   const challengeStartRef = useRef(0);
@@ -238,8 +245,8 @@ const App: React.FC = () => {
 
   // Remember menu choices for the next visit
   useEffect(() => {
-    try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide, cpuLevel, gameMode, mapType })); } catch { /* ignore */ }
-  }, [playerSide, cpuLevel, gameMode, mapType]);
+    try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide, cpuLevel, gameMode, mapType, cpuPersona })); } catch { /* ignore */ }
+  }, [playerSide, cpuLevel, gameMode, mapType, cpuPersona]);
 
   const cpuTeam = cpuLevel === 'off' ? null : (playerSide === Team.WEST ? Team.EAST : Team.WEST);
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
@@ -813,6 +820,18 @@ const App: React.FC = () => {
                     >{l}</button>
                   ))}
                 </div>
+                {cpuLevel !== 'off' && (
+                  <div data-testid="cpu-persona" className={`flex flex-wrap justify-center ${compact ? 'gap-1 mt-1' : 'gap-1.5 mt-2'}`}>
+                    {(['random', ...CPU_PERSONA_IDS] as CpuPersona[]).map(p => (
+                      <button
+                        key={p}
+                        onClick={() => setCpuPersona(p)}
+                        title={p === 'random' ? 'A different commander every battle' : CPU_PERSONALITY[p].blurb}
+                        className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1 py-0.5 text-[9px]' : 'px-1.5 py-1 text-[10px]'} ${cpuPersona === p ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}
+                      >{p === 'random' ? 'Random' : p === 'balanced' ? 'Staff' : CPU_PERSONALITY[p].name.replace(/[“”]/g, '').split(' ')[0]}</button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             {/* Challenge missions */}
@@ -926,7 +945,7 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again

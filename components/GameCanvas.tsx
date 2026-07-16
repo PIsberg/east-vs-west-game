@@ -125,6 +125,58 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
   hard:   { interval: 0.62, incomeBonus: 0.15, special: 1.5, counterSmart: 1.0, commands: 1.2, stanceIQ: true },
 };
 
+// CPU commander personalities. Personality is taste, difficulty is competence:
+// these tables bias WHAT a commander likes to build and WHICH tactics it
+// reaches for — never whether its reads are correct (counterSmart/stanceIQ
+// stay difficulty-owned). unitBias multiplies the weighted priority map AFTER
+// counter-pick logic, so a persona leans into its doctrine but still answers
+// an air rush with AA (no bias below 0.3 — a persona may neglect a counter,
+// never blind itself to one). `bunker`/`tactic.gunboat` give the defensive
+// personas structures the balanced commander never buys.
+export type CpuPersonaId = 'balanced' | 'ivan' | 'anna' | 'kenji' | 'frederick';
+export type CpuPersona = CpuPersonaId | 'random';
+export const CPU_PERSONA_IDS: CpuPersonaId[] = ['balanced', 'ivan', 'anna', 'kenji', 'frederick'];
+export const CPU_PERSONALITY: Record<CpuPersonaId, {
+  name: string;
+  blurb: string;
+  unitBias: Partial<Record<UnitType, number>>;
+  tactic: { airstrike: number, smoke: number, missile: number, cruise: number, satellite: number, airborne: number, gunboat: number, mines: number };
+  commandBias: number;   // eagerness multiplier on economy upgrades + rally
+  stanceBias?: Stance;   // doctrine tie-break only — never overrides a retreat
+  bunker: number;        // per-cycle bunker-pour chance multiplier (0 = never)
+}> = {
+  balanced: {
+    name: 'General Staff', blurb: 'By-the-book combined arms',
+    unitBias: {},
+    tactic: { airstrike: 1, smoke: 1, missile: 1, cruise: 1, satellite: 1, airborne: 1, gunboat: 1, mines: 1 },
+    commandBias: 1, bunker: 0,
+  },
+  ivan: {
+    name: '“Ironclad” Ivan', blurb: 'Armored thrusts behind an early war economy',
+    unitBias: { [UnitType.TANK]: 2.2, [UnitType.APC]: 2, [UnitType.JEEP]: 1.8, [UnitType.ANTI_AIR]: 0.7, [UnitType.SNIPER]: 0.6, [UnitType.MORTAR]: 0.7 },
+    tactic: { airstrike: 0.7, smoke: 0.6, missile: 1, cruise: 1, satellite: 0.6, airborne: 0.5, gunboat: 0.6, mines: 0.6 },
+    commandBias: 1.6, stanceBias: 'advance', bunker: 0,
+  },
+  anna: {
+    name: '“Aviator” Anna', blurb: 'Owns the sky and strikes on every rearm',
+    unitBias: { [UnitType.DRONE]: 2.2, [UnitType.HELICOPTER]: 2.2, [UnitType.FIGHTER]: 2, [UnitType.ANTI_AIR]: 1.3, [UnitType.TANK]: 0.7, [UnitType.ARTILLERY]: 0.7 },
+    tactic: { airstrike: 1.9, smoke: 0.7, missile: 1.8, cruise: 1.6, satellite: 1, airborne: 1.3, gunboat: 0.5, mines: 0.5 },
+    commandBias: 1, bunker: 0,
+  },
+  kenji: {
+    name: '“Shadow” Kenji', blurb: 'Snipers, smoke and raids behind the lines',
+    unitBias: { [UnitType.SNIPER]: 2.4, [UnitType.SPECIAL_FORCES]: 2.2, [UnitType.MORTAR]: 1.5, [UnitType.TANK]: 0.7, [UnitType.HELICOPTER]: 0.7 },
+    tactic: { airstrike: 0.8, smoke: 2.2, missile: 0.5, cruise: 0.5, satellite: 0.7, airborne: 2.2, gunboat: 0.7, mines: 2 },
+    commandBias: 0.8, stanceBias: 'hold', bunker: 0.5,
+  },
+  frederick: {
+    name: '“Fortress” Frederick', blurb: 'Digs in, guards the rivers, sieges from range',
+    unitBias: { [UnitType.ARTILLERY]: 2, [UnitType.MORTAR]: 1.8, [UnitType.ANTI_AIR]: 1.4, [UnitType.TESLA]: 1.6, [UnitType.ENGINEER]: 1.4, [UnitType.JEEP]: 0.6, [UnitType.APC]: 0.7 },
+    tactic: { airstrike: 0.8, smoke: 0.8, missile: 1, cruise: 0.8, satellite: 0.8, airborne: 0.3, gunboat: 2.2, mines: 1.6 },
+    commandBias: 1.2, stanceBias: 'hold', bunker: 2.2,
+  },
+};
+
 // Tactical minimap: a Canvas-2D overview drawn straight from the engine refs at
 // ~7fps. Terrain (river, bridges, hills, buildings), smoke, the capture point and
 // every fielded unit as a team-colored dot; air units render as a small cross.
@@ -305,6 +357,7 @@ interface GameCanvasProps {
   targetingInfo: { team: Team, type: UnitType } | null;
   cpuTeams: Team[]; // one entry = normal CPU opponent; two = CPU-vs-CPU spectator/balance mode
   cpuDifficulty: CpuDifficulty;
+  cpuPersona?: CpuPersona; // 'random' resolves to a named commander once per mount
   mapType: MapType;
   paused: boolean;
   gameSpeed: number;
@@ -351,6 +404,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   targetingInfo,
   cpuTeams,
   cpuDifficulty,
+  cpuPersona,
   mapType,
   paused,
   gameSpeed,
@@ -439,7 +493,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     { x: 490, y: CANVAS_HEIGHT - 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
   ]);
   const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
-  const cpuRef = useRef<{ teams: Team[], difficulty: CpuDifficulty }>({ teams: cpuTeams, difficulty: cpuDifficulty });
+  // Persona resolves once per mount so 'random' picks one commander for the
+  // whole match (GameCanvas remounts per battle via App's gameKey)
+  const cpuRef = useRef<{ teams: Team[], difficulty: CpuDifficulty, persona: CpuPersonaId }>({
+    teams: cpuTeams, difficulty: cpuDifficulty,
+    persona: cpuPersona && cpuPersona !== 'random'
+      ? cpuPersona
+      : CPU_PERSONA_IDS[1 + Math.floor(Math.random() * (CPU_PERSONA_IDS.length - 1))],
+  });
   const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
   const statsRef = useRef({
     [Team.WEST]: { built: 0, lost: 0 },
@@ -528,7 +589,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const handleUnitClickRef = useRef(handleUnitClick);
   handleUnitClickRef.current = handleUnitClick;
 
-  useEffect(() => { cpuRef.current = { teams: cpuTeams, difficulty: cpuDifficulty }; }, [cpuTeams, cpuDifficulty]);
+  useEffect(() => {
+    cpuRef.current = {
+      teams: cpuTeams, difficulty: cpuDifficulty,
+      // keep the mount-resolved commander unless an explicit one is chosen
+      persona: cpuPersona && cpuPersona !== 'random' ? cpuPersona : cpuRef.current.persona,
+    };
+  }, [cpuTeams, cpuDifficulty, cpuPersona]);
   useEffect(() => { speedRef.current = { paused, speed: gameSpeed }; }, [paused, gameSpeed]);
 
   // End-of-game audio: fanfare when a human side wins (or in spectate),
@@ -4005,6 +4072,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     for (const ME of cpuRef.current.teams) {
       const FOE = ME === Team.EAST ? Team.WEST : Team.EAST;
       const DIFF = CPU_DIFFICULTY[cpuRef.current.difficulty];
+      const PERS = CPU_PERSONALITY[cpuRef.current.persona];
 
       cpuTimerRef.current[ME] += 1;
       moneyRef.current[ME] += DIFF.incomeBonus; // difficulty economy edge
@@ -4035,9 +4103,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const myVal = val(myActive), foeVal = val(foeActive);
           const retreatAt = DIFF.stanceIQ ? 0.5 : 0.4;
           const holdAt = DIFF.stanceIQ ? 0.75 : 0.6;
-          const desired: Stance = foeVal > 200 && myVal < foeVal * retreatAt ? 'retreat'
+          let desired: Stance = foeVal > 200 && myVal < foeVal * retreatAt ? 'retreat'
             : foeVal > 200 && myVal < foeVal * holdAt ? 'hold'
             : 'advance';
+          // Doctrine tie-break only: a holder digs in unless clearly stronger,
+          // a thruster keeps pushing where the book says dig in. A retreat read
+          // is never overridden — doctrine doesn't get the army encircled.
+          if (PERS.stanceBias === 'hold' && desired === 'advance' && foeVal > 200 && myVal < foeVal * 1.05) desired = 'hold';
+          else if (PERS.stanceBias === 'advance' && desired === 'hold') desired = 'advance';
           if (stancesRef.current[ME] !== desired) {
             stancesRef.current[ME] = desired;
             pushEvent('command', `${teamName(ME)} army ${desired === 'retreat' ? 'falls back to regroup' : desired === 'hold' ? 'digs in' : 'advances'}!`, ME);
@@ -4051,11 +4124,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const lvl = incomeLevelRef.current[ME];
           if (lvl < INCOME_UPGRADE_MAX &&
               moneyRef.current[ME] > INCOME_UPGRADE_BASE_COST * (lvl + 1) + 350 &&
-              Math.random() < 0.3 * DIFF.commands) {
+              Math.random() < 0.3 * DIFF.commands * PERS.commandBias) {
             runCommand(ME, 'income');
           }
           const myGroundCount = myActive.filter(u => !(UNIT_CONFIG[u.type] as any).isFlying).length;
-          if (myGroundCount >= 8 && moneyRef.current[ME] > RALLY_COST + 250 && Math.random() < 0.12 * DIFF.special * DIFF.commands) {
+          if (myGroundCount >= 8 && moneyRef.current[ME] > RALLY_COST + 250 && Math.random() < 0.12 * DIFF.special * DIFF.commands * PERS.commandBias) {
             runCommand(ME, 'rally'); // validates its own cooldown
           }
         }
@@ -4080,7 +4153,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Helper: add weight only if affordable
         const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost;
         const prio: Partial<Record<UnitType, number>> = {};
-        const add = (t: UnitType, w: number) => { if (can(t)) prio[t] = (prio[t] || 0) + w; };
+        // Persona doctrine multiplies every weight — counter-picks included, so
+        // a specialist under-invests in answers it dislikes but never skips them
+        // (table biases are clamped to ≥0.3 by convention).
+        const add = (t: UnitType, w: number) => { if (can(t)) prio[t] = (prio[t] || 0) + w * (PERS.unitBias[t] ?? 1); };
 
         // --- Counter-picks (emergency priority) ---
         // Lower difficulties often fail to read the foe's composition and
@@ -4146,7 +4222,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // on ordnance the squadron can't launch yet. spawnUnit would veto it
         // anyway — this keeps the CPU's tactics reads honest.
         const airReady = tickCountRef.current >= airOpsRef.current[ME];
-        if (!specialSpawned && airReady && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special * PERS.tactic.airstrike) {
           const fort = foeForts.reduce((a, b) => ((b.garrisonUnits?.length || 0) > (a.garrisonUnits?.length || 0) ? b : a));
           if (spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } }) !== false) {
             moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
@@ -4163,7 +4239,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // permanent grey haze over the field. Now one cloud at a time, and only
         // when the foe fields a real battery (≥3), so it's a considered play.
         const foeLongRange = foeUnits.filter(u => u.type === UnitType.ARTILLERY || u.type === UnitType.SNIPER || u.type === UnitType.MORTAR);
-        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && Math.random() < 0.14 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && Math.random() < 0.14 * DIFF.special * PERS.tactic.smoke) {
           const cx = foeLongRange.reduce((s, u) => s + u.position.x, 0) / foeLongRange.length;
           const cy = foeLongRange.reduce((s, u) => s + u.position.y, 0) / foeLongRange.length;
           spawnUnit(ME, UnitType.SMOKE, { absolutePos: { x: cx, y: cy } });
@@ -4172,7 +4248,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Missile strike at enemy cluster
-        if (!specialSpawned && airReady && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special * PERS.tactic.missile) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
           if (spawnUnit(ME, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } }) !== false) {
@@ -4182,7 +4258,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Cruise missile at a big enemy cluster
-        if (!specialSpawned && airReady && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special * PERS.tactic.cruise) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
           if (spawnUnit(ME, UnitType.CRUISE, { absolutePos: { x: cx, y: cy } }) !== false) {
@@ -4192,7 +4268,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Satellite laser on the foe's densest forward position when flush with cash
-        if (!specialSpawned && can(UnitType.SATELLITE) && money > 600 && foeUnits.length >= 10 && Math.random() < 0.08 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.SATELLITE) && money > 600 && foeUnits.length >= 10 && Math.random() < 0.08 * DIFF.special * PERS.tactic.satellite) {
           const fwd = foeUnits.reduce((a, b) => (ME === Team.EAST ? a.position.x > b.position.x : a.position.x < b.position.x) ? a : b);
           spawnUnit(ME, UnitType.SATELLITE, { absolutePos: { x: fwd.position.x, y: fwd.position.y } });
           moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.SATELLITE] as any).cost;
@@ -4205,7 +4281,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // cycle (0.2) and sank $6-7k a session into sticks that died to a man —
         // the single biggest hole in its economy. It now raids rarely, and only
         // when the sampling below actually finds a hole to land in.
-        if (!specialSpawned && airReady && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special) {
+        if (!specialSpawned && airReady && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special * PERS.tactic.airborne) {
           // Drop into a GAP. This used to pick a blind random spot 80-200px from
           // the foe's edge — i.e. right on top of their spawn, the one place their
           // entire reinforcement stream walks through. The stick landed in the
@@ -4234,9 +4310,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
 
+        // Fortification doctrine (persona-gated — the balanced commander never
+        // pours concrete): a bunker in the mid-band of my own half, anchoring
+        // the ground my infantry falls back through. Capped so a turtle
+        // doesn't spend the whole match walling itself in.
+        if (!specialSpawned && PERS.bunker > 0 && can(UnitType.BUNKER) &&
+            Math.random() < 0.12 * DIFF.special * PERS.bunker) {
+          const myBunkers = myActive.filter(u => u.type === UnitType.BUNKER).length;
+          if (myBunkers < 3) {
+            const bx = ME === Team.WEST ? 150 + Math.random() * 180 : CANVAS_WIDTH - 330 + Math.random() * 180;
+            const by = HORIZON_Y + 70 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 140);
+            if (spawnUnit(ME, UnitType.BUNKER, { absolutePos: { x: bx, y: by } }) !== false) {
+              moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.BUNKER] as any).cost;
+              specialSpawned = true;
+            }
+          }
+        }
+
         // Naval picket: anchor a gunboat on a river segment to guard crossings
         // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
-        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special * PERS.tactic.gunboat) {
           const rivers = terrainRef.current.filter(t => t.type === 'river' && !t.frozen);
           const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
           if (rivers.length > 0 && myBoats < 2) {
@@ -4250,7 +4343,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Tank mines when armor is a threat — laid just ahead of the foe's front line
-        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special) {
+        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special * PERS.tactic.mines) {
           const mineX = ME === Team.EAST
             ? Math.min(Math.max(foeFrontX + 50, 530), 720)
             : Math.max(Math.min(foeFrontX - 50, 270), 80);
@@ -4386,6 +4479,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         weather: weatherRef.current,
         weatherNext: nextWeatherRef.current,
         stances: { WEST: stancesRef.current[Team.WEST], EAST: stancesRef.current[Team.EAST] },
+        cpuPersona: cpuRef.current.persona,
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
         projectiles: projectilesRef.current.length,
