@@ -4909,6 +4909,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         overdrive: unitsRef.current.filter(u => (u.abilityUntil ?? 0) > tickCountRef.current).length,
         c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
         craters: cratersRef.current.map(cr => ({ x: Math.round(cr.x), y: Math.round(cr.y), size: Math.round(cr.size) })),
+        vegDown: terrainRef.current.filter(t => (t.type === 'tree' || t.type === 'bush') && t.state === 'broken').length, // knockdown probe
         // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
         fogOn: fogOnRef.current,
         asymOn: asymOnRef.current,

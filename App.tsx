@@ -1279,7 +1279,8 @@ const App: React.FC = () => {
           setSelectedArmy(own ? own.id : null);
         };
         return (
-          <div data-testid="campaign-board" className="fixed inset-0 z-[80] bg-stone-950/[.97] flex flex-col p-3 md:p-5 overflow-auto">
+          // z-[10000]: above the splash (z-[9999]) — the board opens from the splash and must cover it
+          <div data-testid="campaign-board" className="fixed inset-0 z-[10000] bg-stone-950/[.97] flex flex-col p-3 md:p-5 overflow-auto">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div>
                 <h2 className="text-amber-400 font-black uppercase tracking-widest text-sm md:text-base">Grand Campaign — Turn {s.turn + 1}</h2>
@@ -1348,7 +1349,7 @@ const App: React.FC = () => {
 
       {/* Post-battle: settle the board and march on */}
       {campaignBattle && campaignReturn && (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75">
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/75">
           <div className="bg-stone-900 border border-stone-500 rounded-lg p-5 text-center shadow-2xl max-w-sm">
             <h3 className={`font-black uppercase tracking-widest mb-1 ${campaignReturn === Team.WEST ? 'text-blue-400' : 'text-red-400'}`}>
               {campaignReturn === Team.WEST ? `${campaignBattle.name} is ours!` : `${campaignBattle.name} holds against us.`}
