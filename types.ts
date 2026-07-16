@@ -145,6 +145,12 @@ export interface Unit {
   // Engineer C4: the demolition point he was ordered to (trumps the job list)
   c4X?: number;
   c4Y?: number;
+  // Faction asymmetry: doctrine stat multipliers stamped at spawn (undefined = 1).
+  // Damage/reload/speed are read from UNIT_CONFIG at use time, so the deltas
+  // ride the unit and apply at the same commit points as veterancy/rally.
+  dmgMult?: number;
+  reloadMult?: number;
+  speedMult?: number;
 }
 
 export interface Projectile {

@@ -1,4 +1,4 @@
-import { UnitType } from './types';
+import { UnitType, Team } from './types';
 
 export const CANVAS_WIDTH = 800;
 export const CANVAS_HEIGHT = 450;
@@ -43,6 +43,44 @@ export const FOW_BLIND_SCATTER = 45;
 // the mound is still occupiable (half capacity, no defensive fire) but one
 // more good hit pounds it to dust for good
 export const RUBBLE_HP = 140;
+
+// ── Faction asymmetry (opt-in "Asymmetric" doctrine mode) ────────────────────
+// Asymmetry is DATA, not code paths: mild stat multipliers applied once at
+// spawn (carried on the unit as dmgMult/reloadMult/speedMult + baked HP) and a
+// short exclusives list. Mirrored mode stays the default so the balance
+// harness baseline keeps meaning anything. Keep this table SHORT — every row
+// is a live balance liability.
+// NOTE: damage/reload rows only reach units that fire through the STANDARD
+// projectile path. Tesla, flamethrower, medic and anti-air have bespoke fire
+// blocks — give them hp/speed rows only, or extend their blocks first.
+export interface FactionStatMods { hp?: number; damage?: number; reload?: number; speed?: number }
+export const FACTION_MODS: Record<Team, Partial<Record<UnitType, FactionStatMods>>> = {
+  // West: high-tech and mobility — precision optics, better drivetrains
+  [Team.WEST]: {
+    [UnitType.SNIPER]: { reload: 0.88 },
+    [UnitType.JEEP]: { speed: 1.08 },
+    [UnitType.HELICOPTER]: { damage: 1.08 },
+  },
+  // East: heavy armor and area saturation — tougher hulls, heavier shells
+  [Team.EAST]: {
+    [UnitType.TANK]: { hp: 1.15 },
+    [UnitType.ARTILLERY]: { damage: 1.1, reload: 1.12 },
+    [UnitType.FLAMETHROWER]: { hp: 1.1 },
+  },
+};
+// Exclusives: what only ONE side may field in asymmetric mode. West owns the
+// precision orbit/sea strikes; East owns napalm saturation and the tesla.
+export const FACTION_EXCLUSIVES: Record<Team, UnitType[]> = {
+  [Team.WEST]: [UnitType.SATELLITE, UnitType.CRUISE],
+  [Team.EAST]: [UnitType.TESLA, UnitType.AIRSTRIKE],
+};
+export const factionAllowed = (team: Team, type: UnitType, asym: boolean): boolean => {
+  if (!asym) return true;
+  const other = team === Team.WEST ? Team.EAST : Team.WEST;
+  return !FACTION_EXCLUSIVES[other].includes(type);
+};
+// West wheeled hulls shrug off this fraction of the hill climb penalty
+export const WEST_WHEELED_HILL_RELIEF = 0.5;
 
 // Craters: heavy ordnance gouges the ground. Wheels and tracks wallow across
 // a shell hole; infantry treats it as cover (it joins the cover-seek list).

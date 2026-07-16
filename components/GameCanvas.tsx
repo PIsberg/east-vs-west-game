@@ -94,6 +94,9 @@ import {
   getVision,
   CRATER_MAX,
   CRATER_SLOW,
+  FACTION_MODS,
+  factionAllowed,
+  WEST_WHEELED_HILL_RELIEF,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -407,6 +410,7 @@ interface GameCanvasProps {
   cpuDifficulty: CpuDifficulty;
   cpuPersona?: CpuPersona; // 'random' resolves to a named commander once per mount
   fogOfWar?: boolean; // per-team visibility grid; App only enables it for single-human matches
+  asymmetry?: boolean; // faction doctrine mode: FACTION_MODS stats + exclusive rosters
   mapType: MapType;
   paused: boolean;
   gameSpeed: number;
@@ -455,6 +459,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cpuDifficulty,
   cpuPersona,
   fogOfWar,
+  asymmetry,
   mapType,
   paused,
   gameSpeed,
@@ -522,6 +527,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // explored — you know your own ground, you just can't see movement on it.
   const fogOnRef = useRef(!!fogOfWar);
   useEffect(() => { fogOnRef.current = !!fogOfWar; }, [fogOfWar]);
+  // Asymmetric doctrine mode (mirrored is the default and the harness baseline)
+  const asymOnRef = useRef(!!asymmetry);
+  useEffect(() => { asymOnRef.current = !!asymmetry; }, [asymmetry]);
   const fogRef = useRef<Record<Team, Uint8Array>>((() => {
     const make = (team: Team) => {
       const g = new Uint8Array(FOW_W * FOW_H);
@@ -1068,6 +1076,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }) => {
     const config = UNIT_CONFIG[type] as any;
 
+    // Asymmetric rosters: the other side's exclusives are vetoed outright —
+    // same return-false-nothing-charged pattern as the gunboat water check.
+    // (NAPALM canisters pass: the exclusive is the AIRSTRIKE that drops them.)
+    if (!factionAllowed(team, type, asymOnRef.current)) return false;
+
     // Fog of war: ordnance called onto ground the launching team cannot see
     // scatters off the aim point — scouting before striking is the counterplay
     if (options?.absolutePos && fogOnRef.current &&
@@ -1205,16 +1218,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // top of the enemy is a way to lose $155.
     const isBunker = type === UnitType.BUNKER;
 
+    // Asymmetric doctrine: stamp the faction's stat deltas once, here. HP is
+    // baked in; damage/reload/speed ride the unit as multipliers applied at
+    // the same commit points as veterancy and the rally surge.
+    const mods = asymOnRef.current ? FACTION_MODS[team][type] : undefined;
+    const baseHp = config.health * (mods?.hp ?? 1);
+
     const newUnit: Unit = {
       id: generateId(), team, type,
       position: { x: xPos, y: yPos },
       state: UnitState.MOVING,
-      health: isBunker ? config.health * BUNKER_BUILD_START_HP : config.health,
-      maxHealth: config.health,
+      health: isBunker ? baseHp * BUNKER_BUILD_START_HP : baseHp,
+      maxHealth: baseHp,
       attackCooldown: 0, targetId: null,
       width: config.width, height: config.height,
       spawnTime: Date.now(), isInCover: false,
       squadId: options?.squadId,
+      ...(mods?.damage ? { dmgMult: mods.damage } : {}),
+      ...(mods?.reload ? { reloadMult: mods.reload } : {}),
+      ...(mods?.speed ? { speedMult: mods.speed } : {}),
       ...(isBunker ? { buildUntil: Date.now() + BUNKER_BUILD_MS, garrison: 0 } : {}),
     };
 
@@ -2886,11 +2908,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 .some(o => o.team !== unit.team);
               if (inRange) { moveX = 0; moveY = 0; movingToHill = true; }
             } else {
-              // Slopes cost each class differently — wheels bog down, tracks climb
-              moveX *= profile.hill * 0.7; moveY *= profile.hill * 0.7;
+              // Slopes cost each class differently — wheels bog down, tracks
+              // climb. West doctrine (asymmetric): superior drivetrains shrug
+              // off part of the wheeled climb penalty.
+              let hillMult = profile.hill;
+              if (asymOnRef.current && unit.team === Team.WEST && getMoveClass(unit.type) === 'wheeled') {
+                hillMult = 1 - (1 - hillMult) * (1 - WEST_WHEELED_HILL_RELIEF);
+              }
+              moveX *= hillMult * 0.7; moveY *= hillMult * 0.7;
             }
           } else if (unit.isOnHill) {
-            moveX *= profile.hill; moveY *= profile.hill;
+            let hillMult = profile.hill;
+            if (asymOnRef.current && unit.team === Team.WEST && getMoveClass(unit.type) === 'wheeled') {
+              hillMult = 1 - (1 - hillMult) * (1 - WEST_WHEELED_HILL_RELIEF);
+            }
+            moveX *= hillMult; moveY *= hillMult;
           }
 
           // Suppression: infantry slows to a near-stop when recently hit
@@ -3070,6 +3102,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (unit.type === UnitType.TANK && (unit.abilityUntil ?? 0) > tickCountRef.current) {
           moveX *= OVERDRIVE_SPEED_MULT; moveY *= OVERDRIVE_SPEED_MULT;
         }
+        // Doctrine speed delta (asymmetric mode) — same commit point as rally
+        if (unit.speedMult) { moveX *= unit.speedMult; moveY *= unit.speedMult; }
         // Cratered ground: wheels and tracks wallow crossing a shell hole
         if (getMoveClass(unit.type) !== 'foot' && cratersRef.current.length > 0) {
           for (const cr of cratersRef.current) {
@@ -3679,7 +3713,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 team: unit.team,
                 position: { ...unit.position },
                 velocity: { x: Math.cos(a + spread) * speed, y: Math.sin(a + spread) * speed },
-                damage: config.damage * vetMult,
+                damage: config.damage * vetMult * (unit.dmgMult ?? 1),
                 maxRange: range * (unit.type === UnitType.ARTILLERY ? 1.5 : 1.0),
                 distanceTraveled: 0,
                 targetType: targetIsAir ? 'air' : 'ground',
@@ -3693,7 +3727,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               });
               // A man with rounds cracking past him is slower to work his weapon
               const suppressReload = (unit.suppressedUntil && Date.now() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
-              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload);
+              unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload * (unit.reloadMult ?? 1));
               fireFx(unit, a + spread);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot(unit.position.x);
               else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire(unit.position.x);
@@ -4515,7 +4549,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const myInfCount  = myActive.filter(u => u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES).length;
 
         // Helper: add weight only if affordable
-        const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost;
+        // Affordable AND on this side's roster — every counter-pick, tactic
+        // roll and fallback goes through here, so the CPU never wastes a cycle
+        // wanting the other doctrine's exclusives
+        const can = (t: UnitType) => money >= (UNIT_CONFIG[t] as any).cost && factionAllowed(ME, t, asymOnRef.current);
         const prio: Partial<Record<UnitType, number>> = {};
         // Persona doctrine multiplies every weight — counter-picks included, so
         // a specialist under-invests in answers it dislikes but never skips them
@@ -4737,7 +4774,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                                          UnitType.SATELLITE, UnitType.CRUISE, UnitType.BUNKER, UnitType.SMOKE, UnitType.GUNBOAT]);
               const affordable = (Object.keys(UNIT_CONFIG) as UnitType[]).filter(t => {
                 const cost = (UNIT_CONFIG[t] as any).cost;
-                return cost > 0 && cost <= money && !noAiTypes.has(t);
+                return cost > 0 && cost <= money && !noAiTypes.has(t) && factionAllowed(ME, t, asymOnRef.current);
               });
               if (affordable.length > 0) pool.push(...affordable);
             }
@@ -4858,6 +4895,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         craters: cratersRef.current.map(cr => ({ x: Math.round(cr.x), y: Math.round(cr.y), size: Math.round(cr.size) })),
         // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
         fogOn: fogOnRef.current,
+        asymOn: asymOnRef.current,
         fog: (team: 'WEST' | 'EAST', x: number, y: number) => fogCellState(team === 'WEST' ? Team.WEST : Team.EAST, x, y),
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },

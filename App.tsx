@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { GameCanvas, CPU_PERSONALITY, CPU_PERSONA_IDS } from './components/GameCanvas';
 import type { CpuPersona } from './components/GameCanvas';
 import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } from './types';
-import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST } from './constants';
+import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST, factionAllowed } from './constants';
 import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
 
@@ -239,6 +239,12 @@ const App: React.FC = () => {
     try { return localStorage.getItem('ewv-fow') === '1'; } catch { return false; }
   });
   const toggleFow = () => setFow(v => { const n = !v; try { localStorage.setItem('ewv-fow', n ? '1' : '0'); } catch { /* ignore */ } return n; });
+  // Doctrine mode: Classic mirrors the sides; Asymmetric applies FACTION_MODS
+  // stats and exclusive rosters (West precision, East saturation)
+  const [asym, setAsym] = useState<boolean>(() => {
+    try { return localStorage.getItem('ewv-asym') === '1'; } catch { return false; }
+  });
+  const setAsymPersist = (v: boolean) => { setAsym(v); try { localStorage.setItem('ewv-asym', v ? '1' : '0'); } catch { /* ignore */ } };
   // Colorblind-assist: East reads as amber across rings/minimap/pips/flags
   const [cb, setCb] = useState<boolean>(() => {
     try { return localStorage.getItem('ewv-cb') === '1'; } catch { return false; }
@@ -386,6 +392,7 @@ const App: React.FC = () => {
   const handleSpawnRequest = (team: Team, type: UnitType) => {
     if (team === cpuTeam) return; // CPU-controlled side is off-limits to the player
     if (activeChallenge?.infantryOnly && team === playerSide && !INFANTRY_ALLOWED.has(type)) return; // Boots Only
+    if (!factionAllowed(team, type, asym)) return; // other doctrine's exclusive (also guards hotkeys)
     if (AIR_OPS_UI.has(type) && (gameState.airOpsReadyIn?.[team] ?? 0) > 0) return; // Air Command rearming (also guards hotkeys)
     const cost = UNIT_CONFIG[type].cost;
     if (gameState.money[team] >= cost) {
@@ -559,7 +566,7 @@ const App: React.FC = () => {
       <div className="flex flex-col gap-0.5">
         <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5">{title}</div>
         <div className="grid grid-cols-2 gap-0.5">
-          {units.map(({ type, label, icon, special }) => (
+          {units.filter(({ type }) => factionAllowed(team, type, asym)).map(({ type, label, icon, special }) => (
             <button
               key={type}
               title={label}
@@ -808,6 +815,10 @@ const App: React.FC = () => {
                   <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
                   <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
                 </div>
+                <div data-testid="doctrine" className={`flex justify-center ${compact ? 'gap-1 mt-1' : 'gap-2 mt-2'}`}>
+                  <button onClick={() => setAsymPersist(false)} title="Both sides field identical armies" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${!asym ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Classic</button>
+                  <button onClick={() => setAsymPersist(true)} title="West: precision & mobility (satellite laser, cruise, faster wheels). East: armor & saturation (tougher tanks, heavier artillery, napalm airstrike, tesla)" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${asym ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Asymmetric</button>
+                </div>
               </div>
               <div>
                 <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>CPU Opponent</p>
@@ -961,7 +972,7 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} fogOfWar={fow && cpuTeams.length === 1} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} fogOfWar={fow && cpuTeams.length === 1} asymmetry={asym} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again
