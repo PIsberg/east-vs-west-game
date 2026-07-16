@@ -6,7 +6,7 @@ import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom, ChromaticAberration, HueSaturation, Vignette } from '@react-three/postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS, FOW_W, FOW_H, FOW_CELL } from '../constants';
 
 
 interface GameSceneProps {
@@ -35,6 +35,7 @@ interface GameSceneProps {
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
     shock?: React.MutableRefObject<number>; // shell-shock post weight (0..1), decays here
+    fogGrid?: Uint8Array; // viewer's fog-of-war layer (FOW_W×FOW_H); undefined = fog off
     capture?: CapturePoint;
     flanks?: CapturePoint[];
     onUnitClick?: (unit: Unit) => void;
@@ -128,6 +129,44 @@ const ShockDriver = ({ shock, chromaRef, hueRef, vigRef }: {
         else if (shock) shock.current = 0;
     });
     return null;
+};
+
+// Fog-of-war overlay: one FOW_W×FOW_H DataTexture draped on the ground —
+// hidden cells dark, explored dim, visible clear. Updated imperatively a few
+// times a second; LinearFilter smooths the coarse cells into a soft fog line.
+// Sits just above the ground plane, so remembered terrain stays readable while
+// the ground itself goes dark (units in hidden cells never reach the renderer
+// at all — the engine filters them out before the scene sees them).
+const FogOverlay = ({ grid }: { grid: Uint8Array }) => {
+    const dataRef = useRef<Uint8Array>(new Uint8Array(FOW_W * FOW_H * 4));
+    const tex = useMemo(() => {
+        const t = new THREE.DataTexture(dataRef.current, FOW_W, FOW_H);
+        t.magFilter = THREE.LinearFilter;
+        t.minFilter = THREE.LinearFilter;
+        t.needsUpdate = true;
+        return t;
+    }, []);
+    const frame = useRef(0);
+    useFrame(() => {
+        if ((frame.current++ % 8) !== 0) return;
+        const data = dataRef.current;
+        for (let cy = 0; cy < FOW_H; cy++) {
+            for (let cx = 0; cx < FOW_W; cx++) {
+                const v = grid[cy * FOW_W + cx];
+                // Plane UV v runs opposite to sim y — write rows flipped
+                const di = ((FOW_H - 1 - cy) * FOW_W + cx) * 4;
+                data[di] = 8; data[di + 1] = 10; data[di + 2] = 14;
+                data[di + 3] = v === 2 ? 0 : v === 1 ? 96 : 190;
+            }
+        }
+        tex.needsUpdate = true;
+    });
+    return (
+        <mesh position={[CANVAS_WIDTH / 2, 1.8, CANVAS_HEIGHT / 2]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={5}>
+            <planeGeometry args={[CANVAS_WIDTH, CANVAS_HEIGHT]} />
+            <meshBasicMaterial map={tex} transparent depthWrite={false} toneMapped={false} />
+        </mesh>
+    );
 };
 
 const RainEffect = () => {
@@ -3582,7 +3621,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3765,6 +3804,9 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             />
 
             <BoxSelect units={units} selectTeam={selectTeam} disabled={!!targetingInfo} onBoxSelect={onBoxSelect} onMarquee={onMarquee} onDragStart={onDragStart} />
+
+            {/* Fog of war sits outside the shake rig — the fog line shouldn't rattle */}
+            {fogGrid && <FogOverlay grid={fogGrid} />}
 
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}

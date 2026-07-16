@@ -233,6 +233,12 @@ const App: React.FC = () => {
     try { return localStorage.getItem('ewv-fx') === 'low' ? 'low' : 'high'; } catch { return 'high'; }
   });
   const setFxPersist = (v: 'high' | 'low') => { setFx(v); try { localStorage.setItem('ewv-fx', v); } catch { /* ignore */ } };
+  // Fog of war (default off; only meaningful vs the CPU — a shared hotseat
+  // screen can't hide anything, and spectate wants the whole field)
+  const [fow, setFow] = useState<boolean>(() => {
+    try { return localStorage.getItem('ewv-fow') === '1'; } catch { return false; }
+  });
+  const toggleFow = () => setFow(v => { const n = !v; try { localStorage.setItem('ewv-fow', n ? '1' : '0'); } catch { /* ignore */ } return n; });
   // Colorblind-assist: East reads as amber across rings/minimap/pips/flags
   const [cb, setCb] = useState<boolean>(() => {
     try { return localStorage.getItem('ewv-cb') === '1'; } catch { return false; }
@@ -821,6 +827,16 @@ const App: React.FC = () => {
                   ))}
                 </div>
                 {cpuLevel !== 'off' && (
+                  <div className="flex justify-center mt-1.5">
+                    <button
+                      data-testid="fow-toggle"
+                      onClick={toggleFow}
+                      title="Fog of war: you only see what your units can see — scout before you strike (blind strikes scatter)"
+                      className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${fow ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}
+                    ><Eye size={10} className="inline mr-1 -mt-0.5" />Fog of War {fow ? 'ON' : 'OFF'}</button>
+                  </div>
+                )}
+                {cpuLevel !== 'off' && (
                   <div data-testid="cpu-persona" className={`flex flex-wrap justify-center ${compact ? 'gap-1 mt-1' : 'gap-1.5 mt-2'}`}>
                     {(['random', ...CPU_PERSONA_IDS] as CpuPersona[]).map(p => (
                       <button
@@ -945,7 +961,7 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={cpuPersona} fogOfWar={fow && cpuTeams.length === 1} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again

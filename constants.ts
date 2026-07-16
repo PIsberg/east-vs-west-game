@@ -29,6 +29,16 @@ export const C4_COOLDOWN_TICKS = 1800; // ~30s per engineer
 export const C4_DAMAGE = 600;          // several tank shells' worth of structure
 export const C4_RADIUS = 55;
 
+// ── Fog of War ───────────────────────────────────────────────────────────────
+// Coarse per-team visibility grid over the 800×450 field. Cell states:
+// 0 = hidden, 1 = explored (terrain remembered, units not shown), 2 = visible.
+export const FOW_CELL = 10;
+export const FOW_W = CANVAS_WIDTH / FOW_CELL;   // 80
+export const FOW_H = CANVAS_HEIGHT / FOW_CELL;  // 45
+// Air-delivered strikes aimed at ground the team can't see scatter by up to
+// this many px — scouting before striking is the counterplay
+export const FOW_BLIND_SCATTER = 45;
+
 // Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —
 // the mound is still occupiable (half capacity, no defensive fire) but one
 // more good hit pounds it to dust for good
@@ -693,6 +703,21 @@ export const MOVE_CLASS: Partial<Record<UnitType, MoveClass>> = {
 };
 // Everything else on the ground walks.
 export const getMoveClass = (t: UnitType): MoveClass => MOVE_CLASS[t] ?? 'foot';
+
+// Fog-of-war vision radius (px). Defaults by locomotion class; the scouts,
+// optics and anchored watchposts see further.
+const VISION_OVERRIDES: Partial<Record<UnitType, number>> = {
+  [UnitType.JEEP]: 200,
+  [UnitType.DRONE]: 240,
+  [UnitType.FIGHTER]: 200,
+  [UnitType.HELICOPTER]: 190,
+  [UnitType.SNIPER]: 180,
+  [UnitType.SPECIAL_FORCES]: 150,
+  [UnitType.BUNKER]: 170,
+  [UnitType.GUNBOAT]: 170,
+};
+export const getVision = (t: UnitType): number =>
+  VISION_OVERRIDES[t] ?? (getMoveClass(t) === 'foot' ? 110 : 140);
 
 export const CLASS_PROFILE: Record<MoveClass, {
   hill: number;     // speed multiplier while climbing a hill

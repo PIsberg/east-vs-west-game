@@ -87,6 +87,11 @@ import {
   C4_DAMAGE,
   C4_RADIUS,
   RUBBLE_HP,
+  FOW_CELL,
+  FOW_W,
+  FOW_H,
+  FOW_BLIND_SCATTER,
+  getVision,
 } from '../constants';
 import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
 import { soundService } from '../services/audio';
@@ -213,7 +218,11 @@ const MiniMap: React.FC<{
   camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
   cb?: boolean;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact, cb }) => {
+  // Fog of war: the human viewer's visibility layer (undefined = fog off)
+  fogGridRef?: React.MutableRefObject<Record<Team, Uint8Array>>;
+  fogViewer?: Team | null;
+  fogOnRef?: React.MutableRefObject<boolean>;
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -276,8 +285,19 @@ const MiniMap: React.FC<{
         ctx.stroke();
       }
 
+      // Fog helpers for this frame (fog off → everything lit)
+      const fogOn = !!(fogOnRef?.current && fogViewer && fogGridRef);
+      const cellAt = (x: number, y: number): number => {
+        if (!fogOn) return 2;
+        const g = fogGridRef!.current[fogViewer!];
+        const cx = Math.max(0, Math.min(FOW_W - 1, (x / FOW_CELL) | 0));
+        const cy = Math.max(0, Math.min(FOW_H - 1, (y / FOW_CELL) | 0));
+        return g[cy * FOW_W + cx];
+      };
+
       for (const u of unitsRef.current) {
         if (u.boarded) continue;
+        if (fogOn && u.team !== fogViewer && cellAt(u.position.x, u.position.y) !== 2) continue;
         const x = mx(u.position.x), y = my(u.position.y);
         ctx.fillStyle = u.team === Team.WEST ? '#60a5fa' : eastUi;
         if (AIR_TYPES.has(u.type)) {
@@ -285,6 +305,22 @@ const MiniMap: React.FC<{
           ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
         } else {
           ctx.fillRect(x - 1, y - 1, 2, 2);
+        }
+      }
+
+      // Fog overlay: unseen ground darkens, explored ground dims
+      if (fogOn) {
+        const cw = (FOW_CELL * sx), ch = (FOW_CELL * sy);
+        const g = fogGridRef!.current[fogViewer!];
+        for (let iy = 0; iy < FOW_H; iy++) {
+          const py = my(iy * FOW_CELL);
+          if (py + ch < 0 || py > H) continue;
+          for (let ix = 0; ix < FOW_W; ix++) {
+            const v = g[iy * FOW_W + ix];
+            if (v === 2) continue;
+            ctx.fillStyle = v === 1 ? 'rgba(0,0,0,0.32)' : 'rgba(0,0,0,0.6)';
+            ctx.fillRect(ix * FOW_CELL * sx, py, cw + 0.5, ch + 0.5);
+          }
         }
       }
 
@@ -368,6 +404,7 @@ interface GameCanvasProps {
   cpuTeams: Team[]; // one entry = normal CPU opponent; two = CPU-vs-CPU spectator/balance mode
   cpuDifficulty: CpuDifficulty;
   cpuPersona?: CpuPersona; // 'random' resolves to a named commander once per mount
+  fogOfWar?: boolean; // per-team visibility grid; App only enables it for single-human matches
   mapType: MapType;
   paused: boolean;
   gameSpeed: number;
@@ -415,6 +452,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   cpuTeams,
   cpuDifficulty,
   cpuPersona,
+  fogOfWar,
   mapType,
   paused,
   gameSpeed,
@@ -472,6 +510,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const smokesRef = useRef<SmokeZone[]>([]);
   // Armed C4 satchels in the field (engineer ability) — fuse counts down in ticks
   const c4Ref = useRef<{ id: string, team: Team, x: number, y: number, fuse: number, ownerId: string }[]>([]);
+
+  // ── Fog of war ────────────────────────────────────────────────────────────
+  // One coarse visibility layer per team (0 hidden / 1 explored / 2 visible),
+  // restamped every few ticks from unit vision discs. A team's own half starts
+  // explored — you know your own ground, you just can't see movement on it.
+  const fogOnRef = useRef(!!fogOfWar);
+  useEffect(() => { fogOnRef.current = !!fogOfWar; }, [fogOfWar]);
+  const fogRef = useRef<Record<Team, Uint8Array>>((() => {
+    const make = (team: Team) => {
+      const g = new Uint8Array(FOW_W * FOW_H);
+      for (let cy = 0; cy < FOW_H; cy++)
+        for (let cx = 0; cx < FOW_W; cx++)
+          if (team === Team.WEST ? cx < FOW_W / 2 : cx >= FOW_W / 2) g[cy * FOW_W + cx] = 1;
+      return g;
+    };
+    return { [Team.WEST]: make(Team.WEST), [Team.EAST]: make(Team.EAST) };
+  })());
+  const fogCellState = (team: Team, x: number, y: number): number => {
+    const cx = Math.max(0, Math.min(FOW_W - 1, (x / FOW_CELL) | 0));
+    const cy = Math.max(0, Math.min(FOW_H - 1, (y / FOW_CELL) | 0));
+    return fogRef.current[team][cy * FOW_W + cx];
+  };
+  // The one visibility question everything asks. With fog off it's always yes.
+  const fogVisibleTo = (team: Team, x: number, y: number): boolean =>
+    !fogOnRef.current || fogCellState(team, x, y) === 2;
+  // What the human viewer may see — the single choke point feeding BOTH the
+  // React snapshot (HUD/minimap) and the 3D scene, so nothing leaks around it.
+  const fogFilterUnits = (): Unit[] => {
+    if (!fogOnRef.current || !humanTeam) return unitsRef.current;
+    return unitsRef.current.filter(u => u.team === humanTeam || fogVisibleTo(humanTeam, u.position.x, u.position.y));
+  };
   const SMOKE_LIFE = 780; // ~13s of concealment
   const ENTRENCH_TICKS = 360; // ~6s stationary under 'hold' orders to dig in
   // Battle-event feed shown in the HUD; new array identity per emit so React sees the change
@@ -994,6 +1063,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const spawnUnit = useCallback((team: Team, type: UnitType, options?: { offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: SpawnLane }) => {
     const config = UNIT_CONFIG[type] as any;
 
+    // Fog of war: ordnance called onto ground the launching team cannot see
+    // scatters off the aim point — scouting before striking is the counterplay
+    if (options?.absolutePos && fogOnRef.current &&
+        (AIR_OPS_TYPES.has(type) || type === UnitType.SATELLITE || type === UnitType.SMOKE) &&
+        !fogVisibleTo(team, options.absolutePos.x, options.absolutePos.y)) {
+      options = {
+        ...options,
+        absolutePos: {
+          x: Math.max(10, Math.min(CANVAS_WIDTH - 10, options.absolutePos.x + (Math.random() - 0.5) * 2 * FOW_BLIND_SCATTER)),
+          y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, options.absolutePos.y + (Math.random() - 0.5) * 2 * FOW_BLIND_SCATTER)),
+        },
+      };
+    }
+
     // Satellite laser: no delivery vehicle — a designator, then a beam from orbit
     if (type === UnitType.SATELLITE && options?.absolutePos) {
       lasersRef.current.push({
@@ -1038,7 +1121,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         customDamage: cfg.damage,
         customRadius: cfg.radius,
       });
-      soundService.playRocketSound();
+      soundService.playRocketSound(options.absolutePos.x);
       return;
     }
 
@@ -1532,6 +1615,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // through smoke. Stray rounds and splash still hit him — he's hidden,
       // not armored.
       if (o.camouflaged && d2 >= 55 * 55) return true;
+      // Fog of war rides the same choke point, symmetric for both sides: a
+      // target standing in ground the shooter's team can't see isn't a target.
+      // Point-blank contacts still resolve — walking into someone reveals you.
+      if (d2 >= 55 * 55 && !fogVisibleTo(shooter.team, o.position.x, o.position.y)) return true;
       if (smokesRef.current.length === 0) return false;
       if ((UNIT_CONFIG[o.type] as any).isFlying || (UNIT_CONFIG[shooter.type] as any).isFlying) return false;
       if (d2 < 55 * 55) return false; // close enough to see through the haze
@@ -1552,6 +1639,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (s > shockRef.current) shockRef.current = Math.min(1, s);
       soundService.shellShock(s);
     };
+
+    // Fog restamp every 6 ticks: decay visible→explored, then stamp vision
+    // discs for every living unit (hill lookouts see ~30% further) and each
+    // garrisoned strongpoint. The team's spawn strip never goes dark. O(units ×
+    // disc cells) on an 80×45 grid — trivial next to the unit loop.
+    if (fogOnRef.current && tickCountRef.current % 6 === 0) {
+      for (const team of [Team.WEST, Team.EAST]) {
+        const g = fogRef.current[team];
+        for (let i = 0; i < g.length; i++) if (g[i] === 2) g[i] = 1;
+        const stamp = (x: number, y: number, r: number) => {
+          const cr = r / FOW_CELL;
+          const cx = x / FOW_CELL, cy = y / FOW_CELL;
+          const x0 = Math.max(0, (cx - cr) | 0), x1 = Math.min(FOW_W - 1, Math.ceil(cx + cr));
+          const y0 = Math.max(0, (cy - cr) | 0), y1 = Math.min(FOW_H - 1, Math.ceil(cy + cr));
+          const r2 = cr * cr;
+          for (let iy = y0; iy <= y1; iy++)
+            for (let ix = x0; ix <= x1; ix++)
+              if ((ix - cx) * (ix - cx) + (iy - cy) * (iy - cy) <= r2) g[iy * FOW_W + ix] = 2;
+        };
+        for (const u of unitsRef.current) {
+          if (u.team !== team || u.health <= 0 || u.boarded) continue;
+          stamp(u.position.x, u.position.y, getVision(u.type) * (u.isOnHill ? 1.3 : 1));
+        }
+        for (const b of terrainRef.current) {
+          if (b.type === 'building' && b.occupiable && b.occupant === team && (b.garrisonUnits?.length || 0) > 0) {
+            stamp(b.x, b.y, 150);
+          }
+        }
+        const xs = team === Team.WEST ? 0 : FOW_W - 6;
+        for (let iy = 0; iy < FOW_H; iy++)
+          for (let ix = xs; ix < xs + 6; ix++) g[iy * FOW_W + ix] = 2;
+      }
+    }
 
     if (flashOpacity.current > 0) flashOpacity.current -= 0.02; // Flash decay
     // Spawn queue processed in useEffect now to avoid frame-loop race conditions
@@ -3469,6 +3589,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               let bBest = range, bx = 0, by = 0, found = false;
               for (const b of terrainRef.current) {
                 if (b.type !== 'building' || !b.occupiable || b.state === 'burnt' || b.occupant == null || b.occupant === unit.team) continue;
+                if (!fogVisibleTo(unit.team, b.x, b.y)) continue; // can't storm what you can't see
                 const dx = Math.max(Math.abs(unit.position.x - b.x) - (b.width || b.size * 2.6) / 2, 0);
                 const dy = Math.max(Math.abs(unit.position.y - b.y) - (b.height || b.size * 2.0) / 2, 0);
                 const d = Math.hypot(dx, dy);
@@ -4642,7 +4763,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
+      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -4694,6 +4815,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         camouflaged: unitsRef.current.filter(u => u.camouflaged).length,
         overdrive: unitsRef.current.filter(u => (u.abilityUntil ?? 0) > tickCountRef.current).length,
         c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
+        // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
+        fogOn: fogOnRef.current,
+        fog: (team: 'WEST' | 'EAST', x: number, y: number) => fogCellState(team === 'WEST' ? Team.WEST : Team.EAST, x, y),
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
@@ -4822,7 +4946,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   return (
     <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900 overflow-hidden relative">
       <GameScene
-        units={unitsRef.current}
+        units={fogFilterUnits()}
         projectiles={projectilesRef.current}
         particles={particlesRef.current}
         terrain={terrainRef.current}
@@ -4840,6 +4964,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         mapType={mapType}
         shake={shakeRef}
         shock={shockRef}
+        fogGrid={fogOfWar && humanTeam ? fogRef.current[humanTeam] : undefined}
         capture={captureRef.current}
         flanks={flankCapsRef.current}
         onUnitClick={handleUnitClick}
@@ -4901,7 +5026,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} cb={cb} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
