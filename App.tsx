@@ -746,12 +746,13 @@ const App: React.FC = () => {
             {/* Map Selection */}
             <div className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 mb-1 ${compact ? 'p-1.5' : 'p-3'}`}>
               <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Select Battlefield</p>
-              <div className={`grid grid-cols-4 ${compact ? 'gap-1' : 'gap-2'}`}>
+              <div className={`grid grid-cols-5 ${compact ? 'gap-1' : 'gap-2'}`}>
                 {([
                   { type: MapType.COUNTRYSIDE, label: 'Countryside', desc: 'Rivers & forests', color: 'text-green-400' },
                   { type: MapType.URBAN,       label: 'Urban',       desc: 'City walls & rubble', color: 'text-slate-300' },
                   { type: MapType.DESERT,      label: 'Desert',      desc: 'Dunes & wadis', color: 'text-amber-400' },
                   { type: MapType.ARCHIPELAGO, label: 'Islands',     desc: 'Channels & bridges', color: 'text-cyan-400' },
+                  { type: MapType.WINTER,      label: 'Winter',      desc: 'Infantry cross the ice', color: 'text-sky-300' },
                 ] as const).map(m => (
                   <button
                     key={m.type}
@@ -1006,6 +1007,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Rally Horn:</strong> ${RALLY_COST} for <span className="text-amber-400">+45% fire rate & +25% speed</span> for 8s — time it with your push.</li>
             <li><strong className="text-white">Field Repairs:</strong> Wounded units <span className="text-green-400">heal slowly near your own edge</span> when out of combat — rotate them back instead of losing them.</li>
             <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
+                <li><strong className="text-white">Winter ice:</strong> On the Winter map the river is <span className="text-sky-300">frozen</span> — infantry walk across the ice anywhere (slowed, and caught in the open), while vehicles still need the bridges. Gunboats can't anchor in ice.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>

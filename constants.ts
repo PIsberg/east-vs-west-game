@@ -686,6 +686,19 @@ export const CLASS_PROFILE: Record<MoveClass, {
   tracked: { hill: 0.75, wade: 0,    steer: 0.20, radius: 21, sepRadius: 60, sepStr: 0.07 },
 };
 
+// Winter map: the river is frozen — foot units walk straight across the ice
+// (no bridge detour) at this speed multiplier. Quicker than fording open water,
+// slower than a road march; the crossing is where infantry is caught in the open.
+export const ICE_CROSS_MULT = 0.8;
+
+// ── Wrecks ───────────────────────────────────────────────────────────────────
+// A destroyed ground vehicle stays on the field as a burning hulk: infantry
+// take cover behind it like a rock, vehicles steer around it. It burns hard,
+// then smolders, then sinks away. Life is in ticks (60/s at 1x speed).
+export const WRECK_LIFE_TICKS = 3000;    // ~50s on the field
+export const WRECK_SMOLDER_TICKS = 2300; // below this remaining life the fire dies down
+export const WRECK_MAX = 10;             // field cap — the oldest hulk is cleared first
+
 // Obstacle avoidance: units look ahead along their heading, and when something
 // blocks the path they commit to rounding it on one side for a while (flip-
 // flopping between sides every tick is what pinned tanks against buildings).

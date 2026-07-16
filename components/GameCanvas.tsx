@@ -41,6 +41,10 @@ import {
   IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
   CLASS_PROFILE,
+  ICE_CROSS_MULT,
+  WRECK_LIFE_TICKS,
+  WRECK_SMOLDER_TICKS,
+  WRECK_MAX,
   AVOID_LOOKAHEAD,
   AVOID_COMMIT_MS,
   STUCK_SAMPLE_TICKS,
@@ -164,7 +168,7 @@ const MiniMap: React.FC<{
 
       for (const t of terrainRef.current) {
         if (t.type === 'river') {
-          ctx.fillStyle = '#27546b';
+          ctx.fillStyle = t.frozen ? '#a9c8dc' : '#27546b';
           ctx.fillRect(mx(t.x - (t.width ?? 40) / 2), my(t.y - (t.height ?? 22) / 2),
             Math.max(1.5, (t.width ?? 40) * sx), Math.max(1.5, (t.height ?? 22) * sy));
         } else if (t.type === 'hill') {
@@ -322,6 +326,17 @@ interface GameCanvasProps {
   viewH?: number;
 }
 
+// One weather table per map — the climate has to make sense: Winter snows
+// instead of raining, the Desert never sees snow (rain is rare, and fog reads
+// as dust haze). Used by BOTH roll sites (initial forecast + in-game re-roll)
+// so the tables can't drift apart.
+const rollNextWeather = (map: MapType): 'clear' | 'rain' | 'snow' | 'fog' | 'storm' => {
+  const r = Math.random();
+  if (map === MapType.WINTER) return r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear';
+  if (map === MapType.DESERT) return r < 0.14 ? 'rain' : r < 0.40 ? 'fog' : r < 0.52 ? 'storm' : 'clear';
+  return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+};
+
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   onGameStateChange,
   spawnQueue,
@@ -402,10 +417,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
-  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>((() => {
-    const r = Math.random();
-    return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
-  })());
+  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>(rollNextWeather(mapType));
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
     x: CANVAS_WIDTH / 2,
@@ -721,6 +733,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeTrees(5, ch2x + seaWidth / 2 + 20, CANVAS_WIDTH - 25, allR);
       placeRocks(12, 25, CANVAS_WIDTH - 25, allR);
       placeHills(2, ch1x + seaWidth / 2 + 30, ch2x - seaWidth / 2 - 30, allR);
+
+    } else if (mapType === MapType.WINTER) {
+      // The frozen river is the map's identity, so it's always present (no
+      // countryside-style coin flip). Infantry cross the ice anywhere — slowed
+      // and in the open — while vehicles still funnel over the two bridges.
+      const cx = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 160;
+      const rSegs = addChannel(cx, 26 + Math.random() * 36, 0.005 + Math.random() * 0.004, Math.random() * Math.PI * 2, 58);
+      rSegs.forEach(s => { s.frozen = true; });
+      const span = CANVAS_HEIGHT - HORIZON_Y - 100;
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.30 + (Math.random() - 0.5) * 25);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.72 + (Math.random() - 0.5) * 25);
+      // Pine forest, snowdrifts (hills) and half-buried boulders
+      placeHills(5, 90, CANVAS_WIDTH - 90, rSegs);
+      placeTrees(20, 55, CANVAS_WIDTH - 55, rSegs);
+      placeRocks(18, 40, CANVAS_WIDTH - 40, rSegs);
     }
 
     // Occupiable buildings: infantry strongpoints seeded across the contested
@@ -929,10 +956,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
-    // Gunboat must anchor on open water — reject dry-land clicks (no charge)
+    // Gunboat must anchor on open water — reject dry-land clicks (no charge).
+    // A frozen channel (Winter) is not open water: nothing sails through ice.
     if (type === UnitType.GUNBOAT && options?.absolutePos) {
       const p = options.absolutePos;
-      const onWater = terrainRef.current.some(t => t.type === 'river' &&
+      const onWater = terrainRef.current.some(t => t.type === 'river' && !t.frozen &&
         Math.abs(p.x - t.x) < (t.width ?? 40) / 2 + 16 &&
         Math.abs(p.y - t.y) < (t.height ?? 22) / 2 + 16);
       if (!onWater) {
@@ -1281,6 +1309,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       o.type === 'building' ? Math.max(o.width || o.size * 2.6, o.height || o.size * 2.0) / 2
         : o.type === 'tree' ? 15
         : o.type === 'rock' ? 13
+        : o.type === 'wreck' ? o.size
         : o.size * 0.8;
 
     const steerAroundObstacles = (
@@ -1296,7 +1325,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       let blockT = Infinity, blockLat = 0, blockClear = 0;
       for (const o of terrainRef.current) {
         const isSolid = o.type === 'building' ||
-          (solidProps && (o.type === 'tree' || o.type === 'rock' ||
+          (solidProps && (o.type === 'tree' || o.type === 'rock' || o.type === 'wreck' ||
             ((o.type === 'crate' || o.type === 'barrel') && o.state !== 'broken')));
         if (!isSolid) continue;
         const dx = o.x - unit.position.x, dy = o.y - unit.position.y;
@@ -1485,6 +1514,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         if (isNuke) {
           flashOpacity.current = 1.0;
+          // Cinematic punch-in: swing the camera to ground zero for a beat,
+          // then return to exactly where the player left it (distance restored
+          // from a snapshot — zoom is clamped, so a reciprocal would drift).
+          const cam = (window as any).__ewCam;
+          if (cam?.state && cam.panTo && cam.zoom) {
+            const prev = cam.state();
+            cam.panTo(m.target.x);
+            cam.zoom(0.8);
+            setTimeout(() => {
+              const now = cam.state();
+              if (prev && now?.dist) cam.zoom(prev.dist / now.dist);
+              if (prev) cam.panTo(prev.tx);
+            }, 2600);
+          }
           // Expanding ground shockwave
           particlesRef.current.push({ id: generateId(), position: { ...m.target }, life: 18, color: '#fef9c3', size: 320, isShockwave: true });
           // Initial white-hot flash ring
@@ -1822,10 +1865,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         wasClear ? 22000 + Math.random() * 20000 : 28000 + Math.random() * 28000;
       weatherTimerRef.current = Date.now() + holdMs;
       if (incoming !== 'clear') nextWeatherRef.current = 'clear';
-      else {
-        const r = Math.random();
-        nextWeatherRef.current = r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
-      }
+      else nextWeatherRef.current = rollNextWeather(mapType);
     }
 
     // Snow particle generation (drifts down to ground level)
@@ -1879,6 +1919,48 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if ((p.type === 'crate' || p.type === 'barrel') && p.state === 'broken') {
           p.health = (p.health ?? 0) - 10;
           if (p.health <= 0) terrainRef.current.splice(i, 1);
+        }
+        // Wrecks burn hard, die down to a smolder, then sink off the field
+        // (health doubles as the timer, like prop debris)
+        if (p.type === 'wreck') {
+          p.health = (p.health ?? 0) - 10;
+          if (p.health <= 0) { terrainRef.current.splice(i, 1); continue; }
+          const burning = p.health > WRECK_SMOLDER_TICKS;
+          p.state = burning ? 'burning' : 'burnt';
+          if (burning && Math.random() < 0.8) {
+            // Flame lick + oily smoke off the burning hulk
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: p.x + (Math.random() - 0.5) * 14, y: p.y + (Math.random() - 0.5) * 10 },
+              velocity: { x: (Math.random() - 0.5) * 0.2, y: (Math.random() - 0.5) * 0.2 },
+              life: 18 + Math.random() * 16,
+              color: Math.random() < 0.5 ? '#f97316' : '#fbbf24',
+              size: 6 + Math.random() * 8,
+              alt: 8 + Math.random() * 10, altVel: 0.35 + Math.random() * 0.35,
+            });
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: p.x + (Math.random() - 0.5) * 12, y: p.y + (Math.random() - 0.5) * 10 },
+              velocity: { x: (Math.random() - 0.5) * 0.25, y: (Math.random() - 0.5) * 0.25 },
+              drag: 0.99,
+              life: 80 + Math.random() * 90,
+              color: Math.random() < 0.5 ? '#292524' : '#44403c',
+              size: 6 + Math.random() * 8,
+              alt: 12 + Math.random() * 10, altVel: 0.4 + Math.random() * 0.4,
+            });
+          } else if (!burning && Math.random() < 0.22) {
+            // The occasional thin wisp off a cold hulk
+            particlesRef.current.push({
+              id: generateId(),
+              position: { x: p.x + (Math.random() - 0.5) * 10, y: p.y },
+              velocity: { x: (Math.random() - 0.5) * 0.15, y: 0 },
+              drag: 0.995,
+              life: 70 + Math.random() * 60,
+              color: '#57534e',
+              size: 4 + Math.random() * 5,
+              alt: 10 + Math.random() * 8, altVel: 0.3 + Math.random() * 0.25,
+            });
+          }
         }
       }
     }
@@ -2460,7 +2542,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const coverBackBias = isUnderFire ? 60 : 30;
                 const coverSearchRadius = isUnderFire ? 240 : 175;
                 const cover = terrainRef.current.find(t => {
-                  if (t.type !== 'tree' && t.type !== 'rock') return false;
+                  // Wrecks are battlefield cover too — the fight creates its own
+                  if (t.type !== 'tree' && t.type !== 'rock' && t.type !== 'wreck') return false;
                   if (t.id === unit.lastCoverId) return false;
                   if (unit.team === Team.WEST ? t.x < unit.position.x - coverBackBias : t.x > unit.position.x + coverBackBias) return false;
                   const dist = Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2);
@@ -2543,7 +2626,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               );
               if (!onBridge) {
                 const crossNeeded = (unit.team === Team.WEST && unit.position.x < river.x) || (unit.team === Team.EAST && unit.position.x > river.x);
-                if (crossNeeded) {
+                if (crossNeeded && river.frozen && profile.wade > 0) {
+                  // Frozen over (Winter): foot units walk straight across the
+                  // ice — no bridge detour, but slowed and caught in the open
+                  moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * ICE_CROSS_MULT;
+                } else if (crossNeeded) {
                   let nearestBridge: TerrainObject | null = null;
                   let minBridgeDist = 10000;
                   terrainRef.current.forEach(b => {
@@ -2722,9 +2809,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // A bunker under construction is a building site, not a gun position
       if (!isDescent && unit.attackCooldown <= 0 && !unit.buildUntil) {
         // Water Penalty Check
-        // Re-find river (efficient enough as terrain array is small)
+        // Re-find river (efficient enough as terrain array is small).
+        // A frozen channel (Winter) is walked, not waded — no range penalty;
+        // the ice's cost is being caught in the open with no cover.
         const inWater = !config.isFlying && terrainRef.current.some(r => {
-          if (r.type !== 'river' || !r.width || Math.abs(r.y - unit.position.y) > 18) return false;
+          if (r.type !== 'river' || !r.width || r.frozen || Math.abs(r.y - unit.position.y) > 18) return false;
           if (unit.position.x < r.x - r.width / 2 || unit.position.x > r.x + r.width / 2) return false;
           return !terrainRef.current.some(b =>
             b.type === 'bridge' && b.state !== 'broken' &&
@@ -3766,31 +3855,50 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const isInfantryDeath = u.type === UnitType.SOLDIER || u.type === UnitType.SPECIAL_FORCES || u.type === UnitType.AIRBORNE ||
         u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
         u.type === UnitType.MORTAR;
-      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC || u.type === UnitType.JEEP || u.type === UnitType.TRANSPORT;
-      if (isInfantryDeath || isVehicleDeath) {
+      const isVehicleDeath = u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.APC ||
+        u.type === UnitType.JEEP || u.type === UnitType.TRANSPORT || u.type === UnitType.ANTI_AIR;
+      if (isInfantryDeath) {
         particlesRef.current.push({
           id: generateId(),
           position: { ...u.position },
-          life: isVehicleDeath ? 420 : 240,
-          color: isVehicleDeath ? '#1c1917' : (u.team === Team.WEST ? cfg.colorWest : cfg.colorEast),
-          size: isVehicleDeath ? 30 : 14,
+          life: 240,
+          color: u.team === Team.WEST ? cfg.colorWest : cfg.colorEast,
+          size: 14,
           isCorpse: true
         });
-        // Smoke column rising off the burning wreck
-        if (isVehicleDeath) {
-          for (let k = 0; k < 10; k++) {
-            particlesRef.current.push({
-              id: generateId(),
-              position: { x: u.position.x + (Math.random() - 0.5) * 16, y: u.position.y + (Math.random() - 0.5) * 12 },
-              velocity: { x: (Math.random() - 0.5) * 0.3, y: (Math.random() - 0.5) * 0.3 },
-              drag: 0.99,
-              life: 90 + Math.random() * 160,
-              color: k % 3 === 0 ? '#292524' : k % 2 === 0 ? '#44403c' : '#57534e',
-              size: 6 + Math.random() * 9,
-              alt: 8 + Math.random() * 8,
-              altVel: 0.35 + Math.random() * 0.45
-            });
-          }
+      }
+      // A kill on a bridge deck or in the water leaves no hulk (it goes over
+      // the side) — a wreck there would steer the column off the crossing.
+      const onCrossing = terrainRef.current.some(b =>
+        (b.type === 'bridge' && Math.abs(u.position.x - b.x) < (b.width || 85) / 2 + 14 && Math.abs(u.position.y - b.y) < (b.height || 40) / 2 + 14) ||
+        (b.type === 'river' && !!b.width && Math.abs(u.position.y - b.y) < 12 && Math.abs(u.position.x - b.x) < b.width / 2 + 6));
+      if (isVehicleDeath && !onCrossing) {
+        // The vehicle stays on the field as a burning hulk: real terrain —
+        // infantry cover behind it, vehicles steer around it, and it burns
+        // down to a smoldering shell before sinking away (upkeep pass above).
+        const wrecks = terrainRef.current.filter(t => t.type === 'wreck');
+        if (wrecks.length >= WRECK_MAX) {
+          const oldest = wrecks.reduce((a, b) => (a.health ?? 0) < (b.health ?? 0) ? a : b);
+          terrainRef.current.splice(terrainRef.current.indexOf(oldest), 1);
+        }
+        terrainRef.current.push({
+          id: generateId(), x: u.position.x, y: u.position.y, type: 'wreck',
+          size: getMoveClass(u.type) === 'tracked' ? 16 : 11,
+          wreckOf: u.type, state: 'burning', health: WRECK_LIFE_TICKS,
+        });
+        // Initial smoke column off the fresh kill
+        for (let k = 0; k < 10; k++) {
+          particlesRef.current.push({
+            id: generateId(),
+            position: { x: u.position.x + (Math.random() - 0.5) * 16, y: u.position.y + (Math.random() - 0.5) * 12 },
+            velocity: { x: (Math.random() - 0.5) * 0.3, y: (Math.random() - 0.5) * 0.3 },
+            drag: 0.99,
+            life: 90 + Math.random() * 160,
+            color: k % 3 === 0 ? '#292524' : k % 2 === 0 ? '#44403c' : '#57534e',
+            size: 6 + Math.random() * 9,
+            alt: 8 + Math.random() * 8,
+            altVel: 0.35 + Math.random() * 0.45
+          });
         }
       }
     });
@@ -4052,7 +4160,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Naval picket: anchor a gunboat on a river segment to guard crossings
         // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
         if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special) {
-          const rivers = terrainRef.current.filter(t => t.type === 'river');
+          const rivers = terrainRef.current.filter(t => t.type === 'river' && !t.frozen);
           const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
           if (rivers.length > 0 && myBoats < 2) {
             const seg = rivers[Math.floor(Math.random() * rivers.length)];
@@ -4176,6 +4284,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
         weather: weatherRef.current,
+        weatherNext: nextWeatherRef.current,
         stances: { WEST: stancesRef.current[Team.WEST], EAST: stancesRef.current[Team.EAST] },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire
@@ -4186,6 +4295,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
+        wrecks: terrainRef.current.filter(t => t.type === 'wreck').map(w => ({
+          x: Math.round(w.x), y: Math.round(w.y), of: w.wreckOf, health: w.health ?? 0,
+        })),
+        // River geometry for movement probes (ice crossings, bridge funnels)
+        riverSegs: terrainRef.current.filter(t => t.type === 'river').map(s => ({
+          x: Math.round(s.x), y: Math.round(s.y), w: s.width ?? 40, frozen: !!s.frozen,
+        })),
+        bridges: terrainRef.current.filter(t => t.type === 'bridge').map(b => ({
+          x: Math.round(b.x), y: Math.round(b.y), w: b.width ?? 85, h: b.height ?? 40, state: b.state,
+        })),
         buildings: terrainRef.current.filter(t => t.type === 'building' && t.occupiable).map(b => ({
           x: Math.round(b.x), y: Math.round(b.y), occupant: b.occupant ?? null,
           garrison: b.garrisonUnits?.length ?? 0, capacity: b.capacity ?? 0,

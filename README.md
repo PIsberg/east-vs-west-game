@@ -2,7 +2,7 @@
 
 A real-time tug-of-war strategy game inspired by the classic Commodore Amiga title **[North & South](https://en.wikipedia.org/wiki/North_%26_South_(video_game))** (Infogrames, 1989). Command the West or East team, deploy units, and push to the enemy edge to claim victory! Available online here: https://pisberg.github.io/east-vs-west-game/
 
-Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Four battlefields, two win modes (**100 Points** or **Base HP**).
+Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Five battlefields, two win modes (**100 Points** or **Base HP**).
 
 ![Battle on the countryside map — 3D unit models, minimap and full HUD](docs/screenshot-battle.png)
 
@@ -99,7 +99,9 @@ The first team to reach **100 Points** wins.
 - **River**: Slows down infantry. Vehicles MUST use bridges to cross.
 - **Bridges are destructible**: Artillery, missiles and mines collapse them — vehicles are blocked until the bridge is repaired (infantry can wade, slowly). A broken bridge shows a bobbing wrench marker: build an **Engineer** and he'll walk there and reopen it in seconds. Left alone, bridges slowly self-repair (~1 minute), so the front never stalls forever.
 - **Water Disadvantage**: Units wading in the river (not on bridge) have **-60% Range**.
+- **Winter map — frozen river**: The channel is iced over. Infantry walk **straight across the ice anywhere** (slowed, and caught in the open), while vehicles still funnel over the bridges — hold the crossings or get flanked over the ice. Gunboats can't anchor in a frozen channel, and it snows instead of raining.
 - **Battlefield wear**: Supply crates splinter and fuel barrels cook off (small blast!) when caught in explosions or crushed by vehicles; tanks and jeeps leave faint tread marks. Debris and marks fade away on their own.
+- **Wrecks are cover**: A destroyed tank doesn't vanish — it burns where it died. The hulk is real terrain: your infantry duck behind it like a boulder, vehicles drive around it, and it smolders for the better part of a minute before sinking away. The battlefield ends up telling the story of the fight — and a knocked-out vehicle in a chokepoint changes the next push through it.
 
 ---
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## The battlefield remembers (July 2026)
+
+- **Destroyed vehicles become burning wrecks — and the wreck is terrain.** A knocked-out tank used to be a dark smudge that faded in seven seconds. Now the hulk stays where it died: slumped hull, turret knocked askew, barrel drooping, fire crowning out of the burnt-open core with oily smoke rolling off it. Infantry take cover behind it exactly like a boulder; vehicles steer around it. It burns hard, dies down to a smoldering shell, and sinks away after most of a minute — capped at ten hulks so a long battle marks the field without clogging it. A vehicle killed on a bridge goes over the side instead (no wreck may block a crossing). Emergent bonus: a squad bailing out of a dead APC ducks behind its own vehicle's hulk.
+- **The nuke got a director's cut.** When the warhead lands, the camera swings to ground zero for a beat — flash, mushroom cloud, shockwave — then returns to exactly where you left it.
+- **Weather knows its climate now.** It no longer snows in the desert — the dunes get dust haze (fog), rare rain and storms instead. Each map rolls from its own weather table (which is also what keeps Winter snowing instead of raining).
+
+## Winter — the fifth battlefield (July 2026)
+
+- **A new map: Winter.** Snowfield under a pale sky, pine forest with snow-capped tiers, wind-packed drifts, a snowed-in mountain range on the horizon — and it snows instead of raining. The splash menu now offers five battlefields.
+- **The river is frozen, and that changes how the map plays.** Infantry walk **straight across the ice anywhere** — no bridge detour, slowed a little but fighting at full range — while vehicles still funnel over the two bridges. Holding the crossings no longer seals the front: a foot column can flank over the ice at any point, and the open sheet is exactly where it's most exposed. Gunboats can't anchor in a frozen channel (the CPU knows it too), and the minimap draws the ice pale so the crossing lanes read at a glance.
+
 ## Rivers that flow, houses on solid ground (July 2026)
 
 - **The water actually looks like water now.** The river shader dumped a hard on/off foam threshold over a flat blue fill — it read as TV static on a painted strip. It's been rebuilt: two noise layers drift downstream at different speeds so the surface *moves*, the channel is darker and deeper down its middle and lightens toward the banks (a rounded cross-section instead of a flat slab), a **foam line** traces where the water meets the land, soft ripple highlights replace the hard specks, and sparse sun-glints drift across it. The islands' straits use the same shader in a deeper ocean blue.

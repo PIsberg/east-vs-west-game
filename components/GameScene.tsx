@@ -387,6 +387,25 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
         );
     }
 
+    // Winter: the river is frozen solid — a pale ice sheet, no flow. A faint
+    // second pass tightens the sheen so it reads as ice, not paint.
+    if (mapType === MapType.WINTER) {
+        return (
+            <group>
+                {geometries.map((geo, i) => geo && (
+                    <group key={i}>
+                        <mesh geometry={geo} receiveShadow>
+                            <meshStandardMaterial color="#9ec4dd" roughness={0.25} metalness={0.15} />
+                        </mesh>
+                        <mesh geometry={geo} position={[0, 0.4, 0]}>
+                            <meshStandardMaterial color="#eef6fa" transparent opacity={0.22} roughness={0.1} depthWrite={false} />
+                        </mesh>
+                    </group>
+                ))}
+            </group>
+        );
+    }
+
     // Archipelago: wide sea straits with animated deep-ocean shader
     if (mapType === MapType.ARCHIPELAGO) {
         return (
@@ -2465,6 +2484,57 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         );
     }
 
+    if (item.type === 'wreck') {
+        const s = item.size;
+        const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
+        const yaw = (seed % 628) / 100;
+        const burning = item.state === 'burning';
+        const life = item.health ?? 0;
+        const fade = Math.min(1, life / 300); // sink + flatten over the last ~5s
+        const tracked = item.wreckOf === UnitType.TANK || item.wreckOf === UnitType.ARTILLERY || item.wreckOf === UnitType.APC;
+        const flicker = Math.floor(Date.now() / 90) % 2 === 0;
+        const ember = burning ? (flicker ? '#f97316' : '#b45309') : '#000000';
+        return (
+            <group position={[item.x, (fade - 1) * s, item.y]} rotation={[0, yaw, 0]} scale={[1, fade, 1]}>
+                {/* Charred hull, slumped on a blown track/axle */}
+                <mesh position={[0, s * 0.35, 0]} rotation={[0.06, 0, 0.1]} castShadow>
+                    <boxGeometry args={[s * 2.1, s * 0.75, s * 1.25]} />
+                    <meshStandardMaterial color="#1c1917" roughness={1} />
+                </mesh>
+                {tracked ? (
+                    <group>
+                        {/* Turret knocked askew, barrel drooping at the ground */}
+                        <mesh position={[-s * 0.2, s * 0.85, s * 0.15]} rotation={[0.12, yaw, -0.1]} castShadow>
+                            <boxGeometry args={[s * 0.95, s * 0.5, s * 0.8]} />
+                            <meshStandardMaterial color="#292524" roughness={1} />
+                        </mesh>
+                        <mesh position={[s * 0.6, s * 0.7, s * 0.15]} rotation={[0, 0, Math.PI / 2 - 1.25]} castShadow>
+                            <cylinderGeometry args={[s * 0.07, s * 0.09, s * 1.4, 6]} />
+                            <meshStandardMaterial color="#292524" roughness={1} />
+                        </mesh>
+                    </group>
+                ) : (
+                    /* Blown-open cab shell folded over the hull */
+                    <mesh position={[-s * 0.35, s * 0.8, 0]} rotation={[0, 0, 0.22]} castShadow>
+                        <boxGeometry args={[s * 0.9, s * 0.55, s * 1.1]} />
+                        <meshStandardMaterial color="#292524" roughness={1} />
+                    </mesh>
+                )}
+                {/* Fire glowing out of the burnt-open core while it burns —
+                    crowns above the hull so the blaze reads from any angle */}
+                <mesh position={[0, s * 0.82, 0]} scale={[1, flicker ? 1.15 : 0.9, 1]}>
+                    <sphereGeometry args={[s * 0.5, 8, 6]} />
+                    <meshStandardMaterial color="#0c0a09" emissive={ember} emissiveIntensity={burning ? 2.4 : 0} toneMapped={false} roughness={1} transparent opacity={burning ? 0.95 : 0.4} />
+                </mesh>
+                {/* Scorched ground under the kill */}
+                <mesh position={[0, 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[s * 1.7, 12]} />
+                    <meshBasicMaterial color="#0c0a09" transparent opacity={0.35 * fade} depthWrite={false} />
+                </mesh>
+            </group>
+        );
+    }
+
     if (item.type === 'crate' || item.type === 'barrel') {
         const s = item.size;
         const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
@@ -2541,6 +2611,23 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                     <mesh position={[radius * 0.25, 1, radius * 0.3]} scale={[radius * 0.55, height * 0.5, radius * 0.4]} castShadow>
                         <sphereGeometry args={[1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
                         <meshStandardMaterial color="#c2620c" roughness={1} />
+                    </mesh>
+                </ClickableGroup>
+            );
+        }
+
+        // Winter: snowdrift — same wind-blown dune shape, buried in white
+        if (mapType === MapType.WINTER) {
+            return (
+                <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
+                    <mesh position={[0, 1, 0]} scale={[radius, height + 4, radius * 0.85]} receiveShadow castShadow>
+                        <sphereGeometry args={[1, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                        <meshStandardMaterial color="#e6edf3" roughness={0.9} />
+                    </mesh>
+                    {/* Wind-packed crest catching the light */}
+                    <mesh position={[radius * 0.25, 1, radius * 0.3]} scale={[radius * 0.55, height * 0.5, radius * 0.4]} castShadow>
+                        <sphereGeometry args={[1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
+                        <meshStandardMaterial color="#f4f8fb" roughness={0.85} />
                     </mesh>
                 </ClickableGroup>
             );
@@ -2797,6 +2884,12 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         let rot: [number, number, number] = [0, 0, 0];
         let yOffset = 0;
 
+        // Winter: cold-desaturated foliage under the snow caps below
+        if (mapType === MapType.WINTER) {
+            trunkColor = "#3b2a1a";
+            leavesColor = type === 0 ? "#2f4a3c" : (type === 1 ? "#3a5544" : "#48604c");
+        }
+
         // Tree State Visuals
         if (item.state === 'burnt') {
             trunkColor = "#1c1917"; // Burnt wood
@@ -2823,6 +2916,15 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                             <mesh position={[0, 34, 0]} castShadow geometry={GEO_PINE_1} material={leafMat} />
                             <mesh position={[0, 50, 0]} castShadow geometry={GEO_PINE_2} material={leafMat} />
                             <mesh position={[0, 64, 0]} castShadow geometry={GEO_PINE_3} material={leafMat} />
+                            {/* Snow caps: a white mini-cone flush on each tier's tip
+                                (shared geometry, cached white material — cheap) */}
+                            {mapType === MapType.WINTER && (!item.state || item.state === 'normal') && (
+                                <group>
+                                    <mesh position={[0, 42, 0]} scale={0.45} geometry={GEO_PINE_1} material={stdMat('#eef2f7')} />
+                                    <mesh position={[0, 57, 0]} scale={0.45} geometry={GEO_PINE_2} material={stdMat('#eef2f7')} />
+                                    <mesh position={[0, 69.5, 0]} scale={0.5} geometry={GEO_PINE_3} material={stdMat('#eef2f7')} />
+                                </group>
+                            )}
                         </group>
                     )}
                     {type === 1 && ( // Oak — clustered canopy
@@ -3172,16 +3274,18 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
             </group>
         );
     }
-    // Countryside / archipelago: mountain range with snow caps on the tall ones
+    // Countryside / archipelago / winter: mountain range with snow caps on the
+    // tall ones — in winter every peak is snowed in and the rock reads colder
+    const winter = mapType === MapType.WINTER;
     return (
         <group>
             {items.map((m, i) => (
                 <group key={i} position={[m.x, 0, m.z]}>
                     <mesh position={[0, m.h * 0.8, 0]}>
                         <coneGeometry args={[m.w * 1.5, m.h * 1.6, 7]} />
-                        <meshStandardMaterial color="#475569" roughness={1} />
+                        <meshStandardMaterial color={winter ? '#5b6b7d' : '#475569'} roughness={1} />
                     </mesh>
-                    {m.h > 150 && (
+                    {m.h > (winter ? 85 : 150) && (
                         <mesh position={[0, m.h * 1.38, 0]}>
                             <coneGeometry args={[m.w * 0.42, m.h * 0.44, 7]} />
                             <meshStandardMaterial color="#e2e8f0" roughness={0.9} />
@@ -3259,6 +3363,8 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
             return { tufts: 170, bushes: 16, grassTones: ['#a16207', '#ca8a04', '#854d0e'], bushTone: '#6b4310' };
         if (mapType === MapType.ARCHIPELAGO)
             return { tufts: 300, bushes: 28, grassTones: ['#166534', '#15803d', '#3f8f3e'], bushTone: '#14532d' };
+        if (mapType === MapType.WINTER) // dead straw and frost poking through the snow
+            return { tufts: 140, bushes: 16, grassTones: ['#9c9270', '#a8b3bc', '#c3ccd3'], bushTone: '#44554d' };
         // COUNTRYSIDE
         return { tufts: 300, bushes: 28, grassTones: ['#22400d', '#33511a', '#405f22'], bushTone: '#1c3a0d' };
     }, [mapType]);
@@ -3346,7 +3452,8 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
     const groundColor =
         mapType === MapType.URBAN       ? '#374151' :
         mapType === MapType.DESERT      ? '#92400e' :
-        mapType === MapType.ARCHIPELAGO ? '#1a6b3a' : '#365314';
+        mapType === MapType.ARCHIPELAGO ? '#1a6b3a' :
+        mapType === MapType.WINTER      ? '#d4dde5' : '#365314';
     // Two mottle tones — a lighter and a darker patch — dabbed across the field
     // so the ground reads as uneven earth rather than a flat slab. Kept subtle
     // (low opacity) so units still pop against it.
@@ -3354,6 +3461,7 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
         mapType === MapType.URBAN       ? ['#4b5563', '#2b3444'] :
         mapType === MapType.DESERT      ? ['#b45309', '#7c3d0a'] :
         mapType === MapType.ARCHIPELAGO ? ['#d97706', '#14532d'] : // sandy beach + turf on islands
+        mapType === MapType.WINTER      ? ['#eaf0f5', '#b6c2cd'] : // fresh powder + wind-scoured crust
                                           ['#4a6b22', '#233d10'];   // countryside: sun-catch turf + damp earth
 
     // Distributed across the actual play area (not half off-map like before),
@@ -3479,7 +3587,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     const clearSky =
         mapType === MapType.DESERT      ? '#dfc08f' :
         mapType === MapType.URBAN       ? '#9fb2c0' :
-        mapType === MapType.ARCHIPELAGO ? '#6fd0e8' : '#87CEEB';
+        mapType === MapType.ARCHIPELAGO ? '#6fd0e8' :
+        mapType === MapType.WINTER      ? '#b9cfdd' : '#87CEEB';
     const weatherSky =
         weather === 'rain'  ? '#334155' :
         weather === 'snow'  ? '#cbd5e1' :
@@ -3535,7 +3644,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                     <mesh key={'road-' + b.id} position={[b.x, 0.25, b.y]} rotation={[-Math.PI / 2, 0, 0]}>
                         <planeGeometry args={[(b.width || 85) + 240, (b.height || 40) * 0.6]} />
                         <meshStandardMaterial
-                            color={mapType === MapType.URBAN ? '#3f3f46' : mapType === MapType.DESERT ? '#a16207' : '#6b4f2a'}
+                            color={mapType === MapType.URBAN ? '#3f3f46' : mapType === MapType.DESERT ? '#a16207' : mapType === MapType.WINTER ? '#9fb0bc' : '#6b4f2a'}
                             transparent opacity={0.5} depthWrite={false}
                         />
                     </mesh>
