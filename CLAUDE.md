@@ -135,7 +135,9 @@ Other performance rules: static scene components (`TerrainItem`, `GroundPlane`, 
 
 ### Map system
 
-`MapType` in `types.ts` defines four maps: `COUNTRYSIDE`, `URBAN`, `DESERT`, `ARCHIPELAGO`. The map is chosen in `App.tsx` pre-game. Terrain layout per map is generated procedurally in `GameCanvas.tsx` (branching on `mapType`), and `GameScene.tsx` branches on `mapType` for visuals (ground/accent colors, river vs. channel rendering). A new map needs: enum value, terrain generation branch in `GameCanvas`, visual branch in `GameScene`, and a menu entry in `App.tsx`.
+`MapType` in `types.ts` defines five maps: `COUNTRYSIDE`, `URBAN`, `DESERT`, `ARCHIPELAGO`, `WINTER`. The map is chosen in `App.tsx` pre-game. Terrain layout per map is generated procedurally in `GameCanvas.tsx` (branching on `mapType`), and `GameScene.tsx` branches on `mapType` for visuals (ground/accent colors, river vs. channel rendering). A new map needs: enum value, terrain generation branch in `GameCanvas`, visual branch in `GameScene`, and a menu entry in `App.tsx`.
+
+**Winter's frozen river** (`TerrainObject.frozen` on the river segments): foot units cross the ice anywhere at `ICE_CROSS_MULT` speed — the movement block short-circuits the bridge detour — and skip the wading range penalty (walked, not waded; the cost is being in the open). Vehicles still need bridges. Gunboats treat ice as dry land (`spawnUnit` veto + the CPU picket filters frozen segments), and both weather rolls (initial + in-tick) swap rain for snow on this map. `__ewDebug.riverSegs`/`bridges` expose the geometry for movement probes.
 
 ### Coordinate system
 

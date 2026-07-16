@@ -15,8 +15,9 @@
  * forecast (smoke13), minimap click-to-pan + volume slider (smoke14),
  * FX auto-detection (smoke15), challenges incl. handicap + completion
  * (smoke16), unit movement — obstacle avoidance + APC deployment (smoke17),
- * suppression — fires, foot units only, wears off (smoke18), and the
- * victory-screen battle timeline (timeline-test).
+ * suppression — fires, foot units only, wears off (smoke18), the Winter
+ * frozen river — infantry cross the ice, armor doesn't, gunboats vetoed,
+ * no rain (smoke19), and the victory-screen battle timeline (timeline-test).
  *
  * Notes for writing new tests (hard-won):
  *  - Pin localStorage 'ewv-fx' to 'high' unless testing the auto-drop — the

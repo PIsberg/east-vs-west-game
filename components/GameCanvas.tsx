@@ -41,6 +41,7 @@ import {
   IMPACT_SHAKE_MIN_DAMAGE,
   getMoveClass,
   CLASS_PROFILE,
+  ICE_CROSS_MULT,
   AVOID_LOOKAHEAD,
   AVOID_COMMIT_MS,
   STUCK_SAMPLE_TICKS,
@@ -164,7 +165,7 @@ const MiniMap: React.FC<{
 
       for (const t of terrainRef.current) {
         if (t.type === 'river') {
-          ctx.fillStyle = '#27546b';
+          ctx.fillStyle = t.frozen ? '#a9c8dc' : '#27546b';
           ctx.fillRect(mx(t.x - (t.width ?? 40) / 2), my(t.y - (t.height ?? 22) / 2),
             Math.max(1.5, (t.width ?? 40) * sx), Math.max(1.5, (t.height ?? 22) * sy));
         } else if (t.type === 'hill') {
@@ -402,9 +403,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
+  // (Winter map: snow instead of rain — same bias as the in-game re-roll)
   const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>((() => {
     const r = Math.random();
-    return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+    return mapType === MapType.WINTER
+      ? (r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear')
+      : (r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear');
   })());
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
@@ -721,6 +725,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeTrees(5, ch2x + seaWidth / 2 + 20, CANVAS_WIDTH - 25, allR);
       placeRocks(12, 25, CANVAS_WIDTH - 25, allR);
       placeHills(2, ch1x + seaWidth / 2 + 30, ch2x - seaWidth / 2 - 30, allR);
+
+    } else if (mapType === MapType.WINTER) {
+      // The frozen river is the map's identity, so it's always present (no
+      // countryside-style coin flip). Infantry cross the ice anywhere — slowed
+      // and in the open — while vehicles still funnel over the two bridges.
+      const cx = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 160;
+      const rSegs = addChannel(cx, 26 + Math.random() * 36, 0.005 + Math.random() * 0.004, Math.random() * Math.PI * 2, 58);
+      rSegs.forEach(s => { s.frozen = true; });
+      const span = CANVAS_HEIGHT - HORIZON_Y - 100;
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.30 + (Math.random() - 0.5) * 25);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.72 + (Math.random() - 0.5) * 25);
+      // Pine forest, snowdrifts (hills) and half-buried boulders
+      placeHills(5, 90, CANVAS_WIDTH - 90, rSegs);
+      placeTrees(20, 55, CANVAS_WIDTH - 55, rSegs);
+      placeRocks(18, 40, CANVAS_WIDTH - 40, rSegs);
     }
 
     // Occupiable buildings: infantry strongpoints seeded across the contested
@@ -929,10 +948,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
 
-    // Gunboat must anchor on open water — reject dry-land clicks (no charge)
+    // Gunboat must anchor on open water — reject dry-land clicks (no charge).
+    // A frozen channel (Winter) is not open water: nothing sails through ice.
     if (type === UnitType.GUNBOAT && options?.absolutePos) {
       const p = options.absolutePos;
-      const onWater = terrainRef.current.some(t => t.type === 'river' &&
+      const onWater = terrainRef.current.some(t => t.type === 'river' && !t.frozen &&
         Math.abs(p.x - t.x) < (t.width ?? 40) / 2 + 16 &&
         Math.abs(p.y - t.y) < (t.height ?? 22) / 2 + 16);
       if (!onWater) {
@@ -1824,7 +1844,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (incoming !== 'clear') nextWeatherRef.current = 'clear';
       else {
         const r = Math.random();
-        nextWeatherRef.current = r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+        // Winter: it snows, it doesn't rain — snowfall carries the map's identity
+        nextWeatherRef.current = mapType === MapType.WINTER
+          ? (r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear')
+          : (r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear');
       }
     }
 
@@ -2543,7 +2566,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               );
               if (!onBridge) {
                 const crossNeeded = (unit.team === Team.WEST && unit.position.x < river.x) || (unit.team === Team.EAST && unit.position.x > river.x);
-                if (crossNeeded) {
+                if (crossNeeded && river.frozen && profile.wade > 0) {
+                  // Frozen over (Winter): foot units walk straight across the
+                  // ice — no bridge detour, but slowed and caught in the open
+                  moveX = (unit.team === Team.WEST ? 1 : -1) * config.speed * ICE_CROSS_MULT;
+                } else if (crossNeeded) {
                   let nearestBridge: TerrainObject | null = null;
                   let minBridgeDist = 10000;
                   terrainRef.current.forEach(b => {
@@ -2722,9 +2749,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // A bunker under construction is a building site, not a gun position
       if (!isDescent && unit.attackCooldown <= 0 && !unit.buildUntil) {
         // Water Penalty Check
-        // Re-find river (efficient enough as terrain array is small)
+        // Re-find river (efficient enough as terrain array is small).
+        // A frozen channel (Winter) is walked, not waded — no range penalty;
+        // the ice's cost is being caught in the open with no cover.
         const inWater = !config.isFlying && terrainRef.current.some(r => {
-          if (r.type !== 'river' || !r.width || Math.abs(r.y - unit.position.y) > 18) return false;
+          if (r.type !== 'river' || !r.width || r.frozen || Math.abs(r.y - unit.position.y) > 18) return false;
           if (unit.position.x < r.x - r.width / 2 || unit.position.x > r.x + r.width / 2) return false;
           return !terrainRef.current.some(b =>
             b.type === 'bridge' && b.state !== 'broken' &&
@@ -4052,7 +4081,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Naval picket: anchor a gunboat on a river segment to guard crossings
         // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
         if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special) {
-          const rivers = terrainRef.current.filter(t => t.type === 'river');
+          const rivers = terrainRef.current.filter(t => t.type === 'river' && !t.frozen);
           const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
           if (rivers.length > 0 && myBoats < 2) {
             const seg = rivers[Math.floor(Math.random() * rivers.length)];
@@ -4186,6 +4215,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
+        // River geometry for movement probes (ice crossings, bridge funnels)
+        riverSegs: terrainRef.current.filter(t => t.type === 'river').map(s => ({
+          x: Math.round(s.x), y: Math.round(s.y), w: s.width ?? 40, frozen: !!s.frozen,
+        })),
+        bridges: terrainRef.current.filter(t => t.type === 'bridge').map(b => ({
+          x: Math.round(b.x), y: Math.round(b.y), w: b.width ?? 85, h: b.height ?? 40, state: b.state,
+        })),
         buildings: terrainRef.current.filter(t => t.type === 'building' && t.occupiable).map(b => ({
           x: Math.round(b.x), y: Math.round(b.y), occupant: b.occupant ?? null,
           garrison: b.garrisonUnits?.length ?? 0, capacity: b.capacity ?? 0,

@@ -19,7 +19,7 @@
  */
 const puppeteer = require('puppeteer-core');
 
-const MAPS = ['COUNTRYSIDE', 'URBAN', 'DESERT', 'ARCHIPELAGO'];
+const MAPS = ['COUNTRYSIDE', 'URBAN', 'DESERT', 'ARCHIPELAGO', 'WINTER'];
 const MATCH_SECONDS = Number(process.argv[2] || 70);
 const BASE = process.argv[3] || 'http://localhost:3000/east-vs-west-game/';
 const BROWSER = process.argv[4] || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';

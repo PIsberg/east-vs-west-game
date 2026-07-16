@@ -41,6 +41,7 @@ export enum MapType {
   URBAN = 'URBAN',
   DESERT = 'DESERT',
   ARCHIPELAGO = 'ARCHIPELAGO',
+  WINTER = 'WINTER',
 }
 
 export enum UnitState {
@@ -65,6 +66,7 @@ export interface TerrainObject {
   height?: number;
   state?: 'normal' | 'burning' | 'burnt' | 'broken';
   health?: number; // Burn time or durability
+  frozen?: boolean; // river segment iced over (Winter): infantry cross anywhere, boats can't anchor
   // Occupiable buildings — infantry strongpoints. A house with `occupiable` set
   // can be garrisoned: the first team whose riflemen reach it captures it (a flag
   // goes up), soldiers shelter inside (removed from the field), the structure
