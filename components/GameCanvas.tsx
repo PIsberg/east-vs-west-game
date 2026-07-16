@@ -922,7 +922,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         life: LASER_LIFE, maxLife: LASER_LIFE,
         radius: (UNIT_CONFIG[UnitType.SATELLITE] as any).radius,
       });
-      soundService.playZapSound();
+      soundService.playZapSound(options.absolutePos.x);
       return;
     }
 
@@ -971,7 +971,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
       typeStatsRef.current[team].spawned[UnitType.SMOKE] = (typeStatsRef.current[team].spawned[UnitType.SMOKE] || 0) + 1;
       // Canister pop + initial burst of grey billows
-      soundService.playFlameSound();
+      soundService.playFlameSound(options.absolutePos.x);
       for (let k = 0; k < 16; k++) {
         const a = Math.random() * Math.PI * 2, d = Math.random() * cfg.radius * 0.7;
         particlesRef.current.push({
@@ -1052,7 +1052,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     unitsRef.current.push(newUnit);
     if (type !== UnitType.NAPALM && type !== UnitType.MINE_PERSONAL && type !== UnitType.MINE_TANK) {
-      soundService.playSpawnSound(team === Team.EAST);
+      soundService.playSpawnSound(team === Team.EAST, newUnit.position.x);
       statsRef.current[team].built++;
     }
     const sp = typeStatsRef.current[team];
@@ -1113,7 +1113,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       p.state = 'broken';
       p.health = 720; // debris lingers ~12s, then gets swept from the terrain list
       if (p.type === 'barrel') {
-        soundService.playMineExplosion();
+        soundService.playMineExplosion(p.x);
         spatialHash.current.queryCallback(p.x, p.y, 28, u => {
           if (Math.sqrt((u.position.x - p.x) ** 2 + (u.position.y - p.y) ** 2) < 28 && !(UNIT_CONFIG[u.type] as any).isFlying) {
             u.health -= 16;
@@ -1131,7 +1131,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
         particlesRef.current.push({ id: generateId(), position: { x: p.x, y: p.y }, life: 700, color: '#1c1917', size: 14, isGroundDecal: true });
       } else {
-        soundService.playCrackSound();
+        soundService.playCrackSound(p.x);
         for (let k = 0; k < 6; k++) {
           particlesRef.current.push({
             id: generateId(),
@@ -1309,7 +1309,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             b.state = 'broken';
             b.health = 0;
             pushEvent('bridge', 'Bridge destroyed — vehicles blocked!');
-            soundService.playLargeExplosion();
+            soundService.playLargeExplosion(b.x);
             shakeRef.current = Math.max(shakeRef.current, 7);
             for (let k = 0; k < 14; k++) {
               particlesRef.current.push({
@@ -1476,8 +1476,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const bonus = cap.bonus ?? 0.5;
       const isCenter = cap === captureRef.current;
       const label = isCenter ? 'the capture point' : 'a flank post';
-      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false); }
-      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true); }
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false, cap.x); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true, cap.x); }
       if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
     }
     // Capture-income counterweight: like the upgrade rubber-band, the side
@@ -1536,7 +1536,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const arrived = m.isCruise ? m.current.y <= m.target.y : m.current.y >= m.target.y;
       if (arrived) {
         const isNuke = !!(m as any).isNuke;
-        if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound();
+        if (isNuke) soundService.playNukeSound(); else soundService.playExplosionSound(m.current.x);
         shakeRef.current = Math.max(shakeRef.current, isNuke ? 30 : m.isCruise ? 14 : 8);
         const config = UNIT_CONFIG[UnitType.MISSILE_STRIKE] as any; // Default
         const damage = m.customDamage ?? (isNuke ? UNIT_CONFIG[UnitType.NUKE].damage : config.damage);
@@ -1687,7 +1687,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (!claimer) continue;
 
       const team = claimer.team;
-      soundService.playSpawnSound(team === Team.EAST);
+      soundService.playSpawnSound(team === Team.EAST, c.x);
       pushEvent('crate', `${teamName(team)} claims the supply drop (${c.type === 'cash' ? '+$150' : c.type === 'squad' ? 'veteran squad' : 'field medkit'})`, team);
       if (c.type === 'cash') {
         moneyRef.current[team] += 150;
@@ -1787,7 +1787,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               t.health = 300;
             }
           });
-          soundService.playZapSound();
+          soundService.playZapSound(L.x);
         }
       }
       if (L.life <= 0) {
@@ -1817,7 +1817,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         } else {
           pushEvent('kill', `${teamName(fly.team)} strike aircraft shot down${payloadLost ? ' — payload lost' : ''}`, fly.team);
         }
-        soundService.playLargeExplosion();
+        soundService.playLargeExplosion(fly.currentX);
         // Fireball + burning debris raining from the flight line
         for (let p = 0; p < 10; p++) {
           particlesRef.current.push({
@@ -1905,7 +1905,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
       if (fly.dropped && fly.canisterY !== undefined) {
         fly.canisterY += fly.canisterVelocityY!; fly.canisterVelocityY! += 0.2;
-        if (fly.canisterY >= fly.targetPos.y) { spawnUnit(fly.team, UnitType.NAPALM, { absolutePos: fly.targetPos }); soundService.playHitSound(); fly.canisterY = undefined; }
+        if (fly.canisterY >= fly.targetPos.y) { spawnUnit(fly.team, UnitType.NAPALM, { absolutePos: fly.targetPos }); soundService.playHitSound(fly.targetPos.x); fly.canisterY = undefined; }
       }
       if (Math.abs(fly.currentX) > CANVAS_WIDTH + 300) flyoversRef.current.splice(i, 1);
     }
@@ -2043,7 +2043,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           );
           if (crusher) {
             t.state = 'broken';
-            soundService.playHitSound(); // Crunch sound?
+            soundService.playHitSound(t.x); // Crunch sound?
           }
         }
       }
@@ -2089,7 +2089,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         if (nearbyEnemy) {
           unit.health = 0; // Explode
-          soundService.playMineExplosion();
+          soundService.playMineExplosion(unit.position.x);
           shakeRef.current = Math.max(shakeRef.current, unit.type === UnitType.MINE_TANK ? 6 : 4);
           // Explosion Effect
           particlesRef.current.push({ id: generateId(), position: { ...unit.position }, life: 18, color: '#fdba74', size: radius * 1.8, isShockwave: true });
@@ -2163,7 +2163,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
             });
             unit.passengers = [];
-            soundService.playSpawnSound(unit.team === Team.EAST);
+            soundService.playSpawnSound(unit.team === Team.EAST, unit.position.x);
           }
         }
       }
@@ -2180,7 +2180,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (left <= 0) {
             unit.buildUntil = undefined;
             pushEvent('command', `${teamName(unit.team)} bunker is manned and ready`, unit.team);
-            soundService.playSpawnSound(unit.team === Team.EAST);
+            soundService.playSpawnSound(unit.team === Team.EAST, unit.position.x);
           } else {
             // Concrete sets: HP climbs from BUNKER_BUILD_START_HP to full over the
             // build. Apply the *delta* of the cure each tick rather than nudging
@@ -2217,7 +2217,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             o.isEntrenched = false;
             unit.passengers!.push(o);
             unit.garrison = (unit.garrison || 0) + 1;
-            soundService.playSpawnSound(unit.team === Team.EAST);
+            soundService.playSpawnSound(unit.team === Team.EAST, unit.position.x);
           });
         }
       }
@@ -2249,7 +2249,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             });
             statsRef.current[unit.team].built++;
           }
-          soundService.playSpawnSound(unit.team === Team.EAST);
+          soundService.playSpawnSound(unit.team === Team.EAST, unit.position.x);
         }
       }
 
@@ -2915,7 +2915,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               // The intercept point can sit a little beyond the launch range —
               // let the round live long enough to get there
               projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range * 1.2, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
-              unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
+              unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound(unit.position.x);
             } else {
               // Sky's clear — depress the guns and rake enemy infantry. Flak
               // shreds soft targets but can't punch armour, and on the ground it
@@ -2937,13 +2937,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const a = Math.atan2(t.position.y - unit.position.y, t.position.x - unit.position.x) + spreadAtRange(unit.type, gd, groundRange);
                 projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult * 0.5, maxRange: groundRange, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                 unit.attackCooldown = Math.round(config.attackSpeed * vetReload);
-                fireFx(unit, a); soundService.playRifleShot();
+                fireFx(unit, a); soundService.playRifleShot(unit.position.x);
               }
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
             projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
-            unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound();
+            unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound(unit.position.x);
           }
         } else {
           // Standard Targeting (Ground)
@@ -3003,7 +3003,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 });
               }
             });
-            if (fired) { soundService.playFlameSound(); unit.attackCooldown = Math.round(config.attackSpeed * vetReload); }
+            if (fired) { soundService.playFlameSound(unit.position.x); unit.attackCooldown = Math.round(config.attackSpeed * vetReload); }
           } else if (unit.type === UnitType.ENGINEER) {
             // Defuse the nearest enemy mine in detection range (mines don't trigger on engineers)
             const mine = unitsRef.current.find(m =>
@@ -3013,7 +3013,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             );
             if (mine) {
               mine.health = 0; // removed without detonating
-              soundService.playHitSound();
+              soundService.playHitSound(mine.position.x);
               for (let dp = 0; dp < 6; dp++) {
                 particlesRef.current.push({
                   id: generateId(),
@@ -3037,7 +3037,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (bridge.health >= BRIDGE_HP * 0.5 && bridge.state === 'broken') {
                   bridge.state = 'normal'; // usable again at half integrity
                   pushEvent('bridge', `${teamName(unit.team)} engineer repaired the bridge`, unit.team);
-                  soundService.playSpawnSound(unit.team === Team.EAST);
+                  soundService.playSpawnSound(unit.team === Team.EAST, bridge.x);
                 }
                 particlesRef.current.push({
                   id: generateId(),
@@ -3074,7 +3074,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                       alt: 5, altVel: 0.35,
                     });
                   }
-                  soundService.playHealSound();
+                  soundService.playHealSound(unit.position.x);
                   unit.attackCooldown = config.attackSpeed;
                 }
               }
@@ -3096,7 +3096,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 color: '#4ade80',
                 size: 6
               });
-              soundService.playHealSound();
+              soundService.playHealSound(unit.position.x);
               unit.attackCooldown = config.attackSpeed;
             }
           } else if (unit.type === UnitType.TESLA) {
@@ -3115,7 +3115,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             );
 
             if (primary) {
-              soundService.playZapSound();
+              soundService.playZapSound(unit.position.x);
               const zapped = new Set<string>([primary.id]);
               let from = { x: unit.position.x, y: unit.position.y - 10 };
               let link: Unit | undefined = primary;
@@ -3283,7 +3283,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 if (Math.random() > 0.7) { // 30% Miss Chance
                   const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
                   projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
-                  unit.attackCooldown = config.attackSpeed; soundService.playSniperShot();
+                  unit.attackCooldown = config.attackSpeed; soundService.playSniperShot(unit.position.x);
                   fireFx(unit, a);   // a miss still throws dust and gives his hide away
                   return;
                 }
@@ -3327,13 +3327,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const suppressReload = (unit.suppressedUntil && Date.now() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload);
               fireFx(unit, a + spread);
-              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot();
-              else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire();
-              else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk();
-              else if (unit.type === UnitType.SNIPER) soundService.playSniperShot();
-              else if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) soundService.playRocketSound();
-              else if (unit.type === UnitType.DRONE) soundService.playDroneZip();
-              else soundService.playRifleShot();
+              if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot(unit.position.x);
+              else if (unit.type === UnitType.ARTILLERY) soundService.playArtilleryFire(unit.position.x);
+              else if (unit.type === UnitType.MORTAR) soundService.playMortarThunk(unit.position.x);
+              else if (unit.type === UnitType.SNIPER) soundService.playSniperShot(unit.position.x);
+              else if (unit.type === UnitType.HELICOPTER || unit.type === UnitType.FIGHTER) soundService.playRocketSound(unit.position.x);
+              else if (unit.type === UnitType.DRONE) soundService.playDroneZip(unit.position.x);
+              else soundService.playRifleShot(unit.position.x);
             }
           }
         }
@@ -3440,7 +3440,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (bld.occupant == null) {
             bld.occupant = o.team;
             pushEvent('capture', `${teamName(o.team)} infantry occupy a strongpoint`, o.team);
-            soundService.playSpawnSound(o.team === Team.EAST);
+            soundService.playSpawnSound(o.team === Team.EAST, bld.x);
             // Flag-raise flourish: a puff of team-coloured motes rises off the roof
             const flag = o.team === Team.WEST ? '#3b82f6' : '#ef4444';
             for (let k = 0; k < 10; k++) {
@@ -3498,7 +3498,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               });
             }
             particlesRef.current.push({ id: generateId(), position: { x: ex, y: ey }, life: 6, color: '#fde68a', size: 3 });
-            soundService.playRifleShot();
+            soundService.playRifleShot(ex);
             bld.fireCooldown = BUILDING_FIRE_COOLDOWN;
           }
         }
@@ -3515,7 +3515,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         bld.state = 'burnt';
         bld.occupant = null;
         bld.health = 0;
-        soundService.playLargeExplosion();
+        soundService.playLargeExplosion(bld.x);
         shakeRef.current = Math.max(shakeRef.current, 6);
         for (let k = 0; k < 18; k++) {
           particlesRef.current.push({
@@ -3541,7 +3541,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           bld.occupant = null;
           bld.fireCooldown = 0;
           if (held) pushEvent('capture', `${teamName(held)} driven out of a crumbling strongpoint`, held);
-          soundService.playCrackSound();
+          soundService.playCrackSound(bld.x);
           shakeRef.current = Math.max(shakeRef.current, 3);
           for (let k = 0; k < 12; k++) {
             particlesRef.current.push({
@@ -3710,8 +3710,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         projectilesRef.current.splice(i, 1);
         // A rifle round is not an explosion — the old dual-loop code played the
         // hit sound from one loop and the blast from the other.
-        if (p.explosionRadius) soundService.playExplosionSound();
-        else if (hit) soundService.playHitSound();
+        if (p.explosionRadius) soundService.playExplosionSound(p.position.x);
+        else if (hit) soundService.playHitSound(p.position.x);
 
         // Explosion Effect
         for (let k = 0; k < 5; k++) {
@@ -3878,7 +3878,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (u.type === UnitType.APC) {
         // Survivors bail out of the wreck — but only if the squad was still
         // aboard; a deployed APC has already put them on the ground.
-        soundService.playLargeExplosion();
+        soundService.playLargeExplosion(u.position.x);
         const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
         for (let si = 0; si < (u.deployed ? 0 : APC_SQUAD); si++) {
           unitsRef.current.push({
@@ -3897,7 +3897,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           });
         }
       } else if (u.type === UnitType.TANK || u.type === UnitType.ARTILLERY || u.type === UnitType.JEEP) {
-        soundService.playLargeExplosion();
+        soundService.playLargeExplosion(u.position.x);
         for (let k = 0; k < 15; k++) {
           particlesRef.current.push({
             id: generateId(),
@@ -3910,7 +3910,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                  u.type === UnitType.SNIPER || u.type === UnitType.FLAMETHROWER || u.type === UnitType.MEDIC || u.type === UnitType.ENGINEER ||
                  u.type === UnitType.MORTAR) {
         // Troops Scream & Blood (flat pool at ground level)
-        soundService.playScreamSound();
+        soundService.playScreamSound(u.position.x);
         particlesRef.current.push({
           id: generateId(),
           position: { x: u.position.x, y: u.position.y },
@@ -4348,6 +4348,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (Date.now() - lastUiUpdateRef.current > 100) {
       onGameStateChange({ units: unitsRef.current, projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current });
       lastUiUpdateRef.current = Date.now();
+
+      // Spatial listener: where the camera looks and how close it is. tx is
+      // already in sim coordinates; dist ≈ 735 at whole-field framing.
+      {
+        const cam = camApiRef.current?.state();
+        if (cam) soundService.setListener(cam.tx, Math.max(0, Math.min(1, (cam.dist - 200) / 535)));
+      }
 
       // Adaptive march: intensity from the battle's actual temperature, tension from
       // the scoreboard. Computed here (10fps) — never on the sim tick. The sound

@@ -8,6 +8,16 @@ class SoundService {
   private dest: AudioNode | null = null;
   private master: GainNode | null = null;
   private musicDest: GainNode | null = null;
+  // Spatial buses: cracks/clicks/barks vs engines/blasts. Zoom shapes them
+  // oppositely — zoomed out you hear the war's rumble, zoomed in the rifle bolts.
+  private busHighIn: AudioNode | null = null; // entry (lowpass) for high-freq SFX
+  private busHighGain: GainNode | null = null;
+  private busHighFilter: BiquadFilterNode | null = null;
+  private busLowIn: GainNode | null = null;
+  private panHigh: StereoPannerNode[] = [];
+  private panLow: StereoPannerNode[] = [];
+  private panIdx = 0;
+  private camFocusX = 400;
   private lastPlayed: Map<string, number> = new Map();
   private muted = false;
   private musicOn = true;
@@ -47,6 +57,25 @@ class SoundService {
       musicBus.gain.value = 0.55;
       musicBus.connect(master);
       this.musicDest = musicBus;
+      // SFX buses. High: panners → shared lowpass → gain → master (the lowpass
+      // is the zoom "distance" filter). Low: panners → gain → master, unfiltered.
+      const highFilter = this.ctx.createBiquadFilter();
+      highFilter.type = 'lowpass';
+      highFilter.frequency.value = 18000;
+      const highGain = this.ctx.createGain();
+      highFilter.connect(highGain); highGain.connect(master);
+      this.busHighIn = highFilter;
+      this.busHighGain = highGain;
+      this.busHighFilter = highFilter;
+      const lowGain = this.ctx.createGain();
+      lowGain.connect(master);
+      this.busLowIn = lowGain;
+      if (typeof this.ctx.createStereoPanner === 'function') {
+        for (let i = 0; i < 8; i++) {
+          const ph = this.ctx.createStereoPanner(); ph.connect(highFilter); this.panHigh.push(ph);
+          const pl = this.ctx.createStereoPanner(); pl.connect(lowGain); this.panLow.push(pl);
+        }
+      }
     } catch (e) {
       console.warn("Web Audio API not supported");
     }
@@ -95,6 +124,36 @@ class SoundService {
     if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
   }
 
+  // ── Spatial listener ──────────────────────────────────────────────────────
+  // focusX: camera target in sim coordinates (0–800). dist01: 0 = fully zoomed
+  // in, 1 = whole-field framing. Called from the engine's throttled UI tick.
+  public setListener(focusX: number, dist01: number) {
+    this.camFocusX = focusX;
+    if (!this.ctx || !this.busHighFilter || !this.busHighGain || !this.busLowIn) return;
+    const d = Math.max(0, Math.min(1, dist01));
+    const t = this.ctx.currentTime;
+    // 18 kHz close → ~2.5 kHz at full zoom-out; gains trade the buses against
+    // each other so total loudness stays roughly level.
+    this.busHighFilter.frequency.setTargetAtTime(18000 * Math.pow(2500 / 18000, d), t, 0.1);
+    this.busHighGain.gain.setTargetAtTime(1 - 0.35 * d, t, 0.1);
+    this.busLowIn.gain.setTargetAtTime(0.9 + 0.15 * d, t, 0.1);
+  }
+
+  // Route a sound: pick the bus, and when a world x is given, a pooled panner
+  // plus a distance attenuation for how far the event is from the camera focus.
+  private spatial(bus: 'high' | 'low', x?: number): { o: AudioNode; a: number } {
+    const b = bus === 'high' ? this.busHighIn : this.busLowIn;
+    if (!b) return { o: this.dest as AudioNode, a: 1 };
+    if (x === undefined || !this.ctx) return { o: b, a: 1 };
+    const pool = bus === 'high' ? this.panHigh : this.panLow;
+    if (!pool.length) return { o: b, a: 1 };
+    const rel = (x - this.camFocusX) / 400; // ±1 ≈ one half-field away
+    const p = pool[this.panIdx++ % pool.length];
+    p.pan.setValueAtTime(Math.max(-0.8, Math.min(0.8, rel)), this.ctx.currentTime);
+    const r = Math.min(1.5, Math.abs(rel));
+    return { o: p, a: 1 / (1 + 0.9 * r * r) };
+  }
+
   private canPlay(key: string, minMs: number): boolean {
     const now = Date.now();
     if ((now - (this.lastPlayed.get(key) || 0)) < minMs) return false;
@@ -111,7 +170,7 @@ class SoundService {
     return buf;
   }
 
-  private playNoise(buf: AudioBuffer, filterType: BiquadFilterType, fStart: number, fEnd: number, gStart: number, duration: number) {
+  private playNoise(buf: AudioBuffer, filterType: BiquadFilterType, fStart: number, fEnd: number, gStart: number, duration: number, out?: AudioNode) {
     if (!this.ctx || !this.dest) return;
     const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
@@ -123,16 +182,16 @@ class SoundService {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(gStart, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-    src.connect(f); f.connect(g); g.connect(this.dest);
+    src.connect(f); f.connect(g); g.connect(out ?? this.dest);
     src.start(t); src.stop(t + duration);
   }
 
-  private playOsc(type: OscillatorType, fStart: number, fEnd: number, gStart: number, duration: number, delay = 0) {
+  private playOsc(type: OscillatorType, fStart: number, fEnd: number, gStart: number, duration: number, delay = 0, out?: AudioNode) {
     if (!this.ctx || !this.dest) return;
     const t = this.ctx.currentTime + delay;
     const osc = this.ctx.createOscillator();
     const g = this.ctx.createGain();
-    osc.connect(g); g.connect(this.dest);
+    osc.connect(g); g.connect(out ?? this.dest);
     osc.type = type;
     osc.frequency.setValueAtTime(fStart, t);
     if (fEnd !== fStart) osc.frequency.exponentialRampToValueAtTime(Math.max(fEnd, 8), t + duration);
@@ -142,46 +201,51 @@ class SoundService {
   }
 
   // ── Spawn ────────────────────────────────────────────────────────────────
-  public playSpawnSound(isEast: boolean) {
+  public playSpawnSound(isEast: boolean, x?: number) {
     if (!this.ctx || !this.canPlay('spawn', 80)) return;
     this.ensureContext();
-    this.playOsc('square', isEast ? 440 : 523.25, isEast ? 880 : 1046.5, 0.07, 0.22);
+    const { o, a } = this.spatial('high', x);
+    this.playOsc('square', isEast ? 440 : 523.25, isEast ? 880 : 1046.5, 0.07 * a, 0.22, 0, o);
   }
 
   // ── Infantry Rifle ───────────────────────────────────────────────────────
-  public playRifleShot() {
+  public playRifleShot(x?: number) {
     if (!this.ctx || !this.canPlay('rifle', 45)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     const buf = this.noise(0.09, (i, n) => Math.pow(1 - i / n, 3));
-    if (buf) this.playNoise(buf, 'highpass', 2800, 700, 0.22, 0.09);
-    this.playOsc('sine', 150, 35, 0.14, 0.07);
+    if (buf) this.playNoise(buf, 'highpass', 2800, 700, 0.22 * a, 0.09, o);
+    this.playOsc('sine', 150, 35, 0.14 * a, 0.07, 0, o);
   }
 
   // ── Sniper ───────────────────────────────────────────────────────────────
-  public playSniperShot() {
+  public playSniperShot(x?: number) {
     if (!this.ctx || !this.canPlay('sniper', 150)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     const buf = this.noise(0.06, (i, n) => Math.pow(1 - i / n, 4));
-    if (buf) this.playNoise(buf, 'highpass', 4000, 1200, 0.35, 0.06);
-    this.playOsc('sine', 200, 30, 0.18, 0.08);
+    if (buf) this.playNoise(buf, 'highpass', 4000, 1200, 0.35 * a, 0.06, o);
+    this.playOsc('sine', 200, 30, 0.18 * a, 0.08, 0, o);
   }
 
   // ── Tank / Heavy ─────────────────────────────────────────────────────────
-  public playHeavyShot() {
+  public playHeavyShot(x?: number) {
     if (!this.ctx || !this.canPlay('heavy', 130)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.4, (i, n) => Math.pow(1 - i / n, 1.8));
-    if (buf) this.playNoise(buf, 'lowpass', 700, 80, 0.6, 0.4);
-    this.playOsc('sine', 90, 18, 0.55, 0.28);
+    if (buf) this.playNoise(buf, 'lowpass', 700, 80, 0.6 * a, 0.4, o);
+    this.playOsc('sine', 90, 18, 0.55 * a, 0.28, 0, o);
   }
 
   // ── Artillery ────────────────────────────────────────────────────────────
-  public playArtilleryFire() {
+  public playArtilleryFire(x?: number) {
     if (!this.ctx || !this.canPlay('artillery', 420)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.8, (i, n) => Math.pow(1 - i / n, 2));
-    if (buf) this.playNoise(buf, 'lowpass', 350, 40, 0.9, 0.75);
-    this.playOsc('sine', 65, 14, 0.65, 0.65);
+    if (buf) this.playNoise(buf, 'lowpass', 350, 40, 0.9 * a, 0.75, o);
+    this.playOsc('sine', 65, 14, 0.65 * a, 0.65, 0, o);
   }
 
   // ── Rocket / AA missile ──────────────────────────────────────────────────
@@ -212,7 +276,7 @@ class SoundService {
       const g = this.ctx.createGain();
       g.gain.setValueAtTime(0, this.ctx.currentTime);
       g.gain.linearRampToValueAtTime(0.045, this.ctx.currentTime + 0.8);
-      src.connect(f); f.connect(g); g.connect(this.dest);
+      src.connect(f); f.connect(g); g.connect(this.busLowIn ?? this.dest);
       src.start();
       this.rotorSrc = src;
       this.rotorGain = g;
@@ -226,53 +290,59 @@ class SoundService {
   }
 
   // Mortar launch — hollow tube "thoonk", much lighter than the artillery boom
-  public playMortarThunk() {
+  public playMortarThunk(x?: number) {
     if (!this.ctx || !this.canPlay('mortar', 200)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.12, (i, n) => Math.pow(1 - i / n, 2.2));
-    if (buf) this.playNoise(buf, 'bandpass', 420, 150, 0.3, 0.12);
-    this.playOsc('sine', 180, 55, 0.3, 0.16);
+    if (buf) this.playNoise(buf, 'bandpass', 420, 150, 0.3 * a, 0.12, o);
+    this.playOsc('sine', 180, 55, 0.3 * a, 0.16, 0, o);
   }
 
   // Drone burst — light high-pitched energy zip
-  public playDroneZip() {
+  public playDroneZip(x?: number) {
     if (!this.ctx || !this.canPlay('drone', 90)) return;
     this.ensureContext();
-    this.playOsc('square', 1900, 700, 0.05, 0.08);
-    this.playOsc('sine', 2400, 1100, 0.04, 0.06);
+    const { o, a } = this.spatial('high', x);
+    this.playOsc('square', 1900, 700, 0.05 * a, 0.08, 0, o);
+    this.playOsc('sine', 2400, 1100, 0.04 * a, 0.06, 0, o);
   }
 
-  public playRocketSound() {
+  public playRocketSound(x?: number) {
     if (!this.ctx || !this.canPlay('rocket', 130)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.22, (i, n) => 0.4 + 0.6 * Math.pow(1 - i / n, 2));
-    if (buf) this.playNoise(buf, 'bandpass', 900, 180, 0.28, 0.22);
-    this.playOsc('sawtooth', 950, 260, 0.06, 0.2);
+    if (buf) this.playNoise(buf, 'bandpass', 900, 180, 0.28 * a, 0.22, o);
+    this.playOsc('sawtooth', 950, 260, 0.06 * a, 0.2, 0, o);
   }
 
   // ── Tesla Zap ────────────────────────────────────────────────────────────
-  public playZapSound() {
+  public playZapSound(x?: number) {
     if (!this.ctx || !this.canPlay('zap', 55)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     const buf = this.noise(0.13, (i, n) => Math.floor(Math.random() * 2)); // crackle
-    if (buf) this.playNoise(buf, 'bandpass', 3200, 900, 0.25, 0.13);
-    this.playOsc('sine', 1400, 180, 0.15, 0.1);
+    if (buf) this.playNoise(buf, 'bandpass', 3200, 900, 0.25 * a, 0.13, o);
+    this.playOsc('sine', 1400, 180, 0.15 * a, 0.1, 0, o);
   }
 
   // ── Flamethrower ─────────────────────────────────────────────────────────
-  public playFlameSound() {
+  public playFlameSound(x?: number) {
     if (!this.ctx || !this.canPlay('flame', 75)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     const buf = this.noise(0.28, (i, n) => 0.5 + 0.5 * (1 - i / n));
-    if (buf) this.playNoise(buf, 'bandpass', 650, 280, 0.35, 0.28);
+    if (buf) this.playNoise(buf, 'bandpass', 650, 280, 0.35 * a, 0.28, o);
   }
 
   // ── Medic Heal ───────────────────────────────────────────────────────────
-  public playHealSound() {
+  public playHealSound(x?: number) {
     if (!this.ctx || !this.canPlay('heal', 280)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     [523.25, 659.25, 783.99].forEach((freq, i) => {
-      this.playOsc('sine', freq, freq * 1.02, 0.07, 0.22, i * 0.065);
+      this.playOsc('sine', freq, freq * 1.02, 0.07 * a, 0.22, i * 0.065, o);
     });
   }
 
@@ -321,57 +391,64 @@ class SoundService {
   }
 
   // ── Wood Crack (crates splintering) ──────────────────────────────────────
-  public playCrackSound() {
+  public playCrackSound(x?: number) {
     if (!this.ctx || !this.canPlay('crack', 90)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('high', x);
     const buf = this.noise(0.08, (i, n) => Math.pow(1 - i / n, 3));
-    if (buf) this.playNoise(buf, 'bandpass', 1800, 500, 0.22, 0.08);
+    if (buf) this.playNoise(buf, 'bandpass', 1800, 500, 0.22 * a, 0.08, o);
   }
 
   // ── Generic Impact ───────────────────────────────────────────────────────
-  public playHitSound() {
+  public playHitSound(x?: number) {
     if (!this.ctx || !this.canPlay('hit', 38)) return;
     this.ensureContext();
-    this.playOsc('sawtooth', 110, 18, 0.09, 0.09);
+    const { o, a } = this.spatial('high', x);
+    this.playOsc('sawtooth', 110, 18, 0.09 * a, 0.09, 0, o);
   }
 
   // ── Mine Explosion ───────────────────────────────────────────────────────
-  public playMineExplosion() {
+  public playMineExplosion(x?: number) {
     if (!this.ctx || !this.canPlay('mine', 180)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.45, (i, n) => Math.pow(1 - i / n, 2.5));
-    if (buf) this.playNoise(buf, 'bandpass', 1400, 180, 0.55, 0.4);
-    this.playOsc('sine', 90, 18, 0.4, 0.35);
+    if (buf) this.playNoise(buf, 'bandpass', 1400, 180, 0.55 * a, 0.4, o);
+    this.playOsc('sine', 90, 18, 0.4 * a, 0.35, 0, o);
   }
 
   // ── Standard Explosion ───────────────────────────────────────────────────
-  public playExplosionSound() {
+  public playExplosionSound(x?: number) {
     if (!this.ctx || !this.canPlay('explosion', 90)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(0.55, (i, n) => Math.pow(1 - i / n, 2));
-    if (buf) this.playNoise(buf, 'lowpass', 900, 90, 0.55, 0.55);
-    this.playOsc('sine', 85, 18, 0.45, 0.42);
+    if (buf) this.playNoise(buf, 'lowpass', 900, 90, 0.55 * a, 0.55, o);
+    this.playOsc('sine', 85, 18, 0.45 * a, 0.42, 0, o);
   }
 
   // ── Large Vehicle Explosion ──────────────────────────────────────────────
-  public playLargeExplosion() {
+  public playLargeExplosion(x?: number) {
     if (!this.ctx || !this.canPlay('bigboom', 180)) return;
     this.ensureContext();
+    const { o, a } = this.spatial('low', x);
     const buf = this.noise(1.0, (i, n) => Math.pow(1 - i / n, 1.7));
-    if (buf) this.playNoise(buf, 'lowpass', 650, 55, 0.85, 0.9);
-    this.playOsc('sine', 65, 12, 0.75, 0.75);
+    if (buf) this.playNoise(buf, 'lowpass', 650, 55, 0.85 * a, 0.9, o);
+    this.playOsc('sine', 65, 12, 0.75 * a, 0.75, 0, o);
   }
 
   // ── Nuke ─────────────────────────────────────────────────────────────────
   public playNukeSound() {
     if (!this.ctx || !this.canPlay('nuke', 5000)) return;
     this.ensureContext();
+    // A nuke is heard from anywhere — low bus, no pan, no distance falloff
+    const o = this.busLowIn ?? undefined;
     const buf = this.noise(3.2, (i, n) => {
       const pct = i / n;
       return pct < 0.08 ? pct / 0.08 : Math.pow(1 - pct, 0.55);
     });
-    if (buf) this.playNoise(buf, 'lowpass', 220, 28, 1.0, 3.2);
-    this.playOsc('sine', 32, 7, 0.0, 2.6, 0.3);
+    if (buf) this.playNoise(buf, 'lowpass', 220, 28, 1.0, 3.2, o);
+    this.playOsc('sine', 32, 7, 0.0, 2.6, 0.3, o);
   }
 
   // ── Instruments (shared by the intro jingle and the battle-music loop) ───
@@ -625,10 +702,11 @@ class SoundService {
   }
 
   // ── Scream ───────────────────────────────────────────────────────────────
-  public playScreamSound() {
+  public playScreamSound(x?: number) {
     if (!this.ctx || !this.canPlay('scream', 120)) return;
     this.ensureContext();
-    this.playOsc('sawtooth', 650 + Math.random() * 300, 75, 0.09, 0.42);
+    const { o, a } = this.spatial('high', x);
+    this.playOsc('sawtooth', 650 + Math.random() * 300, 75, 0.09 * a, 0.42, 0, o);
   }
 }
 
