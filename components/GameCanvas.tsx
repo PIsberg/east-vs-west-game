@@ -326,6 +326,17 @@ interface GameCanvasProps {
   viewH?: number;
 }
 
+// One weather table per map — the climate has to make sense: Winter snows
+// instead of raining, the Desert never sees snow (rain is rare, and fog reads
+// as dust haze). Used by BOTH roll sites (initial forecast + in-game re-roll)
+// so the tables can't drift apart.
+const rollNextWeather = (map: MapType): 'clear' | 'rain' | 'snow' | 'fog' | 'storm' => {
+  const r = Math.random();
+  if (map === MapType.WINTER) return r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear';
+  if (map === MapType.DESERT) return r < 0.14 ? 'rain' : r < 0.40 ? 'fog' : r < 0.52 ? 'storm' : 'clear';
+  return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
+};
+
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   onGameStateChange,
   spawnQueue,
@@ -406,13 +417,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
   const weatherTimerRef = useRef(Date.now() + 10000);
   // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
-  // (Winter map: snow instead of rain — same bias as the in-game re-roll)
-  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>((() => {
-    const r = Math.random();
-    return mapType === MapType.WINTER
-      ? (r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear')
-      : (r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear');
-  })());
+  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>(rollNextWeather(mapType));
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
     x: CANVAS_WIDTH / 2,
@@ -1860,13 +1865,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         wasClear ? 22000 + Math.random() * 20000 : 28000 + Math.random() * 28000;
       weatherTimerRef.current = Date.now() + holdMs;
       if (incoming !== 'clear') nextWeatherRef.current = 'clear';
-      else {
-        const r = Math.random();
-        // Winter: it snows, it doesn't rain — snowfall carries the map's identity
-        nextWeatherRef.current = mapType === MapType.WINTER
-          ? (r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear')
-          : (r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear');
-      }
+      else nextWeatherRef.current = rollNextWeather(mapType);
     }
 
     // Snow particle generation (drifts down to ground level)
@@ -4285,6 +4284,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: unitsRef.current.filter(u => u.team === Team.EAST).length,
         },
         weather: weatherRef.current,
+        weatherNext: nextWeatherRef.current,
         stances: { WEST: stancesRef.current[Team.WEST], EAST: stancesRef.current[Team.EAST] },
         smokes: smokesRef.current.length,
         particles: particlesRef.current.length,   // firing FX ride this array — watch it under sustained fire

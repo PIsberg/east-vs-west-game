@@ -4,6 +4,7 @@
 
 - **Destroyed vehicles become burning wrecks — and the wreck is terrain.** A knocked-out tank used to be a dark smudge that faded in seven seconds. Now the hulk stays where it died: slumped hull, turret knocked askew, barrel drooping, fire crowning out of the burnt-open core with oily smoke rolling off it. Infantry take cover behind it exactly like a boulder; vehicles steer around it. It burns hard, dies down to a smoldering shell, and sinks away after most of a minute — capped at ten hulks so a long battle marks the field without clogging it. A vehicle killed on a bridge goes over the side instead (no wreck may block a crossing). Emergent bonus: a squad bailing out of a dead APC ducks behind its own vehicle's hulk.
 - **The nuke got a director's cut.** When the warhead lands, the camera swings to ground zero for a beat — flash, mushroom cloud, shockwave — then returns to exactly where you left it.
+- **Weather knows its climate now.** It no longer snows in the desert — the dunes get dust haze (fog), rare rain and storms instead. Each map rolls from its own weather table (which is also what keeps Winter snowing instead of raining).
 
 ## Winter — the fifth battlefield (July 2026)
 
