@@ -728,9 +728,25 @@ function useTintedClone(url: string, rules: TintRule[], template?: THREE.Object3
 const SOLDIER_TEMPLATE = new WeakMap<THREE.Object3D, THREE.Object3D>();
 
 // Normalize a skinned primitive so several of them can be merged: the pack's
-// primitives disagree on index/attribute types (skinIndex arrives as Uint8 on
-// some, Uint16 on others), and merging those straight produces a geometry whose
-// bone indices are nonsense.
+// primitives disagree on index/attribute types, and — crucially — the GLBs are
+// KHR_mesh_quantization: positions/normals arrive as NORMALIZED Int16, uv as
+// normalized Uint16 and skin weights as normalized Uint8. Attributes must be
+// rebuilt through the accessors (getX/getY/... apply the normalization), NOT
+// by copying the raw integer arrays: the raw copy produced positions in the
+// tens of thousands and skin weights of 0..255, which exploded the merged
+// soldier off-screen while its bone indices stayed perfectly sane — so the
+// sanity guard passed and every infantry model rendered as just the bolt-on
+// rifle dangling from an invisible wrist.
+const toFloatAttr = (att: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size: number): THREE.Float32BufferAttribute => {
+    const out = new Float32Array(att.count * size);
+    for (let i = 0, j = 0; i < att.count; i++) {
+        out[j++] = att.getX(i);
+        if (size > 1) out[j++] = att.getY(i);
+        if (size > 2) out[j++] = att.getZ(i);
+        if (size > 3) out[j++] = att.getW(i);
+    }
+    return new THREE.Float32BufferAttribute(out, size);
+};
 const normalizeSkinned = (g: THREE.BufferGeometry): THREE.BufferGeometry | null => {
     const src = g.index ? g.toNonIndexed() : g;
     const pos = src.getAttribute('position'), nrm = src.getAttribute('normal');
@@ -738,11 +754,16 @@ const normalizeSkinned = (g: THREE.BufferGeometry): THREE.BufferGeometry | null 
     const si = src.getAttribute('skinIndex'), sw = src.getAttribute('skinWeight');
     if (!pos || !nrm || !uv || !si || !sw) return null;
     const out = new THREE.BufferGeometry();
-    out.setAttribute('position', new THREE.Float32BufferAttribute(Array.from(pos.array as ArrayLike<number>), 3));
-    out.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from(nrm.array as ArrayLike<number>), 3));
-    out.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from(uv.array as ArrayLike<number>), 2));
-    out.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(Array.from(si.array as ArrayLike<number>), 4));
-    out.setAttribute('skinWeight', new THREE.Float32BufferAttribute(Array.from(sw.array as ArrayLike<number>), 4));
+    out.setAttribute('position', toFloatAttr(pos, 3));
+    out.setAttribute('normal', toFloatAttr(nrm, 3));
+    out.setAttribute('uv', toFloatAttr(uv, 2));
+    // Bone indices are plain integers (never normalized) — keep them integral
+    const idx = new Uint16Array(si.count * 4);
+    for (let i = 0, j = 0; i < si.count; i++) {
+        idx[j++] = si.getX(i); idx[j++] = si.getY(i); idx[j++] = si.getZ(i); idx[j++] = si.getW(i);
+    }
+    out.setAttribute('skinIndex', new THREE.BufferAttribute(idx, 4));
+    out.setAttribute('skinWeight', toFloatAttr(sw, 4));
     return out;
 };
 
