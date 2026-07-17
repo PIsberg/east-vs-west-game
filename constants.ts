@@ -1,4 +1,4 @@
-import { UnitType } from './types';
+import { UnitType, Team } from './types';
 
 export const CANVAS_WIDTH = 800;
 export const CANVAS_HEIGHT = 450;
@@ -12,6 +12,81 @@ export const MILLISECONDS_PER_FRAME = 1000 / FPS;
 
 export const WIN_SCORE = 100;
 export const BASE_HP = 50; // Base HP mode: breakthroughs damage the defender's base instead of scoring
+
+// ── Active abilities (selected-unit specials; tick-based like AIR_OPS) ──────
+// Tank Overdrive: sprint with the gun locked — flanking and retreats, not free DPS
+export const OVERDRIVE_DURATION_TICKS = 360;   // ~6s
+export const OVERDRIVE_COOLDOWN_TICKS = 2100;  // ~35s
+export const OVERDRIVE_SPEED_MULT = 1.4;
+// Sniper camouflage: motionless under 'hold' in forest cover → untargetable
+// beyond point-blank until he fires (the miss-dust already telegraphs the hide)
+export const CAMO_DELAY_TICKS = 240;   // ~4s still before the ghillie takes
+export const CAMO_REVEAL_TICKS = 150;  // ~2.5s exposed after any shot
+// Engineer C4: walks to the nearest demolition target (enemy-half bridge,
+// enemy bunker, enemy-held strongpoint), sets a satchel on a short fuse
+export const C4_FUSE_TICKS = 300;      // ~5s from plant to blast
+export const C4_COOLDOWN_TICKS = 1800; // ~30s per engineer
+export const C4_DAMAGE = 600;          // several tank shells' worth of structure
+export const C4_RADIUS = 55;
+
+// ── Fog of War ───────────────────────────────────────────────────────────────
+// Coarse per-team visibility grid over the 800×450 field. Cell states:
+// 0 = hidden, 1 = explored (terrain remembered, units not shown), 2 = visible.
+export const FOW_CELL = 10;
+export const FOW_W = CANVAS_WIDTH / FOW_CELL;   // 80
+export const FOW_H = CANVAS_HEIGHT / FOW_CELL;  // 45
+// Air-delivered strikes aimed at ground the team can't see scatter by up to
+// this many px — scouting before striking is the counterplay
+export const FOW_BLIND_SCATTER = 45;
+
+// Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —
+// the mound is still occupiable (half capacity, no defensive fire) but one
+// more good hit pounds it to dust for good
+export const RUBBLE_HP = 140;
+
+// ── Faction asymmetry (opt-in "Asymmetric" doctrine mode) ────────────────────
+// Asymmetry is DATA, not code paths: mild stat multipliers applied once at
+// spawn (carried on the unit as dmgMult/reloadMult/speedMult + baked HP) and a
+// short exclusives list. Mirrored mode stays the default so the balance
+// harness baseline keeps meaning anything. Keep this table SHORT — every row
+// is a live balance liability.
+// NOTE: damage/reload rows only reach units that fire through the STANDARD
+// projectile path. Tesla, flamethrower, medic and anti-air have bespoke fire
+// blocks — give them hp/speed rows only, or extend their blocks first.
+export interface FactionStatMods { hp?: number; damage?: number; reload?: number; speed?: number }
+export const FACTION_MODS: Record<Team, Partial<Record<UnitType, FactionStatMods>>> = {
+  // West: high-tech and mobility — precision optics, better drivetrains
+  [Team.WEST]: {
+    [UnitType.SNIPER]: { reload: 0.88 },
+    [UnitType.JEEP]: { speed: 1.08 },
+    [UnitType.HELICOPTER]: { damage: 1.08 },
+  },
+  // East: heavy armor and area saturation — tougher hulls, heavier shells
+  [Team.EAST]: {
+    [UnitType.TANK]: { hp: 1.15 },
+    [UnitType.ARTILLERY]: { damage: 1.1, reload: 1.12 },
+    [UnitType.FLAMETHROWER]: { hp: 1.1 },
+  },
+};
+// Exclusives: what only ONE side may field in asymmetric mode. West owns the
+// precision orbit/sea strikes; East owns napalm saturation and the tesla.
+export const FACTION_EXCLUSIVES: Record<Team, UnitType[]> = {
+  [Team.WEST]: [UnitType.SATELLITE, UnitType.CRUISE],
+  [Team.EAST]: [UnitType.TESLA, UnitType.AIRSTRIKE],
+};
+export const factionAllowed = (team: Team, type: UnitType, asym: boolean): boolean => {
+  if (!asym) return true;
+  const other = team === Team.WEST ? Team.EAST : Team.WEST;
+  return !FACTION_EXCLUSIVES[other].includes(type);
+};
+// West wheeled hulls shrug off this fraction of the hill climb penalty
+export const WEST_WHEELED_HILL_RELIEF = 0.5;
+
+// Craters: heavy ordnance gouges the ground. Wheels and tracks wallow across
+// a shell hole; infantry treats it as cover (it joins the cover-seek list).
+// The field cap evicts the oldest — the WRECK_MAX pattern.
+export const CRATER_MAX = 12;
+export const CRATER_SLOW = 0.6;
 
 export const UNIT_CONFIG = {
   [UnitType.TANK]: {
@@ -672,6 +747,21 @@ export const MOVE_CLASS: Partial<Record<UnitType, MoveClass>> = {
 };
 // Everything else on the ground walks.
 export const getMoveClass = (t: UnitType): MoveClass => MOVE_CLASS[t] ?? 'foot';
+
+// Fog-of-war vision radius (px). Defaults by locomotion class; the scouts,
+// optics and anchored watchposts see further.
+const VISION_OVERRIDES: Partial<Record<UnitType, number>> = {
+  [UnitType.JEEP]: 200,
+  [UnitType.DRONE]: 240,
+  [UnitType.FIGHTER]: 200,
+  [UnitType.HELICOPTER]: 190,
+  [UnitType.SNIPER]: 180,
+  [UnitType.SPECIAL_FORCES]: 150,
+  [UnitType.BUNKER]: 170,
+  [UnitType.GUNBOAT]: 170,
+};
+export const getVision = (t: UnitType): number =>
+  VISION_OVERRIDES[t] ?? (getMoveClass(t) === 'foot' ? 110 : 140);
 
 export const CLASS_PROFILE: Record<MoveClass, {
   hill: number;     // speed multiplier while climbing a hill

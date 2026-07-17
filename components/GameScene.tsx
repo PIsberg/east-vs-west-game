@@ -4,9 +4,10 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, PerspectiveCamera, Environment, SoftShadows, useTexture, ContactShadows, useGLTF, useAnimations } from '@react-three/drei';
 import { SkeletonUtils, mergeBufferGeometries } from 'three-stdlib';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
+import { ChromaticAberrationEffect, HueSaturationEffect, VignetteEffect } from 'postprocessing';
 import * as THREE from 'three';
 import { Team, Unit, UnitType, UnitState, Projectile, Particle, TerrainObject, Vector2D, MapType, CapturePoint, LaserStrike, SupplyCrate, SmokeZone } from '../types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS } from '../constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, HORIZON_Y, UNIT_CONFIG, BUNKER_BUILD_MS, BUNKER_GARRISON_MAX, getFireFx, getRoundFx, DEFAULT_ROUND_FX, flashTicks, HILL_RANGE_BONUS, FOW_W, FOW_H, FOW_CELL } from '../constants';
 
 
 interface GameSceneProps {
@@ -34,6 +35,8 @@ interface GameSceneProps {
     cb?: boolean; // colorblind-assist: East identity color becomes amber
     mapType: MapType;
     shake?: React.MutableRefObject<number>;
+    shock?: React.MutableRefObject<number>; // shell-shock post weight (0..1), decays here
+    fogGrid?: Uint8Array; // viewer's fog-of-war layer (FOW_W×FOW_H); undefined = fog off
     capture?: CapturePoint;
     flanks?: CapturePoint[];
     onUnitClick?: (unit: Unit) => void;
@@ -104,6 +107,72 @@ const ShakeRig = ({ shake, children }: { shake?: React.MutableRefObject<number>,
         }
     });
     return <group ref={ref}>{children}</group>;
+};
+
+// Shell-shock post effects: constructed directly from `postprocessing` and
+// mounted as <primitive>s — the @react-three/postprocessing prop wrappers
+// JSON.stringify their props for memoization, which chokes on anything
+// carrying r3f's circular __r3f state (and per-frame prop changes would
+// recreate the effects anyway). The driver mutates uniforms in useFrame from
+// a decaying 0..1 ref set by the engine when heavy ordnance bursts in view;
+// the effects stay MOUNTED at weight 0 — swapping composer passes mid-battle
+// causes hitches.
+interface ShockFx { chroma: ChromaticAberrationEffect; hue: HueSaturationEffect; vig: VignetteEffect }
+const makeShockFx = (): ShockFx => ({
+    chroma: new ChromaticAberrationEffect({ offset: new THREE.Vector2(0, 0), radialModulation: false, modulationOffset: 0.15 }),
+    hue: new HueSaturationEffect({ saturation: 0 }),
+    vig: new VignetteEffect({ offset: 0.3, darkness: 0 }),
+});
+const ShockDriver = ({ shock, fx }: { shock?: React.MutableRefObject<number>, fx: ShockFx }) => {
+    useFrame(() => {
+        const s = shock?.current || 0;
+        fx.chroma.offset.set(0.0016 * s, 0.001 * s);
+        const sat = fx.hue.uniforms.get('saturation');
+        if (sat) sat.value = -0.55 * s;
+        const dark = fx.vig.uniforms.get('darkness');
+        if (dark) dark.value = 0.5 * Math.min(1, s * 1.25);
+        if (shock && s > 0.002) shock.current = s * 0.975; // ~2s clear
+        else if (shock) shock.current = 0;
+    });
+    return null;
+};
+
+// Fog-of-war overlay: one FOW_W×FOW_H DataTexture draped on the ground —
+// hidden cells dark, explored dim, visible clear. Updated imperatively a few
+// times a second; LinearFilter smooths the coarse cells into a soft fog line.
+// Sits just above the ground plane, so remembered terrain stays readable while
+// the ground itself goes dark (units in hidden cells never reach the renderer
+// at all — the engine filters them out before the scene sees them).
+const FogOverlay = ({ grid }: { grid: Uint8Array }) => {
+    const dataRef = useRef<Uint8Array>(new Uint8Array(FOW_W * FOW_H * 4));
+    const tex = useMemo(() => {
+        const t = new THREE.DataTexture(dataRef.current, FOW_W, FOW_H);
+        t.magFilter = THREE.LinearFilter;
+        t.minFilter = THREE.LinearFilter;
+        t.needsUpdate = true;
+        return t;
+    }, []);
+    const frame = useRef(0);
+    useFrame(() => {
+        if ((frame.current++ % 8) !== 0) return;
+        const data = dataRef.current;
+        for (let cy = 0; cy < FOW_H; cy++) {
+            for (let cx = 0; cx < FOW_W; cx++) {
+                const v = grid[cy * FOW_W + cx];
+                // Plane UV v runs opposite to sim y — write rows flipped
+                const di = ((FOW_H - 1 - cy) * FOW_W + cx) * 4;
+                data[di] = 8; data[di + 1] = 10; data[di + 2] = 14;
+                data[di + 3] = v === 2 ? 0 : v === 1 ? 96 : 190;
+            }
+        }
+        tex.needsUpdate = true;
+    });
+    return (
+        <mesh position={[CANVAS_WIDTH / 2, 1.8, CANVAS_HEIGHT / 2]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={5}>
+            <planeGeometry args={[CANVAS_WIDTH, CANVAS_HEIGHT]} />
+            <meshBasicMaterial map={tex} transparent depthWrite={false} toneMapped={false} />
+        </mesh>
+    );
 };
 
 const RainEffect = () => {
@@ -2535,6 +2604,32 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         );
     }
 
+    if (item.type === 'crater') {
+        const s = item.size;
+        const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
+        // A shell hole: dark bowl, a raised earthen rim, a few thrown clods.
+        // Flat discs (no real depression) — cheap, and reads correctly from the
+        // battle camera's height.
+        return (
+            <group position={[item.x, 0, item.y]} rotation={[0, (seed % 628) / 100, 0]}>
+                <mesh position={[0, 0.25, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <circleGeometry args={[s, 20]} />
+                    <meshBasicMaterial color="#171310" transparent opacity={0.85} depthWrite={false} />
+                </mesh>
+                <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[s * 0.92, s * 1.22, 20]} />
+                    <meshBasicMaterial color="#3f3226" transparent opacity={0.8} depthWrite={false} />
+                </mesh>
+                {[0.7, 2.1, 3.6, 5.1].map((a, i) => (
+                    <mesh key={i} position={[Math.cos(a + seed % 3) * s * 1.05, 1.2, Math.sin(a + seed % 3) * s * 1.05]} rotation={[a, a * 2, 0]} castShadow>
+                        <dodecahedronGeometry args={[1.6 + ((seed + i) % 3), 0]} />
+                        <meshStandardMaterial color="#44403c" roughness={1} />
+                    </mesh>
+                ))}
+            </group>
+        );
+    }
+
     if (item.type === 'crate' || item.type === 'barrel') {
         const s = item.size;
         const seed = Math.abs((item.x * 7919) ^ (item.y * 104729));
@@ -2706,9 +2801,15 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const flagColor = occupant === Team.WEST ? '#3b82f6' : occupant === Team.EAST ? eastColor('#ef4444') : '#d6d3d1';
 
         // A collapsed strongpoint: a low pile of rubble where the house stood.
-        const isRubble = item.state === 'burnt';
-        if (isRubble) {
+        // First collapse leaves a LIVE mound (isRubble, still occupiable — it
+        // keeps its objective fittings at ground level); the second collapse
+        // ('burnt') is the dead pile.
+        const isRubblePile = item.state === 'burnt' || !!item.isRubble;
+        if (isRubblePile) {
             const rh = Math.min(14, h * 0.28);
+            const live = occ && item.state !== 'burnt';
+            const rubbleLabel = live ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
+            const rubbleFlicker = Math.floor(Date.now() / 110) % 2 === 0;
             return (
                 <ClickableGroup position={[item.x, rh / 2, item.y]} onCanvasClick={onCanvasClick}>
                     <mesh castShadow receiveShadow>
@@ -2729,6 +2830,35 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                             <meshStandardMaterial color="#44403c" roughness={1} />
                         </mesh>
                     ))}
+                    {live && (
+                        <group>
+                            {/* Objective ring survives the collapse — the ground still matters */}
+                            <mesh position={[0, -rh / 2 + 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                                <ringGeometry args={[Math.max(w, d) * 0.5 + 4, Math.max(w, d) * 0.5 + 8, 40]} />
+                                <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
+                            </mesh>
+                            {/* A stubborn flag jammed into the debris */}
+                            <group position={[w * 0.2, rh / 2, d * 0.15]}>
+                                <mesh position={[0, 7, 0]} castShadow>
+                                    <cylinderGeometry args={[0.5, 0.5, 14]} />
+                                    <meshStandardMaterial color="#57534e" />
+                                </mesh>
+                                <mesh position={[3.4, 11.5, 0]}>
+                                    <boxGeometry args={[6.5, 4, 0.4]} />
+                                    <meshStandardMaterial color={flagColor} emissive={flagColor} emissiveIntensity={occupant ? 0.35 : 0} side={THREE.DoubleSide} />
+                                </mesh>
+                            </group>
+                            {rubbleLabel && (
+                                <sprite position={[0, rh / 2 + 18, 0]} scale={[rubbleLabel.userData.w, rubbleLabel.userData.h, 1]} material={rubbleLabel} />
+                            )}
+                            {item.state === 'burning' && [[-w * 0.2, d * 0.1], [w * 0.15, -d * 0.12]].map(([lx, lz], i) => (
+                                <mesh key={`rf${i}`} position={[lx, rh / 2 + 3, lz]}>
+                                    <coneGeometry args={[3, 7, 6]} />
+                                    <meshBasicMaterial color={rubbleFlicker === (i % 2 === 0) ? '#f97316' : '#fbbf24'} toneMapped={false} />
+                                </mesh>
+                            ))}
+                        </group>
+                    )}
                 </ClickableGroup>
             );
         }
@@ -3523,7 +3653,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3532,6 +3662,10 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // clamp it on update); pan slides target + camera along the screen-right
     // axis projected on the ground plane, with the target kept on the map.
     const controlsRef = useRef<any>(null);
+
+    // Shell-shock post effects — one set per mount, uniforms driven by ShockDriver
+    const shockFx = useMemo(makeShockFx, []);
+
     useEffect(() => {
         const api = {
             zoom: (factor: number) => {
@@ -3698,12 +3832,21 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             <BoxSelect units={units} selectTeam={selectTeam} disabled={!!targetingInfo} onBoxSelect={onBoxSelect} onMarquee={onMarquee} onDragStart={onDragStart} />
 
+            {/* Fog of war sits outside the shake rig — the fog line shouldn't rattle */}
+            {fogGrid && <FogOverlay grid={fogGrid} />}
+
             {/* Bloom only picks up pixels brighter than luminanceThreshold: emissive
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
             {fx !== 'low' && (
-                <EffectComposer>
-                    <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
-                </EffectComposer>
+                <>
+                    <EffectComposer>
+                        <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
+                        <primitive object={shockFx.chroma} />
+                        <primitive object={shockFx.hue} />
+                        <primitive object={shockFx.vig} />
+                    </EffectComposer>
+                    <ShockDriver shock={shock} fx={shockFx} />
+                </>
             )}
         </Canvas>
     );

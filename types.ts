@@ -60,7 +60,7 @@ export interface TerrainObject {
   id: string;
   x: number;
   y: number;
-  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel' | 'wreck';
+  type: 'tree' | 'hill' | 'bush' | 'rock' | 'river' | 'bridge' | 'building' | 'crate' | 'barrel' | 'wreck' | 'crater';
   size: number;
   width?: number;
   height?: number;
@@ -74,6 +74,7 @@ export interface TerrainObject {
   // soaks fire on their behalf until its `health` runs out, and when it collapses
   // most of the garrison dies. `capacity` scales with the footprint.
   occupiable?: boolean;
+  isRubble?: boolean;        // collapsed once: still occupiable low-profile cover — half capacity, no gun slits, fragile
   capacity?: number;         // max troops it can hold (by size)
   occupant?: Team | null;    // holding team, null = empty/neutral
   garrisonUnits?: Unit[];    // off-field soldiers sheltering inside
@@ -133,6 +134,23 @@ export interface Unit {
   buildUntil?: number;    // under construction until this timestamp: can't fire, HP still rising
   garrison?: number;      // infantry manning it — more guns in the slits, capped
   buildHp?: number;       // integrity gained from curing so far (kept separate from battle damage)
+  // Active abilities (tick-based like the Air Command clock, so pause/2× behave)
+  abilityUntil?: number;  // tick the active effect ends (tank overdrive)
+  abilityReadyAt?: number;// tick the ability may fire again
+  // Sniper camouflage: builds while motionless under 'hold' in forest cover,
+  // broken (and locked out) by firing
+  camoTicks?: number;
+  camouflaged?: boolean;
+  camoRevealAt?: number;  // tick before which camo cannot rebuild (just fired)
+  // Engineer C4: the demolition point he was ordered to (trumps the job list)
+  c4X?: number;
+  c4Y?: number;
+  // Faction asymmetry: doctrine stat multipliers stamped at spawn (undefined = 1).
+  // Damage/reload/speed are read from UNIT_CONFIG at use time, so the deltas
+  // ride the unit and apply at the same commit points as veterancy/rally.
+  dmgMult?: number;
+  reloadMult?: number;
+  speedMult?: number;
 }
 
 export interface Projectile {
@@ -211,6 +229,7 @@ export interface GameState {
     [Team.WEST]: number;
     [Team.EAST]: number;
   };
+  tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
 }
 
 export type GameMode = 'points' | 'basehp';
