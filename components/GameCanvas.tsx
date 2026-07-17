@@ -88,6 +88,7 @@ import {
   C4_RADIUS,
   RUBBLE_HP,
   BUNKER_SELL_REFUND,
+  GOLDMINE_BONUS,
   FOW_CELL,
   FOW_W,
   FOW_H,
@@ -221,6 +222,7 @@ const MiniMap: React.FC<{
   smokesRef: React.MutableRefObject<SmokeZone[]>;
   captureRef: React.MutableRefObject<CapturePoint>;
   flankCapsRef: React.MutableRefObject<CapturePoint[]>;
+  goldMinesRef: React.MutableRefObject<CapturePoint[]>;
   camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
   cb?: boolean;
@@ -228,7 +230,7 @@ const MiniMap: React.FC<{
   fogGridRef?: React.MutableRefObject<Record<Team, Uint8Array>>;
   fogViewer?: Team | null;
   fogOnRef?: React.MutableRefObject<boolean>;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, goldMinesRef, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -283,12 +285,17 @@ const MiniMap: React.FC<{
         ctx.fill();
       }
 
-      for (const cap of [captureRef.current, ...flankCapsRef.current]) {
+      for (const cap of [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current]) {
         ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? eastUi : cb ? '#e7e5e4' : '#fbbf24';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(mx(cap.x), my(cap.y), Math.max(2.5, cap.radius * sx), 0, Math.PI * 2);
         ctx.stroke();
+      }
+      // Goldmines get a solid gold core so they read differently from the flags
+      for (const m of goldMinesRef.current) {
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(mx(m.x) - 1.4, my(m.y) - 1.4, 2.8, 2.8);
       }
 
       // Fog helpers for this frame (fog off → everything lit)
@@ -597,6 +604,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const flankCapsRef = useRef<CapturePoint[]>([
     { x: 310, y: HORIZON_Y + 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
     { x: 490, y: CANVAS_HEIGHT - 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
+  ]);
+  // Goldmines: the flank posts' mirror diagonal — extra income for whoever
+  // holds the dig. Same CapturePoint machinery, richer bonus, own visuals.
+  const goldMinesRef = useRef<CapturePoint[]>([
+    { x: 310, y: CANVAS_HEIGHT - 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
+    { x: 490, y: HORIZON_Y + 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
   ]);
   const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
   // Persona resolves once per mount so 'random' picks one commander for the
@@ -948,6 +961,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (t.some(o => o.type === 'building' &&
           Math.abs(o.x - x) < (o.width || o.size * 2.6) / 2 + w2 + 26 &&
           Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
+        // Never on a goldmine's capture ring: a house at the dig swallows the
+        // line infantry sent to hold it (they garrison instead of capturing)
+        if (goldMinesRef.current.some(m => Math.hypot(m.x - x, m.y - y) < m.radius + Math.max(w2, h2) + 16)) return false;
         return true;
       };
       // Preferred siting also keeps a house off a hillside and clear of any tree
@@ -1817,7 +1833,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Capture points: uncontested ground presence flips them; holders earn
     // bonus income (center +50%, flank posts +12% each)
-    for (const cap of [captureRef.current, ...flankCapsRef.current]) {
+    for (const cap of [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current]) {
       let westIn = false, eastIn = false;
       for (const u of unitsRef.current) {
         if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) continue;
@@ -1831,7 +1847,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
       const bonus = cap.bonus ?? 0.5;
       const isCenter = cap === captureRef.current;
-      const label = isCenter ? 'the capture point' : 'a flank post';
+      const label = isCenter ? 'the capture point' : goldMinesRef.current.includes(cap) ? 'a goldmine' : 'a flank post';
       if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false, cap.x); }
       else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true, cap.x); }
       if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
@@ -1840,7 +1856,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // holding fewer points recovers 40% of the bonus gap — captures stay
     // worth fighting for without letting a triple-hold snowball the game
     {
-      const capBonus = (t: Team) => [captureRef.current, ...flankCapsRef.current].reduce((s, c) => s + (c.owner === t ? (c.bonus ?? 0.5) : 0), 0);
+      const capBonus = (t: Team) => [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current].reduce((s, c) => s + (c.owner === t ? (c.bonus ?? 0.5) : 0), 0);
       const capGap = capBonus(Team.WEST) - capBonus(Team.EAST);
       if (capGap !== 0) moneyRef.current[capGap > 0 ? Team.EAST : Team.WEST] += MONEY_PER_TICK * Math.abs(capGap) * 0.4;
     }
@@ -2013,11 +2029,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
-    // Supply drops: a crate parachutes onto the midfield every 25-45s;
+    // Supply drops: a crate parachutes onto the midfield every 15-30s;
     // the first team to get a ground unit next to it claims the reward.
+    // The cadence and the cash bias are deliberately hot — fighting over the
+    // midfield economy MID-battle is a fight worth having, not a footnote.
     if (tickCountRef.current >= nextCrateTickRef.current) {
-      nextCrateTickRef.current = tickCountRef.current + 1500 + Math.floor(Math.random() * 1200);
-      const types: SupplyCrate['type'][] = ['cash', 'cash', 'squad', 'medkit']; // cash slightly more common
+      nextCrateTickRef.current = tickCountRef.current + 900 + Math.floor(Math.random() * 900);
+      const types: SupplyCrate['type'][] = ['cash', 'cash', 'cash', 'squad', 'medkit']; // cash-heavy
       cratesRef.current.push({
         id: generateId(),
         x: 300 + Math.random() * 200,
@@ -4920,7 +4938,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
+      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -4977,6 +4995,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         overdrive: unitsRef.current.filter(u => (u.abilityUntil ?? 0) > tickCountRef.current).length,
         c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
         craters: cratersRef.current.map(cr => ({ x: Math.round(cr.x), y: Math.round(cr.y), size: Math.round(cr.size) })),
+        goldmines: goldMinesRef.current.map(m => ({ x: m.x, y: m.y, owner: m.owner })),
         vegDown: terrainRef.current.filter(t => (t.type === 'tree' || t.type === 'bush') && t.state === 'broken').length, // knockdown probe
         // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
         fogOn: fogOnRef.current,
@@ -5131,6 +5150,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         fogGrid={fogOfWar && humanTeam ? fogRef.current[humanTeam] : undefined}
         capture={captureRef.current}
         flanks={flankCapsRef.current}
+        mines={goldMinesRef.current}
         onUnitClick={handleUnitClick}
         selectTeam={humanTeam}
         onBoxSelect={handleBoxSelect}
@@ -5190,7 +5210,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} goldMinesRef={goldMinesRef} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">

@@ -221,6 +221,7 @@ export interface GameState {
   events?: GameEvent[];
   captureOwner?: Team | null;
   flankOwners?: (Team | null)[]; // [top post, bottom post]
+  mineOwners?: (Team | null)[];  // goldmine holders (extra income while held)
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
   rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
   // Air Command rearm time per team, in whole seconds (0 = ready to launch)

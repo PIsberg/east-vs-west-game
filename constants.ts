@@ -43,6 +43,13 @@ export const FOW_BLIND_SCATTER = 45;
 // of the build cost comes back — same rate as the breakthrough refund
 export const BUNKER_SELL_REFUND = 0.5;
 
+// Goldmines: two neutral dig sites, point-symmetric like the flank posts but
+// on the opposite diagonal. Holding one pays this as extra income (same
+// flat-per-tick mechanism as the capture points: bonus × MONEY_PER_TICK) —
+// worth more than a flank post (0.12), less than the center flag (0.5), so
+// the mid-band has four separate fights worth picking.
+export const GOLDMINE_BONUS = 0.25;
+
 // Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —
 // the mound is still occupiable (half capacity, no defensive fire) but one
 // more good hit pounds it to dust for good
