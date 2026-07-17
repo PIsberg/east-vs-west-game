@@ -4897,8 +4897,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Adaptive march: intensity from the battle's actual temperature, tension from
       // the scoreboard. Computed here (10fps) — never on the sim tick. The sound
       // service owns the de-escalation hysteresis, so this can report raw levels.
+      // "Firing" = inside the reload cycle: attackCooldown only rises when a shot
+      // actually happens and drains to 0 on idle units. (UnitState.ATTACKING is
+      // never assigned by the engine — counting it read a permanent zero, so the
+      // march only ever escalated on a rally horn.)
       {
-        const firing = unitsRef.current.reduce((n, u) => n + (u.state === UnitState.ATTACKING && !u.boarded ? 1 : 0), 0);
+        const firing = unitsRef.current.reduce((n, u) => n + (u.attackCooldown > 0 && !u.boarded ? 1 : 0), 0);
         const rallyOn = Date.now() < rallyRef.current[Team.WEST].until || Date.now() < rallyRef.current[Team.EAST].until;
         const level = (firing > 15 || rallyOn) ? 2 : firing > 4 ? 1 : 0;
         const tension = gameModeRef.current === 'basehp'
