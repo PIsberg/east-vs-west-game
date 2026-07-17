@@ -221,6 +221,7 @@ export interface GameState {
   events?: GameEvent[];
   captureOwner?: Team | null;
   flankOwners?: (Team | null)[]; // [top post, bottom post]
+  mineOwners?: (Team | null)[];  // goldmine holders (extra income while held)
   incomeLevel?: { [Team.WEST]: number; [Team.EAST]: number };
   rally?: { [Team.WEST]: RallyState; [Team.EAST]: RallyState };
   // Air Command rearm time per team, in whole seconds (0 = ready to launch)
@@ -230,9 +231,11 @@ export interface GameState {
     [Team.EAST]: number;
   };
   tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
+  // Capture the Flag: per-team flag tallies and the match clock (overtime at 0 when tied)
+  ctf?: { west: number; east: number; timeLeftSec: number; overtime: boolean };
 }
 
-export type GameMode = 'points' | 'basehp';
+export type GameMode = 'points' | 'basehp' | 'ctf';
 
 // Team command buffs (Date.now() timestamps)
 export interface RallyState {

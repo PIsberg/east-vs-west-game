@@ -39,6 +39,8 @@ interface GameSceneProps {
     fogGrid?: Uint8Array; // viewer's fog-of-war layer (FOW_W×FOW_H); undefined = fog off
     capture?: CapturePoint;
     flanks?: CapturePoint[];
+    mines?: CapturePoint[]; // goldmines — extra-income capture sites
+    ctfFlags?: CapturePoint[]; // Capture the Flag mode's flag grid
     onUnitClick?: (unit: Unit) => void;
     focusIds?: string[];
 }
@@ -54,6 +56,57 @@ const getDayFactor = () => {
 };
 
 // Mid-map capture point: flag + capture-progress ring
+// A goldmine dig site: rock mound with glinting ore, a timber portal, and the
+// same capture ring/progress conventions as the flags. Emissive nuggets ride
+// bloom instead of a light (per the no-per-entity-pointLight rule).
+const GoldmineSite = ({ cap }: { cap: CapturePoint }) => {
+    const ownerColor = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? eastColor('#f87171') : '#fbbf24';
+    const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? eastColor('#ef4444') : '#a8a29e';
+    const pct = Math.min(1, Math.abs(cap.progress) / 300);
+    return (
+        <group position={[cap.x, 0, cap.y]}>
+            <mesh position={[0, 0.3, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[cap.radius - 3, cap.radius, 32]} />
+                <meshBasicMaterial color={ownerColor} transparent opacity={cap.owner ? 0.5 : 0.35} toneMapped={false} depthWrite={false} />
+            </mesh>
+            {pct > 0.02 && (
+                <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[cap.radius * 0.35, cap.radius * 0.35 + 4, 32, 1, 0, Math.PI * 2 * pct]} />
+                    <meshBasicMaterial color={leading} transparent opacity={0.8} depthWrite={false} />
+                </mesh>
+            )}
+            {/* Rock mound */}
+            {([[0, 0], [7, -5], [-6, 4], [3, 6], [-5, -6]] as const).map(([lx, lz], i) => (
+                <mesh key={i} position={[lx, 2 + (i % 3), lz]} rotation={[i, i * 2, 0]} castShadow>
+                    <dodecahedronGeometry args={[5 - (i % 3), 0]} />
+                    <meshStandardMaterial color="#57534e" roughness={1} />
+                </mesh>
+            ))}
+            {/* Ore glints */}
+            {([[2, 6, -2], [-3, 4.5, 3], [5, 3.5, 4], [-1, 7, 0]] as const).map(([lx, ly, lz], i) => (
+                <mesh key={`o${i}`} position={[lx, ly, lz]} rotation={[i * 2, i, 0]}>
+                    <octahedronGeometry args={[1.4, 0]} />
+                    <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={1.5} toneMapped={false} />
+                </mesh>
+            ))}
+            {/* Timber portal into the dig */}
+            <group position={[11, 0, 0]}>
+                <mesh position={[0, 4, -4]} castShadow><boxGeometry args={[2, 8, 2]} /><meshStandardMaterial color="#7c5f46" roughness={1} /></mesh>
+                <mesh position={[0, 4, 4]} castShadow><boxGeometry args={[2, 8, 2]} /><meshStandardMaterial color="#7c5f46" roughness={1} /></mesh>
+                <mesh position={[0, 8.5, 0]} castShadow><boxGeometry args={[2, 2, 12]} /><meshStandardMaterial color="#6b5238" roughness={1} /></mesh>
+                <mesh position={[-0.6, 3.5, 0]}><boxGeometry args={[1, 7, 8]} /><meshBasicMaterial color="#0c0a09" /></mesh>
+            </group>
+            {/* Holder's pennant */}
+            {cap.owner && (
+                <group position={[-10, 0, -8]}>
+                    <mesh position={[0, 7, 0]} castShadow><cylinderGeometry args={[0.4, 0.4, 14]} /><meshStandardMaterial color="#57534e" /></mesh>
+                    <mesh position={[3.2, 11.5, 0]}><boxGeometry args={[6, 4, 0.4]} /><meshStandardMaterial color={ownerColor} emissive={ownerColor} emissiveIntensity={0.3} side={THREE.DoubleSide} /></mesh>
+                </group>
+            )}
+        </group>
+    );
+};
+
 const CapturePoint3D = ({ cap, small }: { cap: CapturePoint, small?: boolean }) => {
     const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? eastColor('#b91c1c') : '#a8a29e';
     const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? eastColor('#ef4444') : '#a8a29e';
@@ -728,9 +781,25 @@ function useTintedClone(url: string, rules: TintRule[], template?: THREE.Object3
 const SOLDIER_TEMPLATE = new WeakMap<THREE.Object3D, THREE.Object3D>();
 
 // Normalize a skinned primitive so several of them can be merged: the pack's
-// primitives disagree on index/attribute types (skinIndex arrives as Uint8 on
-// some, Uint16 on others), and merging those straight produces a geometry whose
-// bone indices are nonsense.
+// primitives disagree on index/attribute types, and — crucially — the GLBs are
+// KHR_mesh_quantization: positions/normals arrive as NORMALIZED Int16, uv as
+// normalized Uint16 and skin weights as normalized Uint8. Attributes must be
+// rebuilt through the accessors (getX/getY/... apply the normalization), NOT
+// by copying the raw integer arrays: the raw copy produced positions in the
+// tens of thousands and skin weights of 0..255, which exploded the merged
+// soldier off-screen while its bone indices stayed perfectly sane — so the
+// sanity guard passed and every infantry model rendered as just the bolt-on
+// rifle dangling from an invisible wrist.
+const toFloatAttr = (att: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, size: number): THREE.Float32BufferAttribute => {
+    const out = new Float32Array(att.count * size);
+    for (let i = 0, j = 0; i < att.count; i++) {
+        out[j++] = att.getX(i);
+        if (size > 1) out[j++] = att.getY(i);
+        if (size > 2) out[j++] = att.getZ(i);
+        if (size > 3) out[j++] = att.getW(i);
+    }
+    return new THREE.Float32BufferAttribute(out, size);
+};
 const normalizeSkinned = (g: THREE.BufferGeometry): THREE.BufferGeometry | null => {
     const src = g.index ? g.toNonIndexed() : g;
     const pos = src.getAttribute('position'), nrm = src.getAttribute('normal');
@@ -738,11 +807,16 @@ const normalizeSkinned = (g: THREE.BufferGeometry): THREE.BufferGeometry | null 
     const si = src.getAttribute('skinIndex'), sw = src.getAttribute('skinWeight');
     if (!pos || !nrm || !uv || !si || !sw) return null;
     const out = new THREE.BufferGeometry();
-    out.setAttribute('position', new THREE.Float32BufferAttribute(Array.from(pos.array as ArrayLike<number>), 3));
-    out.setAttribute('normal', new THREE.Float32BufferAttribute(Array.from(nrm.array as ArrayLike<number>), 3));
-    out.setAttribute('uv', new THREE.Float32BufferAttribute(Array.from(uv.array as ArrayLike<number>), 2));
-    out.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(Array.from(si.array as ArrayLike<number>), 4));
-    out.setAttribute('skinWeight', new THREE.Float32BufferAttribute(Array.from(sw.array as ArrayLike<number>), 4));
+    out.setAttribute('position', toFloatAttr(pos, 3));
+    out.setAttribute('normal', toFloatAttr(nrm, 3));
+    out.setAttribute('uv', toFloatAttr(uv, 2));
+    // Bone indices are plain integers (never normalized) — keep them integral
+    const idx = new Uint16Array(si.count * 4);
+    for (let i = 0, j = 0; i < si.count; i++) {
+        idx[j++] = si.getX(i); idx[j++] = si.getY(i); idx[j++] = si.getZ(i); idx[j++] = si.getW(i);
+    }
+    out.setAttribute('skinIndex', new THREE.BufferAttribute(idx, 4));
+    out.setAttribute('skinWeight', toFloatAttr(sw, 4));
     return out;
 };
 
@@ -1255,7 +1329,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             {/* Towed gun (GLB), rolled back along its firing line by recoil */}
                             <group position={[-recoil, 0, 0]}>
                                 <Suspense fallback={null}>
-                                    <StaticModel url={MODEL_URL.artillery} targetLen={54} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
+                                    <StaticModel url={MODEL_URL.artillery} targetLen={42} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
                                 </Suspense>
                             </group>
                             {firing && (
@@ -1672,6 +1746,12 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                                 <meshBasicMaterial color={isWest ? '#60a5fa' : eastColor('#f87171')} toneMapped={false} />
                             </mesh>
                         ))}
+                        {/* Occupancy readout, e.g. "2/4" — the strongpoints' cached-sprite
+                            label, so a bunker's capacity reads at a glance like a house's */}
+                        {!building && (() => {
+                            const m = labelMaterial(`${manned}/${BUNKER_GARRISON_MAX}`, isWest ? '#60a5fa' : eastColor('#f87171'));
+                            return <sprite position={[0, 34, 0]} scale={[m.userData.w, m.userData.h, 1]} material={m} />;
+                        })()}
                         {/* Emplacement (GLB): the gun the garrison mans */}
                         <Suspense fallback={null}>
                             <StaticModel url={MODEL_URL.bunker} targetLen={46} axis="z" yaw={-Math.PI / 2} tints={emplacementTint(unit.team)} />
@@ -3653,7 +3733,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, ctfFlags, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3786,6 +3866,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 <BorderLine onCanvasClick={onCanvasClick} />
                 {capture && <CapturePoint3D cap={capture} />}
                 {flanks?.map((f, i) => <CapturePoint3D key={i} cap={f} small />)}
+                {mines?.map((m, i) => <GoldmineSite key={`gm${i}`} cap={m} />)}
+                {ctfFlags?.map((f, i) => <CapturePoint3D key={`cf${i}`} cap={f} small />)}
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments

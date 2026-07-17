@@ -193,7 +193,7 @@ const App: React.FC = () => {
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
   const [commandQueue, setCommandQueue] = useState<{ team: Team, cmd: TeamCommand }[]>([]);
-  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' }[]>([]);
+  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' | 'sell' }[]>([]);
   const [selection, setSelection] = useState<{ team: Team, ids: string[] } | null>(null);
   const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
@@ -214,9 +214,11 @@ const App: React.FC = () => {
   const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(
     SPECTATE ? 'normal' : (['off', 'easy', 'normal', 'hard'].includes(SAVED_PREFS.cpuLevel as string) ? SAVED_PREFS.cpuLevel as 'off' | 'easy' | 'normal' | 'hard' : 'off')
   );
-  const [gameMode, setGameMode] = useState<GameMode>(
-    URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
-  );
+  const [gameMode, setGameMode] = useState<GameMode>(() => {
+    const fromUrl = URL_PARAMS.get('mode');
+    if (fromUrl === 'basehp' || fromUrl === 'points' || fromUrl === 'ctf') return fromUrl;
+    return SAVED_PREFS.gameMode === 'basehp' || SAVED_PREFS.gameMode === 'ctf' ? SAVED_PREFS.gameMode : 'points';
+  });
   // CPU commander persona. Spectate (the balance harness) pins the by-the-book
   // commander so CPU-vs-CPU efficiency runs stay comparable across sessions.
   const [cpuPersona, setCpuPersona] = useState<CpuPersona>(
@@ -944,6 +946,7 @@ const App: React.FC = () => {
                 <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
                   <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
                   <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                  <button onClick={() => setGameMode('ctf')} title="Nine flags on the field — stand on one to take it. Most flags when the 4-minute clock runs out wins (ties go to overtime)" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'ctf' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>⚑ Flags</button>
                 </div>
                 <div data-testid="doctrine" className={`flex justify-center ${compact ? 'gap-1 mt-1' : 'gap-2 mt-2'}`}>
                   <button onClick={() => setAsymPersist(false)} title="Both sides field identical armies" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${!asym ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Classic</button>
@@ -1015,8 +1018,17 @@ const App: React.FC = () => {
             <button
               data-testid="campaign-btn"
               onClick={openCampaign}
-              className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 hover:border-amber-400 transition-all font-bold uppercase tracking-widest text-stone-200 ${compact ? 'px-3 py-1 text-[10px]' : 'px-5 py-2 text-xs'}`}
-            >🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — turn ${campaign.turn + 1}` : 'Grand Campaign'}</button>
+              className={`bg-black/70 backdrop-blur-sm rounded-lg border-2 border-amber-600/70 hover:border-amber-400 hover:bg-amber-950/40 transition-all text-center ${compact ? 'px-3 py-1' : 'px-6 py-2'}`}
+            >
+              <div className={`font-black uppercase tracking-widest text-amber-300 ${compact ? 'text-[11px]' : 'text-sm'}`}>
+                🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — Turn ${campaign.turn + 1}` : 'Grand Campaign'}
+              </div>
+              {!compact && (
+                <div className="text-[10px] text-stone-400 normal-case tracking-normal">
+                  Conquer a 14-territory front, one real battle at a time — march armies, seize the airbase and silo, take the enemy capital
+                </div>
+              )}
+            </button>
             <button
               className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
@@ -1049,7 +1061,7 @@ const App: React.FC = () => {
       )}
 
       <div ref={headerRef} className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
-        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.west ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
           {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
           <div className={`flex items-center ${compact ? 'gap-1' : 'gap-4'}`}>
@@ -1103,7 +1115,7 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
+        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.east ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
@@ -1132,6 +1144,16 @@ const App: React.FC = () => {
             </div>
           )}
           {/* One-time tutorial toast for troop control */}
+          {/* CTF scoreboard: flag tallies flanking the match clock */}
+          {gameMode === 'ctf' && gameState.ctf && (
+            <div data-testid="ctf-clock" className="absolute top-2 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-3 py-1 text-center shadow-xl">
+              <span className="text-blue-400 font-black text-sm">⚑ {gameState.ctf.west}</span>
+              <span className={`mx-2 font-mono font-bold text-sm ${gameState.ctf.overtime ? 'text-red-400 animate-pulse' : gameState.ctf.timeLeftSec <= 30 ? 'text-amber-300' : 'text-stone-200'}`}>
+                {gameState.ctf.overtime ? 'OVERTIME' : `${Math.floor(gameState.ctf.timeLeftSec / 60)}:${String(gameState.ctf.timeLeftSec % 60).padStart(2, '0')}`}
+              </span>
+              <span className={`font-black text-sm ${cb ? 'text-amber-400' : 'text-red-400'}`}>{gameState.ctf.east} ⚑</span>
+            </div>
+          )}
           {troopHint && !selection && !targetingInfo && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
               💡 <strong>Click one of your units</strong> to give it its own orders — Attack, Hold or Fall Back.<br />
@@ -1144,7 +1166,7 @@ const App: React.FC = () => {
             if (liveIds.length === 0) return null;
             const isWest = selection.team === Team.WEST;
             const issue = (order: Stance | null) => setOrderQueue(prev => [...prev, { ids: liveIds, order }]);
-            const issueAbility = (ability: 'overdrive' | 'c4') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
+            const issueAbility = (ability: 'overdrive' | 'c4' | 'sell') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
             const btn = 'px-2 py-1 rounded border text-[9px] font-bold uppercase tracking-tight transition-colors active:scale-95';
             // Ability buttons appear when the selection contains a capable type;
             // disabled (with a countdown) while every such unit is on cooldown
@@ -1158,6 +1180,7 @@ const App: React.FC = () => {
             };
             const od = abilityState(UnitType.TANK);
             const c4 = abilityState(UnitType.ENGINEER);
+            const hasBunker = selUnits.some(u => u.type === UnitType.BUNKER);
             return (
               <div className="absolute bottom-[70px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-stone-900/95 border border-stone-500 rounded-lg px-2.5 py-1.5 shadow-2xl">
                 <span className={`text-[10px] font-black uppercase mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
@@ -1177,6 +1200,12 @@ const App: React.FC = () => {
                     title="Engineer C4: he runs to the nearest enemy bridge, bunker or held strongpoint and sets a 5s demolition charge"
                     className={`${btn} ${c4.ready ? 'border-orange-500 text-orange-300 hover:bg-orange-900/60' : 'border-stone-700 text-stone-600'}`}>
                     💣 C4{!c4.ready && c4.waitSec > 0 ? ` ${c4.waitSec}s` : ''}</button>
+                )}
+                {hasBunker && (
+                  <button data-testid="ability-sell" onClick={() => issueAbility('sell')}
+                    title="Decommission the bunker: the crew walks out unharmed and 50% of its cost comes back — regroup instead of holding a dead flank"
+                    className={`${btn} border-emerald-600 text-emerald-400 hover:bg-emerald-900/60`}>
+                    💰 Sell</button>
                 )}
                 <button onClick={() => issue(null)} title="Clear their orders — follow the team stance again" className={`${btn} border-stone-600 text-stone-400 hover:text-white`}>Follow Team</button>
                 <button onClick={() => setSelection(null)} title="Deselect (Esc)" className={`${btn} border-stone-700 text-stone-500 hover:text-white`}>✕</button>
@@ -1218,6 +1247,8 @@ const App: React.FC = () => {
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Points:</strong> Hold the center flag uncontested for <span className="text-amber-400">+50% income</span>; the two smaller flank posts add <span className="text-amber-400">+12% each</span>.</li>
+            <li><strong className="text-white">Goldmines:</strong> Two <span className="text-amber-400">gold dig sites</span> on the flanks' mirror diagonal pay <span className="text-amber-400">+25% income each</span> while you hold them — worth a detour, worth a fight.</li>
+            <li><strong className="text-white">⚑ Flags mode:</strong> Nine flags replace the income points — <span className="text-amber-400">stand on one to take it</span>. Most flags when the <span className="text-amber-400">4-minute clock</span> runs out wins; a tie goes to overtime, first flag lead ends it.</li>
             <li><strong className="text-white">Gunboat:</strong> Station it on a <span className="text-amber-400">river or channel</span> (click open water when placing) — a tough, long-range gun platform that guards crossings.</li>
             <li><strong className="text-white">Shortcuts & Access:</strong> Number keys <span className="text-amber-400">1–0</span> buy your core units, <span className="text-amber-400">P</span> pauses. The <span className="text-amber-400">CB</span> toggle recolors East to amber for colorblind players.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
@@ -1230,6 +1261,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
                 <li><strong className="text-white">Winter ice:</strong> On the Winter map the river is <span className="text-sky-300">frozen</span> — infantry walk across the ice anywhere (slowed, and caught in the open), while vehicles still need the bridges. Gunboats can't anchor in ice.</li>
                 <li><strong className="text-white">Air Command:</strong> All air-delivered strikes (airstrike, paradrop, missiles, cruise, gunship, nuke) share one <span className="text-amber-400">rearm clock</span> — after a launch the squadron needs ~22s before the next (60s after a nuke). Locked buttons show the countdown. <span className="text-cyan-300">Anti-Air</span> guns also engage incoming strike aircraft: a downed plane takes its payload with it.</li>
+            <li><strong className="text-white">Sell Bunkers:</strong> Click your bunker and hit <span className="text-emerald-400">💰 Sell</span> — the crew walks out unharmed and <span className="text-green-400">50% of the cost</span> comes back. Regroup instead of holding a dead flank.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>
@@ -1285,12 +1317,21 @@ const App: React.FC = () => {
               <div>
                 <h2 className="text-amber-400 font-black uppercase tracking-widest text-sm md:text-base">Grand Campaign — Turn {s.turn + 1}</h2>
                 <p className="text-stone-400 text-[11px]">Enemy commander: <span className="text-red-400 font-bold">{persona.name}</span> — {persona.blurb}</p>
+                <p className="text-stone-300 text-[11px] mt-0.5">🎯 <strong className="text-amber-300">Objective:</strong> capture <strong>★ Kreml Bastion</strong> in the far east — or destroy every enemy army.</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={abandonCampaign} className="px-2 py-1 rounded border border-red-800 text-red-400 text-[10px] font-bold uppercase hover:bg-red-950">Abandon</button>
                 <button onClick={() => setCampaignOpen(false)} className="px-2 py-1 rounded border border-stone-600 text-stone-300 text-[10px] font-bold uppercase hover:border-stone-400">Menu</button>
               </div>
             </div>
+            {/* The one thing to do next, said loudly — the old footer hint was invisible */}
+            {!winner && (
+              <div data-testid="campaign-hint" className={`mb-2 rounded-lg border-2 px-3 py-1.5 text-center text-[12px] md:text-[13px] font-bold tracking-wide ${sel ? 'border-amber-400 bg-amber-950/60 text-amber-200' : 'border-blue-500 bg-blue-950/50 text-blue-200'}`}>
+                {sel
+                  ? <>Step 2 — MARCH: click a <span className="text-amber-300">glowing territory</span> next to your army. Enemy ground starts a battle ⚔ — neutral ground is taken without a fight.</>
+                  : <>Step 1 — YOUR MOVE: click one of your <span className="text-blue-300">pulsing blue ⚔ armies</span> to command it.</>}
+              </div>
+            )}
             {winner && (
               <div className={`mb-2 rounded border px-3 py-2 text-center font-black uppercase tracking-widest ${winner === Team.WEST ? 'border-blue-500 text-blue-300 bg-blue-950/60' : 'border-red-500 text-red-300 bg-red-950/60'}`}>
                 {winner === Team.WEST ? '★ Total victory — the East capitulates! ★' : 'Defeat — the West has fallen.'}
@@ -1325,7 +1366,8 @@ const App: React.FC = () => {
                     </div>
                     <div className="text-[8px] text-stone-400 uppercase">{t.terrain.toLowerCase()}</div>
                     {army && (
-                      <div className={`mt-0.5 inline-block rounded px-1 text-[9px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}>
+                      <div className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}
+                        ${army.team === Team.WEST && !sel && !winner ? 'animate-pulse ring-2 ring-amber-300/80' : ''}`}>
                         ⚔ {army.strength}
                       </div>
                     )}
@@ -1335,9 +1377,14 @@ const App: React.FC = () => {
             </div>
             <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
               <div className="text-[10px] text-stone-400 leading-snug">
-                {sel
-                  ? <span className="text-amber-300">Army selected — click a highlighted territory to march (contested ground starts a battle).</span>
-                  : 'Click one of your armies (blue ⚔) to select it. Hold ⚓/✈/☢ territories to unlock gunboats & cruise, air strikes, and the nuke in battle.'}
+                <span className="text-stone-300 font-bold uppercase tracking-wider mr-1.5">Legend:</span>
+                <span className="mr-2">⚔ army (its strength)</span>
+                <span className="mr-2">★ capital</span>
+                <span className="mr-2">⚓ harbor → gunboats & cruise</span>
+                <span className="mr-2">✈ airbase → air strikes</span>
+                <span className="mr-2">☢ silo → the nuke</span>
+                <span>$ extra income</span>
+                <div className="text-stone-500 mt-0.5">Hold a bonus territory and its weapons unlock in your battles. Losing a battle costs the army 1 strength — at 0 it's destroyed.</div>
               </div>
               <div className="text-[10px] text-stone-500 max-w-[46%]">
                 {s.log.slice(-3).map((l, i) => <div key={i}>• {l}</div>)}
