@@ -89,6 +89,8 @@ import {
   RUBBLE_HP,
   BUNKER_SELL_REFUND,
   GOLDMINE_BONUS,
+  CTF_DURATION_TICKS,
+  CTF_CAPTURE_STEP,
   FOW_CELL,
   FOW_W,
   FOW_H,
@@ -223,6 +225,8 @@ const MiniMap: React.FC<{
   captureRef: React.MutableRefObject<CapturePoint>;
   flankCapsRef: React.MutableRefObject<CapturePoint[]>;
   goldMinesRef: React.MutableRefObject<CapturePoint[]>;
+  ctfFlagsRef: React.MutableRefObject<CapturePoint[]>;
+  isCtf?: boolean;
   camApiRef: React.MutableRefObject<CamApi | null>;
   compact?: boolean;
   cb?: boolean;
@@ -230,7 +234,7 @@ const MiniMap: React.FC<{
   fogGridRef?: React.MutableRefObject<Record<Team, Uint8Array>>;
   fogViewer?: Team | null;
   fogOnRef?: React.MutableRefObject<boolean>;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, goldMinesRef, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, goldMinesRef, ctfFlagsRef, isCtf, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -285,7 +289,8 @@ const MiniMap: React.FC<{
         ctx.fill();
       }
 
-      for (const cap of [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current]) {
+      // CTF shows its flag grid instead of the income-point board
+      for (const cap of (isCtf ? ctfFlagsRef.current : [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current])) {
         ctx.strokeStyle = cap.owner === Team.WEST ? '#60a5fa' : cap.owner === Team.EAST ? eastUi : cb ? '#e7e5e4' : '#fbbf24';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -293,7 +298,7 @@ const MiniMap: React.FC<{
         ctx.stroke();
       }
       // Goldmines get a solid gold core so they read differently from the flags
-      for (const m of goldMinesRef.current) {
+      if (!isCtf) for (const m of goldMinesRef.current) {
         ctx.fillStyle = '#fbbf24';
         ctx.fillRect(mx(m.x) - 1.4, my(m.y) - 1.4, 2.8, 2.8);
       }
@@ -611,6 +616,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     { x: 310, y: CANVAS_HEIGHT - 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
     { x: 490, y: HORIZON_Y + 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
   ]);
+  // Capture the Flag: a 3×3 spread of flags REPLACES the income points in ctf
+  // mode (bonus 0 — flags pay nothing, they ARE the win). Presence flips them
+  // at CTF_CAPTURE_STEP speed; most flags at the clock wins, ties go to
+  // overtime. Point-symmetric layout so neither side starts closer.
+  const ctfFlagsRef = useRef<CapturePoint[]>(gameMode === 'ctf'
+    ? [160, 400, 640].flatMap(x => [HORIZON_Y + 70, (HORIZON_Y + CANVAS_HEIGHT) / 2, CANVAS_HEIGHT - 70].map(y =>
+        ({ x, y, radius: 38, owner: null, progress: 0, bonus: 0 })))
+    : []);
+  const ctfOvertimeRef = useRef(false);
   const cpuTimerRef = useRef({ [Team.WEST]: 0, [Team.EAST]: 0 });
   // Persona resolves once per mount so 'random' picks one commander for the
   // whole match (GameCanvas remounts per battle via App's gameKey)
@@ -722,12 +736,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => {
     if (!gameOver) return;
     soundService.setRotorLoop(false);
-    // Close the timeline with the final standings
+    // Close the timeline with the final standings (CTF charts flag tallies)
     const hp = gameModeRef.current === 'basehp';
+    const stand = (t: Team) => gameModeRef.current === 'ctf'
+      ? ctfFlagsRef.current.filter(f => f.owner === t).length
+      : hp ? baseHPRef.current[t] : scoreRef.current[t];
     scoreHistoryRef.current.push({
       t: Date.now() - matchStartRef.current,
-      w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
-      e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+      w: stand(Team.WEST),
+      e: stand(Team.EAST),
     });
     const humanWon = !cpuRef.current.teams.includes(gameOver);
     if (humanWon || cpuRef.current.teams.length === 2) soundService.playVictorySound();
@@ -741,8 +758,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         map: mapType,
         mode: gameModeRef.current,
         winner: gameOver,
-        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
-        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+        w: stand(Team.WEST),
+        e: stand(Team.EAST),
         dur: Math.round((Date.now() - matchStartRef.current) / 1000),
         spectate: cpuRef.current.teams.length === 2,
       };
@@ -961,9 +978,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (t.some(o => o.type === 'building' &&
           Math.abs(o.x - x) < (o.width || o.size * 2.6) / 2 + w2 + 26 &&
           Math.abs(o.y - y) < (o.height || o.size * 2.0) / 2 + h2 + 18)) return false;
-        // Never on a goldmine's capture ring: a house at the dig swallows the
-        // line infantry sent to hold it (they garrison instead of capturing)
-        if (goldMinesRef.current.some(m => Math.hypot(m.x - x, m.y - y) < m.radius + Math.max(w2, h2) + 16)) return false;
+        // Never on a goldmine's or CTF flag's capture ring: a house there
+        // swallows the line infantry sent to hold it (they garrison instead
+        // of capturing)
+        if ([...goldMinesRef.current, ...ctfFlagsRef.current].some(m => Math.hypot(m.x - x, m.y - y) < m.radius + Math.max(w2, h2) + 16)) return false;
         return true;
       };
       // Preferred siting also keeps a house off a hillside and clear of any tree
@@ -1833,7 +1851,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Capture points: uncontested ground presence flips them; holders earn
     // bonus income (center +50%, flank posts +12% each)
-    for (const cap of [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current]) {
+    // CTF swaps the whole income-point board for its flag grid
+    const isCtf = gameModeRef.current === 'ctf';
+    const capStep = isCtf ? CTF_CAPTURE_STEP : 1;
+    for (const cap of (isCtf ? ctfFlagsRef.current : [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current])) {
       let westIn = false, eastIn = false;
       for (const u of unitsRef.current) {
         if (u.type === UnitType.MINE_PERSONAL || u.type === UnitType.MINE_TANK || u.type === UnitType.NAPALM) continue;
@@ -1843,15 +1864,32 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (westIn && eastIn) break;
         }
       }
-      if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + 1);
-      else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - 1);
+      if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + capStep);
+      else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - capStep);
       const bonus = cap.bonus ?? 0.5;
       const isCenter = cap === captureRef.current;
-      const label = isCenter ? 'the capture point' : goldMinesRef.current.includes(cap) ? 'a goldmine' : 'a flank post';
-      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.WEST); soundService.playSpawnSound(false, cap.x); }
-      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East holds ${label} (+${Math.round(bonus * 100)}% income)`, Team.EAST); soundService.playSpawnSound(true, cap.x); }
+      const label = isCtf ? 'a flag' : isCenter ? 'the capture point' : goldMinesRef.current.includes(cap) ? 'a goldmine' : 'a flank post';
+      const gain = isCtf
+        ? () => ` (⚑ ${ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length}–${ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length})`
+        : () => ` (+${Math.round(bonus * 100)}% income)`;
+      if (cap.progress >= CAPTURE_TICKS && cap.owner !== Team.WEST) { cap.owner = Team.WEST; pushEvent('capture', `West ${isCtf ? 'takes' : 'holds'} ${label}${gain()}`, Team.WEST); soundService.playSpawnSound(false, cap.x); }
+      else if (cap.progress <= -CAPTURE_TICKS && cap.owner !== Team.EAST) { cap.owner = Team.EAST; pushEvent('capture', `East ${isCtf ? 'takes' : 'holds'} ${label}${gain()}`, Team.EAST); soundService.playSpawnSound(true, cap.x); }
       if (cap.owner) moneyRef.current[cap.owner] += MONEY_PER_TICK * bonus;
     }
+    // CTF clock: most flags when time is up wins; a tie goes to overtime and
+    // the first flag LEAD ends it (checked every tick past the horn, so the
+    // moment the board tips, it's over)
+    if (isCtf && !gameOverRef.current && tickCountRef.current >= CTF_DURATION_TICKS) {
+      const w = ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length;
+      const e = ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length;
+      if (w !== e) {
+        setGameOver(w > e ? Team.WEST : Team.EAST);
+      } else if (!ctfOvertimeRef.current) {
+        ctfOvertimeRef.current = true;
+        pushEvent('command', `⚑ OVERTIME — ${w}–${e} at the horn: first flag lead wins!`);
+      }
+    }
+
     // Capture-income counterweight: like the upgrade rubber-band, the side
     // holding fewer points recovers 40% of the bonus gap — captures stay
     // worth fighting for without letting a triple-hold snowball the game
@@ -4924,21 +4962,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // 1. Force R3F re-render locally 60fps (for smooth movement)
     setFrame(f => f + 1);
 
-    // Timeline sample for the victory-screen graph
+    // Timeline sample for the victory-screen graph (CTF charts flag tallies)
     if (Date.now() - lastSampleRef.current > 5000) {
       lastSampleRef.current = Date.now();
       const hp = gameModeRef.current === 'basehp';
+      const stand = (t: Team) => gameModeRef.current === 'ctf'
+        ? ctfFlagsRef.current.filter(f => f.owner === t).length
+        : hp ? baseHPRef.current[t] : scoreRef.current[t];
       scoreHistoryRef.current.push({
         t: Date.now() - matchStartRef.current,
-        w: hp ? baseHPRef.current[Team.WEST] : scoreRef.current[Team.WEST],
-        e: hp ? baseHPRef.current[Team.EAST] : scoreRef.current[Team.EAST],
+        w: stand(Team.WEST),
+        e: stand(Team.EAST),
       });
       if (scoreHistoryRef.current.length > 400) scoreHistoryRef.current.shift();
     }
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
+      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), ctf: gameModeRef.current === 'ctf' ? { west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length, east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length, timeLeftSec: Math.max(0, Math.ceil((CTF_DURATION_TICKS - tickCountRef.current) / 60)), overtime: ctfOvertimeRef.current } : undefined, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -4996,6 +5037,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         c4: c4Ref.current.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), fuse: c.fuse })),
         craters: cratersRef.current.map(cr => ({ x: Math.round(cr.x), y: Math.round(cr.y), size: Math.round(cr.size) })),
         goldmines: goldMinesRef.current.map(m => ({ x: m.x, y: m.y, owner: m.owner })),
+        ctf: gameModeRef.current === 'ctf' ? {
+          west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length,
+          east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length,
+          ticksLeft: Math.max(0, CTF_DURATION_TICKS - tickCountRef.current),
+          overtime: ctfOvertimeRef.current,
+          flags: ctfFlagsRef.current.map(f => ({ x: f.x, y: f.y, owner: f.owner })),
+        } : undefined,
         vegDown: terrainRef.current.filter(t => (t.type === 'tree' || t.type === 'bush') && t.state === 'broken').length, // knockdown probe
         // Fog-of-war probes: cell state (0 hidden / 1 explored / 2 visible)
         fogOn: fogOnRef.current,
@@ -5148,9 +5196,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         shake={shakeRef}
         shock={shockRef}
         fogGrid={fogOfWar && humanTeam ? fogRef.current[humanTeam] : undefined}
-        capture={captureRef.current}
-        flanks={flankCapsRef.current}
-        mines={goldMinesRef.current}
+        capture={gameMode === 'ctf' ? undefined : captureRef.current}
+        flanks={gameMode === 'ctf' ? undefined : flankCapsRef.current}
+        mines={gameMode === 'ctf' ? undefined : goldMinesRef.current}
+        ctfFlags={gameMode === 'ctf' ? ctfFlagsRef.current : undefined}
         onUnitClick={handleUnitClick}
         selectTeam={humanTeam}
         onBoxSelect={handleBoxSelect}
@@ -5210,7 +5259,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} goldMinesRef={goldMinesRef} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} goldMinesRef={goldMinesRef} ctfFlagsRef={ctfFlagsRef} isCtf={gameMode === 'ctf'} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">

@@ -231,9 +231,11 @@ export interface GameState {
     [Team.EAST]: number;
   };
   tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
+  // Capture the Flag: per-team flag tallies and the match clock (overtime at 0 when tied)
+  ctf?: { west: number; east: number; timeLeftSec: number; overtime: boolean };
 }
 
-export type GameMode = 'points' | 'basehp';
+export type GameMode = 'points' | 'basehp' | 'ctf';
 
 // Team command buffs (Date.now() timestamps)
 export interface RallyState {

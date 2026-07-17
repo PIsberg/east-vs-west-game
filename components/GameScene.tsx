@@ -40,6 +40,7 @@ interface GameSceneProps {
     capture?: CapturePoint;
     flanks?: CapturePoint[];
     mines?: CapturePoint[]; // goldmines — extra-income capture sites
+    ctfFlags?: CapturePoint[]; // Capture the Flag mode's flag grid
     onUnitClick?: (unit: Unit) => void;
     focusIds?: string[];
 }
@@ -3732,7 +3733,7 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, ctfFlags, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
 
@@ -3866,6 +3867,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 {capture && <CapturePoint3D cap={capture} />}
                 {flanks?.map((f, i) => <CapturePoint3D key={i} cap={f} small />)}
                 {mines?.map((m, i) => <GoldmineSite key={`gm${i}`} cap={m} />)}
+                {ctfFlags?.map((f, i) => <CapturePoint3D key={`cf${i}`} cap={f} small />)}
 
                 {terrain.map(t => {
                     if (t.type === 'river') return null; // Skip old river segments

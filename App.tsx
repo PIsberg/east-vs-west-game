@@ -214,9 +214,11 @@ const App: React.FC = () => {
   const [cpuLevel, setCpuLevel] = useState<'off' | 'easy' | 'normal' | 'hard'>(
     SPECTATE ? 'normal' : (['off', 'easy', 'normal', 'hard'].includes(SAVED_PREFS.cpuLevel as string) ? SAVED_PREFS.cpuLevel as 'off' | 'easy' | 'normal' | 'hard' : 'off')
   );
-  const [gameMode, setGameMode] = useState<GameMode>(
-    URL_PARAMS.get('mode') === 'basehp' ? 'basehp' : URL_PARAMS.get('mode') === 'points' ? 'points' : (SAVED_PREFS.gameMode === 'basehp' ? 'basehp' : 'points')
-  );
+  const [gameMode, setGameMode] = useState<GameMode>(() => {
+    const fromUrl = URL_PARAMS.get('mode');
+    if (fromUrl === 'basehp' || fromUrl === 'points' || fromUrl === 'ctf') return fromUrl;
+    return SAVED_PREFS.gameMode === 'basehp' || SAVED_PREFS.gameMode === 'ctf' ? SAVED_PREFS.gameMode : 'points';
+  });
   // CPU commander persona. Spectate (the balance harness) pins the by-the-book
   // commander so CPU-vs-CPU efficiency runs stay comparable across sessions.
   const [cpuPersona, setCpuPersona] = useState<CpuPersona>(
@@ -944,6 +946,7 @@ const App: React.FC = () => {
                 <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
                   <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
                   <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                  <button onClick={() => setGameMode('ctf')} title="Nine flags on the field — stand on one to take it. Most flags when the 4-minute clock runs out wins (ties go to overtime)" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'ctf' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>⚑ Flags</button>
                 </div>
                 <div data-testid="doctrine" className={`flex justify-center ${compact ? 'gap-1 mt-1' : 'gap-2 mt-2'}`}>
                   <button onClick={() => setAsymPersist(false)} title="Both sides field identical armies" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${!asym ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Classic</button>
@@ -1058,7 +1061,7 @@ const App: React.FC = () => {
       )}
 
       <div ref={headerRef} className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
-        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.west ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
           {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
           <div className={`flex items-center ${compact ? 'gap-1' : 'gap-4'}`}>
@@ -1112,7 +1115,7 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
+        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.east ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
@@ -1141,6 +1144,16 @@ const App: React.FC = () => {
             </div>
           )}
           {/* One-time tutorial toast for troop control */}
+          {/* CTF scoreboard: flag tallies flanking the match clock */}
+          {gameMode === 'ctf' && gameState.ctf && (
+            <div data-testid="ctf-clock" className="absolute top-2 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-3 py-1 text-center shadow-xl">
+              <span className="text-blue-400 font-black text-sm">⚑ {gameState.ctf.west}</span>
+              <span className={`mx-2 font-mono font-bold text-sm ${gameState.ctf.overtime ? 'text-red-400 animate-pulse' : gameState.ctf.timeLeftSec <= 30 ? 'text-amber-300' : 'text-stone-200'}`}>
+                {gameState.ctf.overtime ? 'OVERTIME' : `${Math.floor(gameState.ctf.timeLeftSec / 60)}:${String(gameState.ctf.timeLeftSec % 60).padStart(2, '0')}`}
+              </span>
+              <span className={`font-black text-sm ${cb ? 'text-amber-400' : 'text-red-400'}`}>{gameState.ctf.east} ⚑</span>
+            </div>
+          )}
           {troopHint && !selection && !targetingInfo && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
               💡 <strong>Click one of your units</strong> to give it its own orders — Attack, Hold or Fall Back.<br />
@@ -1235,6 +1248,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Veterancy:</strong> Kills promote units (3/7/12 kills = ★/★★/★★★): <span className="text-amber-400">+10% dmg, +6% reload, +HP</span> per rank.</li>
             <li><strong className="text-white">Capture Points:</strong> Hold the center flag uncontested for <span className="text-amber-400">+50% income</span>; the two smaller flank posts add <span className="text-amber-400">+12% each</span>.</li>
             <li><strong className="text-white">Goldmines:</strong> Two <span className="text-amber-400">gold dig sites</span> on the flanks' mirror diagonal pay <span className="text-amber-400">+25% income each</span> while you hold them — worth a detour, worth a fight.</li>
+            <li><strong className="text-white">⚑ Flags mode:</strong> Nine flags replace the income points — <span className="text-amber-400">stand on one to take it</span>. Most flags when the <span className="text-amber-400">4-minute clock</span> runs out wins; a tie goes to overtime, first flag lead ends it.</li>
             <li><strong className="text-white">Gunboat:</strong> Station it on a <span className="text-amber-400">river or channel</span> (click open water when placing) — a tough, long-range gun platform that guards crossings.</li>
             <li><strong className="text-white">Shortcuts & Access:</strong> Number keys <span className="text-amber-400">1–0</span> buy your core units, <span className="text-amber-400">P</span> pauses. The <span className="text-amber-400">CB</span> toggle recolors East to amber for colorblind players.</li>
             <li><strong className="text-white">Orders:</strong> Set your army's stance (Advance/Hold/Fall Back). <span className="text-amber-400">Click an enemy unit</span> to focus fire on it.</li>
