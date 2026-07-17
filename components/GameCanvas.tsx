@@ -87,6 +87,7 @@ import {
   C4_DAMAGE,
   C4_RADIUS,
   RUBBLE_HP,
+  BUNKER_SELL_REFUND,
   FOW_CELL,
   FOW_W,
   FOW_H,
@@ -423,7 +424,7 @@ interface GameCanvasProps {
   commandQueue: { team: Team, cmd: TeamCommand }[];
   clearCommandQueue: () => void;
   // Per-unit orders: null order = clear the override (follow team stance)
-  orderQueue: { ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' }[];
+  orderQueue: { ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' | 'sell' }[];
   clearOrderQueue: () => void;
   onSelectUnits?: (team: Team, ids: string[]) => void;
   selectedIds?: string[];
@@ -1278,6 +1279,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const idSet = new Set(ids);
         if (ability) {
           const now = tickCountRef.current;
+          const sold: Unit[] = []; // removed AFTER the loop — never splice what you iterate
           unitsRef.current.forEach(u => {
             if (!idSet.has(u.id) || u.health <= 0 || u.boarded) return;
             if ((u.abilityReadyAt ?? 0) > now) return;
@@ -1307,8 +1309,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 u.c4X = bx; u.c4Y = by;
                 u.abilityReadyAt = now + C4_COOLDOWN_TICKS;
               } // no target on the field: the order fizzles, no cooldown burned
+            } else if (ability === 'sell' && u.type === UnitType.BUNKER) {
+              // Decommission: the crew walks out unharmed (unlike a destruction
+              // spill), half the concrete comes back as cash, and the bunker is
+              // removed cleanly — no death FX, no wreck, no 'lost' tally.
+              const cfg = UNIT_CONFIG[UnitType.BUNKER] as any;
+              const back = u.team === Team.WEST ? -1 : 1;
+              (u.passengers || []).forEach((p, idx) => {
+                p.boarded = false;
+                p.state = UnitState.MOVING;
+                p.position.x = Math.max(10, Math.min(CANVAS_WIDTH - 10, u.position.x + back * (16 + idx * 5)));
+                p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + ((idx % 3) - 1) * 14));
+                if (!unitsRef.current.includes(p)) unitsRef.current.push(p);
+              });
+              u.passengers = [];
+              u.garrison = 0;
+              const refund = Math.round(cfg.cost * BUNKER_SELL_REFUND);
+              moneyRef.current[u.team] += refund;
+              sold.push(u);
+              pushEvent('command', `${teamName(u.team)} bunker decommissioned (+$${refund}) — the crew regroups`, u.team);
+              soundService.playCrackSound(u.position.x);
+              for (let k = 0; k < 10; k++) {
+                particlesRef.current.push({
+                  id: generateId(),
+                  position: { x: u.position.x + (Math.random() - 0.5) * 24, y: u.position.y + (Math.random() - 0.5) * 18 },
+                  velocity: { x: (Math.random() - 0.5) * 1.2, y: (Math.random() - 0.5) * 1.2 },
+                  drag: 0.92, life: 24 + Math.random() * 18,
+                  color: k % 2 === 0 ? '#a8a29e' : '#78716c',
+                  size: 4 + Math.random() * 5, alt: 2 + Math.random() * 8, altVel: 0.5,
+                });
+              }
             }
           });
+          for (const s of sold) {
+            const at = unitsRef.current.indexOf(s);
+            if (at >= 0) unitsRef.current.splice(at, 1);
+          }
           return;
         }
         unitsRef.current.forEach(u => {

@@ -39,6 +39,10 @@ export const FOW_H = CANVAS_HEIGHT / FOW_CELL;  // 45
 // this many px — scouting before striking is the counterplay
 export const FOW_BLIND_SCATTER = 45;
 
+// Selling a bunker (regroup): the crew walks out unharmed and this fraction
+// of the build cost comes back — same rate as the breakthrough refund
+export const BUNKER_SELL_REFUND = 0.5;
+
 // Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —
 // the mound is still occupiable (half capacity, no defensive fire) but one
 // more good hit pounds it to dust for good

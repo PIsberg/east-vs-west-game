@@ -193,7 +193,7 @@ const App: React.FC = () => {
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
   const [commandQueue, setCommandQueue] = useState<{ team: Team, cmd: TeamCommand }[]>([]);
-  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' }[]>([]);
+  const [orderQueue, setOrderQueue] = useState<{ ids: string[], order?: Stance | null, ability?: 'overdrive' | 'c4' | 'sell' }[]>([]);
   const [selection, setSelection] = useState<{ team: Team, ids: string[] } | null>(null);
   const [stances, setStances] = useState<Record<Team, Stance>>({ [Team.WEST]: 'advance', [Team.EAST]: 'advance' });
   const [gameState, setGameState] = useState<GameState>({
@@ -1144,7 +1144,7 @@ const App: React.FC = () => {
             if (liveIds.length === 0) return null;
             const isWest = selection.team === Team.WEST;
             const issue = (order: Stance | null) => setOrderQueue(prev => [...prev, { ids: liveIds, order }]);
-            const issueAbility = (ability: 'overdrive' | 'c4') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
+            const issueAbility = (ability: 'overdrive' | 'c4' | 'sell') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
             const btn = 'px-2 py-1 rounded border text-[9px] font-bold uppercase tracking-tight transition-colors active:scale-95';
             // Ability buttons appear when the selection contains a capable type;
             // disabled (with a countdown) while every such unit is on cooldown
@@ -1158,6 +1158,7 @@ const App: React.FC = () => {
             };
             const od = abilityState(UnitType.TANK);
             const c4 = abilityState(UnitType.ENGINEER);
+            const hasBunker = selUnits.some(u => u.type === UnitType.BUNKER);
             return (
               <div className="absolute bottom-[70px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-stone-900/95 border border-stone-500 rounded-lg px-2.5 py-1.5 shadow-2xl">
                 <span className={`text-[10px] font-black uppercase mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
@@ -1177,6 +1178,12 @@ const App: React.FC = () => {
                     title="Engineer C4: he runs to the nearest enemy bridge, bunker or held strongpoint and sets a 5s demolition charge"
                     className={`${btn} ${c4.ready ? 'border-orange-500 text-orange-300 hover:bg-orange-900/60' : 'border-stone-700 text-stone-600'}`}>
                     💣 C4{!c4.ready && c4.waitSec > 0 ? ` ${c4.waitSec}s` : ''}</button>
+                )}
+                {hasBunker && (
+                  <button data-testid="ability-sell" onClick={() => issueAbility('sell')}
+                    title="Decommission the bunker: the crew walks out unharmed and 50% of its cost comes back — regroup instead of holding a dead flank"
+                    className={`${btn} border-emerald-600 text-emerald-400 hover:bg-emerald-900/60`}>
+                    💰 Sell</button>
                 )}
                 <button onClick={() => issue(null)} title="Clear their orders — follow the team stance again" className={`${btn} border-stone-600 text-stone-400 hover:text-white`}>Follow Team</button>
                 <button onClick={() => setSelection(null)} title="Deselect (Esc)" className={`${btn} border-stone-700 text-stone-500 hover:text-white`}>✕</button>
@@ -1230,6 +1237,7 @@ const App: React.FC = () => {
             <li><strong className="text-white">Bridges:</strong> Explosives <span className="text-red-400">destroy bridges</span> (vehicles blocked, infantry wade). Build an <span className="text-amber-400">Engineer</span> — he walks to the wrench marker and repairs it in seconds. Bridges also self-repair in ~1 min.</li>
                 <li><strong className="text-white">Winter ice:</strong> On the Winter map the river is <span className="text-sky-300">frozen</span> — infantry walk across the ice anywhere (slowed, and caught in the open), while vehicles still need the bridges. Gunboats can't anchor in ice.</li>
                 <li><strong className="text-white">Air Command:</strong> All air-delivered strikes (airstrike, paradrop, missiles, cruise, gunship, nuke) share one <span className="text-amber-400">rearm clock</span> — after a launch the squadron needs ~22s before the next (60s after a nuke). Locked buttons show the countdown. <span className="text-cyan-300">Anti-Air</span> guns also engage incoming strike aircraft: a downed plane takes its payload with it.</li>
+            <li><strong className="text-white">Sell Bunkers:</strong> Click your bunker and hit <span className="text-emerald-400">💰 Sell</span> — the crew walks out unharmed and <span className="text-green-400">50% of the cost</span> comes back. Regroup instead of holding a dead flank.</li>
             <li><strong className="text-white">Refund:</strong> Units that reach enemy lines refund <span className="text-green-400">50% of their cost</span>.</li>
           </ul>
         </div>
