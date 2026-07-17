@@ -1015,8 +1015,17 @@ const App: React.FC = () => {
             <button
               data-testid="campaign-btn"
               onClick={openCampaign}
-              className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 hover:border-amber-400 transition-all font-bold uppercase tracking-widest text-stone-200 ${compact ? 'px-3 py-1 text-[10px]' : 'px-5 py-2 text-xs'}`}
-            >🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — turn ${campaign.turn + 1}` : 'Grand Campaign'}</button>
+              className={`bg-black/70 backdrop-blur-sm rounded-lg border-2 border-amber-600/70 hover:border-amber-400 hover:bg-amber-950/40 transition-all text-center ${compact ? 'px-3 py-1' : 'px-6 py-2'}`}
+            >
+              <div className={`font-black uppercase tracking-widest text-amber-300 ${compact ? 'text-[11px]' : 'text-sm'}`}>
+                🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — Turn ${campaign.turn + 1}` : 'Grand Campaign'}
+              </div>
+              {!compact && (
+                <div className="text-[10px] text-stone-400 normal-case tracking-normal">
+                  Conquer a 14-territory front, one real battle at a time — march armies, seize the airbase and silo, take the enemy capital
+                </div>
+              )}
+            </button>
             <button
               className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
               onClick={handleStartClick}
@@ -1294,12 +1303,21 @@ const App: React.FC = () => {
               <div>
                 <h2 className="text-amber-400 font-black uppercase tracking-widest text-sm md:text-base">Grand Campaign — Turn {s.turn + 1}</h2>
                 <p className="text-stone-400 text-[11px]">Enemy commander: <span className="text-red-400 font-bold">{persona.name}</span> — {persona.blurb}</p>
+                <p className="text-stone-300 text-[11px] mt-0.5">🎯 <strong className="text-amber-300">Objective:</strong> capture <strong>★ Kreml Bastion</strong> in the far east — or destroy every enemy army.</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={abandonCampaign} className="px-2 py-1 rounded border border-red-800 text-red-400 text-[10px] font-bold uppercase hover:bg-red-950">Abandon</button>
                 <button onClick={() => setCampaignOpen(false)} className="px-2 py-1 rounded border border-stone-600 text-stone-300 text-[10px] font-bold uppercase hover:border-stone-400">Menu</button>
               </div>
             </div>
+            {/* The one thing to do next, said loudly — the old footer hint was invisible */}
+            {!winner && (
+              <div data-testid="campaign-hint" className={`mb-2 rounded-lg border-2 px-3 py-1.5 text-center text-[12px] md:text-[13px] font-bold tracking-wide ${sel ? 'border-amber-400 bg-amber-950/60 text-amber-200' : 'border-blue-500 bg-blue-950/50 text-blue-200'}`}>
+                {sel
+                  ? <>Step 2 — MARCH: click a <span className="text-amber-300">glowing territory</span> next to your army. Enemy ground starts a battle ⚔ — neutral ground is taken without a fight.</>
+                  : <>Step 1 — YOUR MOVE: click one of your <span className="text-blue-300">pulsing blue ⚔ armies</span> to command it.</>}
+              </div>
+            )}
             {winner && (
               <div className={`mb-2 rounded border px-3 py-2 text-center font-black uppercase tracking-widest ${winner === Team.WEST ? 'border-blue-500 text-blue-300 bg-blue-950/60' : 'border-red-500 text-red-300 bg-red-950/60'}`}>
                 {winner === Team.WEST ? '★ Total victory — the East capitulates! ★' : 'Defeat — the West has fallen.'}
@@ -1334,7 +1352,8 @@ const App: React.FC = () => {
                     </div>
                     <div className="text-[8px] text-stone-400 uppercase">{t.terrain.toLowerCase()}</div>
                     {army && (
-                      <div className={`mt-0.5 inline-block rounded px-1 text-[9px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}>
+                      <div className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}
+                        ${army.team === Team.WEST && !sel && !winner ? 'animate-pulse ring-2 ring-amber-300/80' : ''}`}>
                         ⚔ {army.strength}
                       </div>
                     )}
@@ -1344,9 +1363,14 @@ const App: React.FC = () => {
             </div>
             <div className="mt-2 flex flex-wrap items-start justify-between gap-2">
               <div className="text-[10px] text-stone-400 leading-snug">
-                {sel
-                  ? <span className="text-amber-300">Army selected — click a highlighted territory to march (contested ground starts a battle).</span>
-                  : 'Click one of your armies (blue ⚔) to select it. Hold ⚓/✈/☢ territories to unlock gunboats & cruise, air strikes, and the nuke in battle.'}
+                <span className="text-stone-300 font-bold uppercase tracking-wider mr-1.5">Legend:</span>
+                <span className="mr-2">⚔ army (its strength)</span>
+                <span className="mr-2">★ capital</span>
+                <span className="mr-2">⚓ harbor → gunboats & cruise</span>
+                <span className="mr-2">✈ airbase → air strikes</span>
+                <span className="mr-2">☢ silo → the nuke</span>
+                <span>$ extra income</span>
+                <div className="text-stone-500 mt-0.5">Hold a bonus territory and its weapons unlock in your battles. Losing a battle costs the army 1 strength — at 0 it's destroyed.</div>
               </div>
               <div className="text-[10px] text-stone-500 max-w-[46%]">
                 {s.log.slice(-3).map((l, i) => <div key={i}>• {l}</div>)}
