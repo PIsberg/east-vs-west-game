@@ -44,11 +44,11 @@ export const FOW_BLIND_SCATTER = 45;
 export const BUNKER_SELL_REFUND = 0.5;
 
 // ── Capture the Flag mode ────────────────────────────────────────────────────
-// Nine flags in a 3×3 spread; presence flips them (faster than the income
-// points — CTF ground should change hands). Most flags when the clock runs
-// out wins; a tie goes to overtime (first flag lead ends it).
+// Nine flags in a 3×3 spread. Capture is INSTANT — an uncontested unit on a
+// flag flips it to its colour on the spot (the mechanic lives in GameCanvas's
+// capture loop). Most flags when the clock runs out wins; a tie goes to
+// overtime (first flag lead ends it).
 export const CTF_DURATION_TICKS = 14400; // ~4 minutes of nominal sim
-export const CTF_CAPTURE_STEP = 2;       // 2× the income points' flip speed
 
 // Goldmines: two neutral dig sites, point-symmetric like the flank posts but
 // on the opposite diagonal. Holding one pays this as extra income (same

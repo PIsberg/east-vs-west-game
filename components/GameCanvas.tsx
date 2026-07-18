@@ -92,7 +92,6 @@ import {
   BUNKER_SELL_REFUND,
   GOLDMINE_BONUS,
   CTF_DURATION_TICKS,
-  CTF_CAPTURE_STEP,
   FOW_CELL,
   FOW_W,
   FOW_H,
@@ -683,8 +682,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     { x: 490, y: HORIZON_Y + 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
   ]);
   // Capture the Flag: a 3×3 spread of flags REPLACES the income points in ctf
-  // mode (bonus 0 — flags pay nothing, they ARE the win). Presence flips them
-  // at CTF_CAPTURE_STEP speed; most flags at the clock wins, ties go to
+  // mode (bonus 0 — flags pay nothing, they ARE the win). An uncontested unit
+  // on a flag seizes it INSTANTLY; most flags at the clock wins, ties go to
   // overtime. Point-symmetric layout so neither side starts closer.
   const ctfFlagsRef = useRef<CapturePoint[]>(gameMode === 'ctf'
     ? [160, 400, 640].flatMap(x => [HORIZON_Y + 70, (HORIZON_Y + CANVAS_HEIGHT) / 2, CANVAS_HEIGHT - 70].map(y =>
@@ -2090,9 +2089,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Capture points: uncontested ground presence flips them; holders earn
     // bonus income (center +50%, flank posts +12% each)
-    // CTF swaps the whole income-point board for its flag grid
+    // CTF swaps the whole income-point board for its flag grid, and captures
+    // there are INSTANT: proximity is control. An uncontested unit standing on a
+    // neutral or enemy flag flips it to its colour this very tick.
     const isCtf = gameModeRef.current === 'ctf';
-    const capStep = isCtf ? CTF_CAPTURE_STEP : 1;
     for (const cap of (isCtf ? ctfFlagsRef.current : [captureRef.current, ...flankCapsRef.current, ...goldMinesRef.current])) {
       let westIn = false, eastIn = false;
       for (const u of unitsRef.current) {
@@ -2103,8 +2103,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (westIn && eastIn) break;
         }
       }
-      if (westIn && !eastIn) cap.progress = Math.min(CAPTURE_TICKS, cap.progress + capStep);
-      else if (eastIn && !westIn) cap.progress = Math.max(-CAPTURE_TICKS, cap.progress - capStep);
+      // CTF: slam progress to the cap so the flag turns over immediately; income
+      // points still ramp. Contested (both present) or empty flags hold as-is —
+      // a captured flag stays yours until an enemy walks onto it alone.
+      if (westIn && !eastIn) cap.progress = isCtf ? CAPTURE_TICKS : Math.min(CAPTURE_TICKS, cap.progress + 1);
+      else if (eastIn && !westIn) cap.progress = isCtf ? -CAPTURE_TICKS : Math.max(-CAPTURE_TICKS, cap.progress - 1);
       const bonus = cap.bonus ?? 0.5;
       const isCenter = cap === captureRef.current;
       const label = isCtf ? 'a flag' : isCenter ? 'the capture point' : goldMinesRef.current.includes(cap) ? 'a goldmine' : 'a flank post';
