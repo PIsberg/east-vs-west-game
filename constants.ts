@@ -701,11 +701,14 @@ const SPREAD_AT_MAX: Partial<Record<UnitType, number>> = {
 };
 // Artillery and mortar already carry their own scatter, and Tesla/flamethrower
 // do not fire a round at all.
-export const spreadAtRange = (t: UnitType, dist: number, range: number): number => {
+// `rnd` is a uniform [0,1) sample the CALLER draws from the seeded sim stream —
+// this function affects hit resolution, so a hidden Math.random here would be
+// an invisible lockstep desync. No default on purpose.
+export const spreadAtRange = (t: UnitType, dist: number, range: number, rnd: number): number => {
   const s = SPREAD_AT_MAX[t];
   if (!s || range <= 0) return 0;
   const reach = Math.max(0, Math.min(1, dist / range));
-  return (Math.random() - 0.5) * 2 * s * reach;
+  return (rnd - 0.5) * 2 * s * reach;
 };
 
 export interface RoundFx { len: number; girth: number; color: string }
@@ -807,6 +810,13 @@ export const ICE_CROSS_MULT = 0.8;
 // which multiplies on top. Tune HERE for pacing, never via UNIT_CONFIG speeds
 // (those are tuned relative to each other within move classes).
 export const GAME_TEMPO = 1.25;
+
+// Sim-clock resolution: how many milliseconds of SIMULATION time one tick
+// represents. Chosen so sim-time tracks the wall clock at 1× speed (60 fps ×
+// GAME_TEMPO ticks/frame) — every *_MS constant keeps the meaning it was tuned
+// with, but timers now freeze under pause, double under 2×, and are identical
+// on every lockstep client. Gameplay code reads simNow(), never Date.now().
+export const SIM_MS_PER_TICK = 1000 / (60 * GAME_TEMPO);
 
 // ── Air Command ──────────────────────────────────────────────────────────────
 // All air-delivered ordnance shares ONE readiness clock per team: after any

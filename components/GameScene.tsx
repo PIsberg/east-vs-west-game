@@ -43,6 +43,10 @@ interface GameSceneProps {
     ctfFlags?: CapturePoint[]; // Capture the Flag mode's flag grid
     onUnitClick?: (unit: Unit) => void;
     focusIds?: string[];
+    // Sim clock of the frame being rendered (ms). Unit time-stamps (spawnTime,
+    // lastHitTime, buildUntil, suppressedUntil) are SIM time — comparing them
+    // against Date.now() breaks under pause/speed and reads garbage online.
+    simNow?: number;
 }
 
 // Day cycle WITHOUT the night: brightness breathes between full noon (1) and
@@ -705,6 +709,10 @@ const TEAM_TINT_EAST = '#f87171';
 // the GameScene body before children render; the Canvas remounts on toggle so
 // every tinted clone and flag re-evaluates.
 let CB_MODE = false;
+// Sim clock for this frame — stamped in the GameScene body each render (same
+// synchronous module-level pattern as CB_MODE) so deeply nested unit visuals
+// can read it without threading a prop through every layer.
+let SIM_NOW = 0;
 const eastColor = (normal: string, cbAlt = '#f59e0b') => CB_MODE ? cbAlt : normal;
 const teamTint = (team: Team) => team === Team.WEST ? TEAM_TINT_WEST : eastColor(TEAM_TINT_EAST, '#fbbf24');
 
@@ -1169,12 +1177,12 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
 
     const position = [unit.position.x, terrainH, unit.position.y];
 
-    const isHit = !!(unit.lastHitTime && (Date.now() - unit.lastHitTime) < 140);
+    const isHit = !!(unit.lastHitTime && (SIM_NOW - unit.lastHitTime) < 140);
 
     // Height offset for different units
     let yOffset = 0;
     if (unit.type === UnitType.AIRBORNE) {
-        const lifeTime = Date.now() - (unit.spawnTime || 0);
+        const lifeTime = SIM_NOW - (unit.spawnTime || 0);
         if (lifeTime < 3000) {
             yOffset = 200 * (1 - Math.min(1, lifeTime / 3000));
         }
@@ -1370,7 +1378,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                             )}
 
                             {/* Parachute Check */}
-                            {(Date.now() - (unit.spawnTime || 0) < 3000) && (
+                            {(SIM_NOW - (unit.spawnTime || 0) < 3000) && (
                                 <group position={[0, 40, 0]}>
                                     <mesh position={[0, 5, 0]}>
                                         <sphereGeometry args={[15, 16, 16, 0, Math.PI * 2, 0, Math.PI * 0.5]} />
@@ -1717,9 +1725,9 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.BUNKER && (() => {
                     // Under construction: the structure rises out of the ground over
                     // the build time, wrapped in scaffolding, with no gun yet.
-                    const building = !!unit.buildUntil && Date.now() < unit.buildUntil;
+                    const building = !!unit.buildUntil && SIM_NOW < unit.buildUntil;
                     const progress = building
-                        ? Math.max(0.08, 1 - (unit.buildUntil! - Date.now()) / BUNKER_BUILD_MS)
+                        ? Math.max(0.08, 1 - (unit.buildUntil! - SIM_NOW) / BUNKER_BUILD_MS)
                         : 1;
                     const manned = Math.min(unit.garrison || 0, BUNKER_GARRISON_MAX);
                     return (
@@ -1890,7 +1898,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {/* Pinned by incoming fire: dust kicked around his boots. Without a
                     cue, suppression is an invisible mechanic — the player just sees
                     his troops mysteriously bog down. */}
-                {!!unit.suppressedUntil && Date.now() < unit.suppressedUntil && (
+                {!!unit.suppressedUntil && SIM_NOW < unit.suppressedUntil && (
                     <group position={[0, -yOffset - bobY, 0]}>
                         {[0, 1, 2].map(i => {
                             const a = (Date.now() * 0.004) + (i * Math.PI * 2) / 3;
@@ -2183,7 +2191,7 @@ const MAT_INST_BAR = new THREE.MeshBasicMaterial();
 // Airborne units hang under a parachute on the way in; drones and fighters fly.
 const unitYOffset = (unit: Unit) => {
     if (unit.type === UnitType.AIRBORNE) {
-        const t = Date.now() - (unit.spawnTime || 0);
+        const t = SIM_NOW - (unit.spawnTime || 0);
         return t < 3000 ? 200 * (1 - Math.min(1, t / 3000)) : 0;
     }
     if (unit.type === UnitType.DRONE) return 25;
@@ -3733,9 +3741,11 @@ const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
 const MOON_COLOR = new THREE.Color('#93c5fd');
 
-export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, ctfFlags, onUnitClick, focusIds, selectedIds, onCameraApi }) => {
+export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, ctfFlags, onUnitClick, focusIds, selectedIds, onCameraApi, simNow }) => {
     // Must be set before children render — teamTint/eastColor read it
     CB_MODE = cb;
+    // Same contract for the sim clock (unit stamps are sim-time, not wall-time)
+    if (simNow !== undefined) SIM_NOW = simNow;
 
     // Imperative camera API for the on-screen zoom/scroll buttons. Zoom scales
     // the camera's offset from the target (OrbitControls' min/maxDistance
@@ -3816,8 +3826,14 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
         weather === 'storm' ? 0.15 :
         weather === 'snow'  ? 0.5 : 0.6;
 
+    // shadows='percentage' (PCFShadowMap), NOT the boolean: three r185
+    // deprecated PCFSoftShadowMap and warns on EVERY assignment — R3F
+    // re-applies the prop each render, and in dev Vite forwards that
+    // per-frame console.warn to the server as network traffic, which keeps
+    // networkidle-based e2e waits from ever settling. Three maps soft->PCF
+    // internally anyway, so the render output is identical.
     return (
-        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low'} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
+        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low' ? 'percentage' : false} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
             <color attach="background" args={[skyColor]} />
             {/* Default camera sits ~735 units out — keep fog far beyond that so
                 fog weather reads as heavy haze, not a total whiteout */}
