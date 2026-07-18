@@ -31,6 +31,9 @@ export class LockstepScheduler {
   private send: (step: number, commands: SimCommand[]) => void;
   /** Wall-clock ms when the loop first found itself blocked (0 = not blocked) */
   waitingSince = 0;
+  /** Bounded event trace for desync forensics (flushes, receipts, executions) */
+  readonly trace: string[] = [];
+  private tr(ev: string) { if (this.trace.length < 400) this.trace.push(ev); }
 
   constructor(opts: {
     role: 'host' | 'guest';
@@ -49,12 +52,15 @@ export class LockstepScheduler {
   }
 
   /** Queue a local intent; it rides the next outgoing bundle. */
-  localInput(cmd: SimCommand) { this.outgoing.push(cmd); }
+  localInput(cmd: SimCommand) { this.outgoing.push(cmd); this.tr(`in:${cmd.kind}`); }
 
   /** Feed a peer 'cmds' message in. Idempotent (reliable channel may not dedupe a reconnect replay). */
   onRemote(step: number, commands: SimCommand[]) {
     const b = this.steps.get(step) ?? {};
-    b[this.role === 'host' ? 'guest' : 'host'] ??= commands;
+    const key = this.role === 'host' ? 'guest' : 'host';
+    if (b[key] !== undefined && commands.length) this.tr(`DUP-BLOCKED:s${step}n${commands.length}`);
+    if (commands.length) this.tr(`rx:s${step}n${commands.length}`);
+    b[key] ??= commands;
     this.steps.set(step, b);
   }
 
@@ -76,12 +82,16 @@ export class LockstepScheduler {
    */
   ticksAllowed(nextTick: number): number {
     const curStep = Math.floor(nextTick / this.stepTicks);
+    // A large jump in the flush frontier means some caller ran this scheduler
+    // at a wildly different tick — the forensic smoking gun for a stale loop.
+    if (curStep + this.delaySteps - this.sentThrough > 12) this.tr(`jump:${this.sentThrough}->${curStep + this.delaySteps}@t${nextTick}`);
     // Flush our bundle(s) up to curStep + delay. The while covers held loops:
     // if we stalled, several flush points may have queued up.
     while (this.sentThrough < curStep + this.delaySteps) {
       const step = ++this.sentThrough;
       if (step < this.delaySteps) continue; // pre-agreed empty bootstrap steps
       const commands = step === curStep + this.delaySteps ? this.outgoing.splice(0) : [];
+      if (commands.length) this.tr(`tx:s${step}n${commands.length}@t${nextTick}`);
       const b = this.steps.get(step) ?? {};
       b[this.role] = commands;
       this.steps.set(step, b);
@@ -102,7 +112,9 @@ export class LockstepScheduler {
     if (tick % this.stepTicks !== 0) return [];
     const b = this.steps.get(tick / this.stepTicks);
     if (!b) return [];
-    return [...(b.host ?? []), ...(b.guest ?? [])];
+    const cmds = [...(b.host ?? []), ...(b.guest ?? [])];
+    if (cmds.length) this.tr(`exec:t${tick}n${cmds.length}`);
+    return cmds;
   }
 
   /** Drop bundles the sim has fully executed (call occasionally with the current tick). */

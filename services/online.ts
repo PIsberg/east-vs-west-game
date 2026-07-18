@@ -62,6 +62,7 @@ export class OnlineSession {
   private listeners = new Set<() => void>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  private lastHeardMs = 0; // wall-clock of the last message from the peer
 
   static host(opts?: { loopback?: boolean; code?: string }): OnlineSession {
     const code = opts?.code ?? makeRoomCode();
@@ -160,7 +161,16 @@ export class OnlineSession {
   private startPing() {
     if (this.pingTimer) return;
     this.pingTimer = setInterval(() => {
-      if (!this.closed) this.send({ v: PROTOCOL_VERSION, type: 'ping', sentAt: performance.now() });
+      if (this.closed) return;
+      this.send({ v: PROTOCOL_VERSION, type: 'ping', sentAt: performance.now() });
+      // Heartbeat: a peer can vanish WITHOUT a close event — a tab killed
+      // mid-frame, a NAT mapping that silently died, the loopback channel's
+      // other side gone. Pings flow every 2s, so >10s of total silence means
+      // the peer is unreachable (spec §4.5's ten-second rule).
+      if (this.lastHeardMs && !this.snap.peerLeft &&
+          Date.now() - this.lastHeardMs > 10000) {
+        this.update(s => { s.peerLeft = true; });
+      }
     }, 2000);
   }
 
@@ -188,6 +198,7 @@ export class OnlineSession {
   }
 
   private onMsg(m: NetMsg) {
+    this.lastHeardMs = Date.now();
     if (m.v !== PROTOCOL_VERSION) {
       this.update(s => { s.error = 'Protocol mismatch — both players should hard-refresh to the latest version.'; });
       return;

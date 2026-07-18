@@ -578,9 +578,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Date.now() below is display/telemetry only.
   const tickCountRef = useRef(0);
   const simNow = () => tickCountRef.current * SIM_MS_PER_TICK;
-  // Online lockstep plumbing (stable per match — GameCanvas remounts per battle)
+  // Online lockstep plumbing — FROZEN AT MOUNT, deliberately not synced to the
+  // prop. During the lobby->match transition React briefly re-renders the
+  // OUTGOING splash canvas with the scheduler prop set; if that stale canvas
+  // adopted it, its next rAF would flush the scheduler at its own (huge) tick
+  // count, flooding the peer with empty bundles for steps the real match
+  // hasn't reached and silently swallowing early commands (the intermittent
+  // "guest never saw the host's opening wave" desync). A canvas either owns
+  // its scheduler from birth or never touches one.
   const lockstepRef = useRef(lockstep);
-  lockstepRef.current = lockstep;
   const onNetChecksumRef = useRef(onNetChecksum);
   onNetChecksumRef.current = onNetChecksum;
   const onDesyncRef = useRef(onDesync);
@@ -863,7 +869,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Debug Keys
   useEffect(() => {
+    // Weather is SIM state: a local-only mutation desyncs a lockstep match on
+    // the next checksum. Debug toggle stays local-play-only, and never steals
+    // keystrokes from a text field (the room-code alphabet contains R).
+    if (lockstep) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       if (e.key.toLowerCase() === 'r') {
         weatherRef.current = weatherRef.current === 'clear' ? 'rain' : 'clear';
         weatherTimerRef.current = simNow() + 20000; // Lock state for 20s
@@ -873,7 +885,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [lockstep]);
 
   useEffect(() => {
     // Terrain must be identical on both lockstep clients: layout AND ids come
@@ -1592,8 +1604,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return h >>> 0;
   };
   // Checkpoint hashes recorded at fixed ticks so two clients (or two runs)
-  // can be compared tick-for-tick after the fact.
+  // can be compared tick-for-tick after the fact. The info journal beside it
+  // is the desync triage kit: WHICH aggregate diverged first (entity count?
+  // rng draws? money?) points straight at the offending subsystem.
   const checksumLogRef = useRef<Record<number, number>>({});
+  const checksumInfoRef = useRef<Record<number, string>>({});
 
   const update = useCallback(() => {
     // 'time' feeds steering commits and hover-bob MOVEMENT — sim state, so it
@@ -1614,6 +1629,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (tickCountRef.current % 150 === 0) {
       const h = simChecksum();
       checksumLogRef.current[tickCountRef.current] = h;
+      checksumInfoRef.current[tickCountRef.current] =
+        `u${unitsRef.current.length} p${projectilesRef.current.length} d${simDrawsRef.current} id${simIdRef.current}` +
+        ` $${moneyRef.current[Team.WEST].toFixed(2)}/${moneyRef.current[Team.EAST].toFixed(2)}` +
+        ` fly${flyoversRef.current.length} t${terrainRef.current.length}`;
       if (lockstepRef.current && !desyncedRef.current) {
         onNetChecksumRef.current?.(tickCountRef.current, h);
         const peer = peerChecksumsRef?.current;
@@ -5350,6 +5369,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         simDraws: simDrawsRef.current,
         checksum: () => simChecksum(),
         checksums: { ...checksumLogRef.current }, // tick -> hash checkpoints
+        checksumInfo: { ...checksumInfoRef.current }, // tick -> compact state journal (desync triage)
         // Schedule a spawn for an exact future tick through the real input
         // pipeline — the determinism harness needs identical inputs to land on
         // identical ticks in two independent browser instances.
@@ -5560,7 +5580,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
             <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
-              {cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT') : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
+              {/* Online and vs-CPU both have a defined "you" — speak to them.
+                  Hotseat/spectate keep the neutral banner. */}
+              {localTeam ? (gameOver === localTeam ? 'VICTORY' : 'DEFEAT')
+                : cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT')
+                : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
             </h2>
             <div className="text-2xl font-bold text-stone-300">
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!

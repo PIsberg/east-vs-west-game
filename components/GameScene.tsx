@@ -2315,6 +2315,9 @@ const BoxSelect = ({ units, selectTeam, disabled, onBoxSelect, onMarquee, onDrag
 
     useEffect(() => {
         const el = gl.domElement;
+        // A canvas mid-teardown (match-transition remount) can hand out a
+        // renderer whose DOM element is already gone — nothing to listen on.
+        if (!el) return;
         const DRAG_SLOP = 6; // below this it's a click, and clicks still select single units
 
         const down = (e: PointerEvent) => {

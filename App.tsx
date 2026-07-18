@@ -717,6 +717,12 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setSelection(null); setTargetingInfo(null); return; }
+      // Never steal keystrokes from a text field (the online join-code input
+      // sits on the splash — typing "EW-B8TL" used to arm a Mine Tank via the
+      // '8' hotkey), and nothing spawns before the battle starts.
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (showSplash) return;
       // Unit Order (Top to Bottom as rendered)
       const unitOrder = [
         UnitType.SOLDIER, UnitType.SPECIAL_FORCES, UnitType.MINE_PERSONAL, // Infantry
@@ -731,15 +737,19 @@ const App: React.FC = () => {
       // East: F12 down to F1. F12=Top(0), F11=1...
       const eastKeys = ['F12', 'F11', 'F10', 'F9', 'F8', 'F7', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
+      // Hotseat convenience keys — but only for sides THIS player commands
+      // (never the CPU's army, never the online opponent's).
+      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe;
+
       // Check West
       const westIndex = westKeys.indexOf(e.key);
-      if (westIndex !== -1 && westIndex < unitOrder.length) {
+      if (westIndex !== -1 && westIndex < unitOrder.length && canCommand(Team.WEST)) {
         handleSpawnRequest(Team.WEST, unitOrder[westIndex]);
       }
 
       // Check East
       const eastIndex = eastKeys.indexOf(e.key);
-      if (eastIndex !== -1 && eastIndex < unitOrder.length) {
+      if (eastIndex !== -1 && eastIndex < unitOrder.length && canCommand(Team.EAST)) {
         e.preventDefault(); // F-keys often have browser defaults
         handleSpawnRequest(Team.EAST, unitOrder[eastIndex]);
       }
@@ -747,7 +757,8 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState.money]); // Dep on money for validation inside handleSpawnRequest? 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.money, showSplash, onlineFoe, cpuLevel]); // Dep on money for validation inside handleSpawnRequest?
   // Actually handleSpawnRequest uses state, so we need to be careful with closure stale state or dependency.
   // handleSpawnRequest depends on gameState.money.
   // Better to use ref for money or include handleSpawnRequest in dep array and wrap it in useCallback?
@@ -1307,7 +1318,11 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          {/* Online: keyed by the match seed so the canvas swap is ATOMIC with
+              the phase flip — the outgoing splash canvas must never render
+              even once with the lockstep scheduler attached (see the frozen
+              lockstepRef in GameCanvas for why). */}
+          <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again
