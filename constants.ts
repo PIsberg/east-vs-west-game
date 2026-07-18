@@ -50,11 +50,12 @@ export const BUNKER_SELL_REFUND = 0.5;
 // overtime (first flag lead ends it).
 export const CTF_DURATION_TICKS = 14400; // ~4 minutes of nominal sim
 
-// Goldmines: two neutral dig sites, point-symmetric like the flank posts but
-// on the opposite diagonal. Holding one pays this as extra income (same
-// flat-per-tick mechanism as the capture points: bonus × MONEY_PER_TICK) —
-// worth more than a flank post (0.12), less than the center flag (0.5), so
-// the mid-band has four separate fights worth picking.
+// Goldmines: two neutral dig sites, seeded per map (point-symmetric about the
+// field centre so neither side starts closer — placement lives in GameCanvas's
+// terrain effect). Holding one pays this as extra income (same flat-per-tick
+// mechanism as the capture points: bonus × MONEY_PER_TICK) — worth more than a
+// flank post (0.12), less than the center flag (0.5), so the mid-band has four
+// separate fights worth picking.
 export const GOLDMINE_BONUS = 0.25;
 
 // Occupiable rubble: a collapsed strongpoint degrades instead of vanishing —

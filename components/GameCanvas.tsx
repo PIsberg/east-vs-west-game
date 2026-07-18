@@ -675,8 +675,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     { x: 310, y: HORIZON_Y + 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
     { x: 490, y: CANVAS_HEIGHT - 62, radius: 42, owner: null, progress: 0, bonus: 0.12 },
   ]);
-  // Goldmines: the flank posts' mirror diagonal — extra income for whoever
-  // holds the dig. Same CapturePoint machinery, richer bonus, own visuals.
+  // Goldmines: extra income for whoever holds the dig. Same CapturePoint
+  // machinery, richer bonus, own visuals. These are the initial/fallback
+  // positions — the terrain effect RESEEDS them per map (see below) so a dig
+  // never lands in a river; the fixed diagonal is only the cramped-map fallback.
   const goldMinesRef = useRef<CapturePoint[]>([
     { x: 310, y: CANVAS_HEIGHT - 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
     { x: 490, y: HORIZON_Y + 84, radius: 40, owner: null, progress: 0, bonus: GOLDMINE_BONUS },
@@ -1079,6 +1081,52 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (stumps.some(o => Math.abs(o.x - x) < w2 + 8 && Math.abs(o.y - y) < h2 + 8)) return false;
         return true;
       };
+
+      // Goldmines: two dig sites, now SEEDED per map (they used to sit at the
+      // same fixed diagonal on every map, which could bury one in a river on a
+      // water-heavy map — Archipelago did exactly that). trand keeps the roll
+      // identical on both lockstep clients. The pair stays point-symmetric about
+      // field centre so neither side starts closer. A site is valid only where a
+      // unit can actually stand and capture: OFF water, off a building/bridge
+      // footprint and off a hill peak — checked for the site AND its mirror. A
+      // random scatter tries first; if a cramped map (Urban/Archipelago) starves
+      // it, a deterministic grid scan guarantees an on-land pair anyway.
+      {
+        const GM_R = 40;
+        const fcx = CANVAS_WIDTH / 2, fcy = (HORIZON_Y + CANVAS_HEIGHT) / 2;
+        // Standable = capturable ground. Tight footprint checks (no big clearance
+        // margins) so a flag may sit beside a building or a bank — only its centre
+        // must be reachable — which is what lets even Urban find spots.
+        const standable = (x: number, y: number) =>
+          x > 60 && x < CANVAS_WIDTH - 60 && y > HORIZON_Y + 30 && y < CANVAS_HEIGHT - 30 &&
+          !riverSegs.some(s => Math.abs(s.x - x) < (s.width ?? 40) / 2 + 6 && Math.abs(s.y - y) < 14) &&
+          !t.some(o => o.type === 'bridge' && Math.abs(o.x - x) < (o.width || 60) / 2 && Math.abs(o.y - y) < (o.height || 40) / 2) &&
+          !t.some(o => o.type === 'building' && Math.abs(o.x - x) < (o.width || 60) / 2 + 4 && Math.abs(o.y - y) < (o.height || 40) / 2 + 4) &&
+          !hills.some(o => Math.hypot(o.x - x, o.y - y) < (o.size ?? 0));
+        const farFromCaps = (x: number, y: number) =>
+          Math.hypot(captureRef.current.x - x, captureRef.current.y - y) > 90 &&
+          flankCapsRef.current.every(f => Math.hypot(f.x - x, f.y - y) > 70);
+        // A west-side site is good if it AND its point-mirror are both playable.
+        const pairOk = (x: number, y: number) => {
+          const mx = CANVAS_WIDTH - x, my = 2 * fcy - y;
+          return Math.hypot(mx - x, my - y) > 150 && standable(x, y) && standable(mx, my) && farFromCaps(x, y) && farFromCaps(mx, my);
+        };
+        let gmx = 0, gmy = 0, gmOk = false;
+        for (let i = 0; i < 400 && !gmOk; i++) {
+          const x = 140 + trand() * (fcx - 175);                              // ~[140, 365], left of centre, off the spawn edge
+          const y = HORIZON_Y + 40 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 80); // ~[140, 410]
+          if (pairOk(x, y)) { gmx = x; gmy = y; gmOk = true; }
+        }
+        // Deterministic fallback: sweep the west band on a coarse grid and take
+        // the first playable symmetric pair (no RNG, so still lockstep-identical).
+        for (let x = 150; x <= fcx - 40 && !gmOk; x += 14)
+          for (let y = HORIZON_Y + 45; y <= CANVAS_HEIGHT - 45 && !gmOk; y += 14)
+            if (pairOk(x, y)) { gmx = x; gmy = y; gmOk = true; }
+        const gm = (x: number, y: number): CapturePoint => ({ x, y, radius: GM_R, owner: null, progress: 0, bonus: GOLDMINE_BONUS });
+        goldMinesRef.current = gmOk
+          ? [gm(gmx, gmy), gm(CANVAS_WIDTH - gmx, 2 * fcy - gmy)]
+          : [gm(310, CANVAS_HEIGHT - 84), gm(490, HORIZON_Y + 84)];           // last-ditch classic diagonal (should never hit)
+      }
       let placed = 0;
       for (let i = 0; i < OCCUPIABLE_PER_MAP * 60 && placed < OCCUPIABLE_PER_MAP; i++) {
         // Bias across three vertical lanes so they don't clump on one flank
@@ -5164,12 +5212,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               // the CPU doesn't hold — easy keeps building blind
               let lane: SpawnLane | undefined;
               if (DIFF.commands > 0 && srand() < 0.45) {
-                const [topCap, botCap] = flankCapsRef.current;
-                const wantTop = topCap.owner !== ME;
-                const wantBot = botCap.owner !== ME;
-                if (wantTop && wantBot) lane = srand() < 0.5 ? 'top' : 'bot';
-                else if (wantTop) lane = 'top';
-                else if (wantBot) lane = 'bot';
+                // Lean toward any capture objective the CPU doesn't hold —
+                // flank posts AND goldmines (they pay income, so contest them
+                // like a post; and goldmines now sit at seeded spots, not always
+                // on a flank). Classify each unheld objective by its field row
+                // and let the existing top/mid/bot lanes carry the push.
+                const midY = (HORIZON_Y + CANVAS_HEIGHT) / 2;
+                const laneOf = (y: number): SpawnLane => y < midY - 45 ? 'top' : y > midY + 45 ? 'bot' : 'mid';
+                const wanted = [...flankCapsRef.current, ...goldMinesRef.current]
+                  .filter(c => c.owner !== ME)
+                  .map(c => laneOf(c.y));
+                if (wanted.length) lane = wanted[Math.floor(srand() * wanted.length)];
               }
               if (chosen === UnitType.SOLDIER) {
                 const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
