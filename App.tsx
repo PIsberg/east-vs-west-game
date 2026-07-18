@@ -381,6 +381,30 @@ const App: React.FC = () => {
   const onlinePlaying = !!(online && online.phase === 'playing' && online.config && session);
   const onlineTeam = onlinePlaying ? (session!.localTeam() === 'EAST' ? Team.EAST : Team.WEST) : null;
   const onlineFoe = onlineTeam ? (onlineTeam === Team.WEST ? Team.EAST : Team.WEST) : null;
+  // Engine callbacks hoisted out of the JSX: the canvas is mounted
+  // conditionally (unmounted during the online lobby), and hooks may not
+  // live inside a conditional element.
+  const onGameStateChange = useCallback((s: GameState) => setGameState(s), []);
+  const clearSpawnQueueCb = useCallback(() => setSpawnQueue([]), []);
+  const clearCommandQueueCb = useCallback(() => setCommandQueue([]), []);
+  const clearOrderQueueCb = useCallback(() => setOrderQueue([]), []);
+  const onSelectUnitsCb = useCallback((team: Team, ids: string[]) => {
+    setSelection(ids.length ? { team, ids } : null);
+    if (ids.length) {
+      setTroopHint(false); // they found it — never nag again
+      try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
+    }
+  }, []);
+
+  // Effective map/mode for the ENGINE, derived at render time. The phase-flip
+  // effect also writes these into menu state, but that lands one commit AFTER
+  // the canvas key changes — a guest whose saved menu prefs differed from the
+  // host's config would first-mount the match canvas with ITS OWN map/mode.
+  // Mount-captured refs (ctf flag grid, opening weather forecast) then never
+  // heal, and the sims diverge from tick 1 (found in the field: "diverged at
+  // tick 150" on the first real cross-machine match).
+  const effMapType = onlinePlaying ? (online!.config!.map as MapType) : mapType;
+  const effGameMode = onlinePlaying ? (online!.config!.mode as GameMode) : gameMode;
 
   const playerSide = campaignBattle ? Team.WEST : (onlineTeam ?? playerSidePref);
 
@@ -389,7 +413,12 @@ const App: React.FC = () => {
     try { localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide: playerSidePref, cpuLevel, gameMode, mapType, cpuPersona })); } catch { /* ignore */ }
   }, [playerSidePref, cpuLevel, gameMode, mapType, cpuPersona]);
 
-  const cpuTeam = campaignBattle ? Team.EAST : (cpuLevel === 'off' ? null : (playerSidePref === Team.WEST ? Team.EAST : Team.WEST));
+  // Online there is NO CPU side regardless of the saved single-player pref —
+  // a guest whose last local game was vs the CPU used to get BOTH panels
+  // hidden (its own side computed as "the CPU's").
+  const cpuTeam = onlinePlaying ? null
+    : campaignBattle ? Team.EAST
+    : (cpuLevel === 'off' ? null : (playerSidePref === Team.WEST ? Team.EAST : Team.WEST));
   const cpuTeams = SPECTATE ? [Team.WEST, Team.EAST] : (cpuTeam ? [cpuTeam] : []);
   // A CPU side's spawn panel is all disabled buttons — dead space. Hide it and
   // give the width back to the battlefield, so a single-player game (or a
@@ -1321,14 +1350,14 @@ const App: React.FC = () => {
           {/* Online: keyed by the match seed so the canvas swap is ATOMIC with
               the phase flip — the outgoing splash canvas must never render
               even once with the lockstep scheduler attached (see the frozen
-              lockstepRef in GameCanvas for why). */}
-          <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
-            setSelection(ids.length ? { team, ids } : null);
-            if (ids.length) {
-              setTroopHint(false); // they found it — never nag again
-              try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
-            }
-          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
+              lockstepRef in GameCanvas for why). While a session is PRE-match
+              (connecting/lobby) the engine unmounts entirely: the splash
+              battle is pointless there, burns CPU the handshake needs, and
+              tearing it down mid-WebGL-init at match start raced R3F's event
+              hookup into a null-target crash. Element is built unconditionally
+              (inline hooks must run every render), mounted conditionally. */}
+          {(!online || onlinePlaying) ? <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={onGameStateChange} spawnQueue={spawnQueue} clearSpawnQueue={clearSpawnQueueCb} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={effMapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={effGameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={clearCommandQueueCb} orderQueue={orderQueue} clearOrderQueue={clearOrderQueueCb} onSelectUnits={onSelectUnitsCb} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
+          : <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900" />}
           {/* Online status overlays. Order matters: desync trumps everything
               (the match is void), disconnect next, then the routine hold. */}
           {onlinePlaying && online?.desyncTick != null && (
