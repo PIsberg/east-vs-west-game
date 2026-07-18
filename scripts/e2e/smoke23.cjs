@@ -33,15 +33,23 @@ const BASE = `http://localhost:3000/east-vs-west-game/?loop&netcode=${CODE}&neta
   });
 
   const errors = [];
+  // DIVERGENT saved prefs on purpose — the first real cross-machine match
+  // desynced because the guest's canvas briefly mounted with the guest's OWN
+  // saved map/mode (mount-captured refs never healed), and the guest's saved
+  // cpuLevel hid its spawn panels. Identical prefs would mask both bugs.
+  const PREFS = {
+    host: { playerSide: 'WEST', cpuLevel: 'off', gameMode: 'points', mapType: 'COUNTRYSIDE' },
+    join: { playerSide: 'EAST', cpuLevel: 'normal', gameMode: 'ctf', mapType: 'WINTER' },
+  };
   const mkPage = async (role) => {
     const p = await b.newPage();
     p.on('pageerror', e => errors.push(`${role}: ${String(e).slice(0, 200)}`));
-    await p.evaluateOnNewDocument(() => {
+    await p.evaluateOnNewDocument((prefs) => {
       localStorage.setItem('ewv-fx', 'high');
       localStorage.setItem('ewv-music', '0');
       localStorage.setItem('ewv-hint-troopctl', '1');
-      localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide: 'WEST', cpuLevel: 'off', gameMode: 'points', mapType: 'COUNTRYSIDE' }));
-    });
+      localStorage.setItem('ewv-prefs', JSON.stringify(prefs));
+    }, PREFS[role]);
     await p.goto(`${BASE}&netrole=${role}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
     return p;
   };
@@ -58,6 +66,12 @@ const BASE = `http://localhost:3000/east-vs-west-game/?loop&netcode=${CODE}&neta
       .catch(() => { throw new Error(`${name} never reached the battle (lobby handshake failed)`); });
   }
   console.log(`match booted on both tabs in ${Date.now() - t0}ms`);
+
+  // The guest commands EAST and must have ITS spawn panel visible — a stale
+  // single-player cpuLevel pref used to hide BOTH panels on the guest.
+  const guestButtons = await guest.evaluate(() =>
+    Array.from(document.querySelectorAll('button')).filter(x => ['SQUAD', 'TANK', 'SNIPER'].includes(x.getAttribute('title'))).length);
+  if (guestButtons === 0) { console.error('FAIL\n - guest has no spawn buttons (stale cpuLevel pref hid its panel)'); process.exit(1); }
 
   // Headless lockstep rates swing wildly with machine load (2-40 ticks/s),
   // so poll for tick milestones instead of sleeping fixed amounts. Both tabs
