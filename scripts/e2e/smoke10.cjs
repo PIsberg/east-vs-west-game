@@ -9,7 +9,11 @@ const puppeteer = require('puppeteer-core');
   p.on('pageerror', e => errors.push(String(e).slice(0, 200)));
   p.on('console', m => { if (m.type() === 'error' && !m.text().includes('favicon')) errors.push('C: ' + m.text().slice(0, 150)); });
   await p.evaluateOnNewDocument(() => { localStorage.setItem('ewv-hint-troopctl', '1'); localStorage.setItem('ewv-music', '0'); localStorage.setItem('ewv-fx', 'high'); localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide: 'WEST', cpuLevel: 'normal', gameMode: 'points', mapType: 'COUNTRYSIDE' })); });
-  await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'networkidle2', timeout: 60000 });
+  // Pinned seed: COUNTRYSIDE only rolls a river 55% of the time, and the
+  // water/wood assertions need one. Seed 101 is a verified river layout.
+  await p.goto('http://localhost:3000/east-vs-west-game/?seed=101', { waitUntil: 'load', timeout: 60000 });
+  await p.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('DEPLOY FORCES')), { timeout: 60000 });
+
   await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(x => x.textContent.includes('DEPLOY FORCES')).click(); });
   await new Promise(r => setTimeout(r, 1000));
   // Spawn a couple of West units incl. a heli (air-cross rendering)
@@ -17,6 +21,12 @@ const puppeteer = require('puppeteer-core');
     await p.evaluate(x => { const btn = Array.from(document.querySelectorAll('button')).filter(b2 => b2.getAttribute('title') === x)[0]; if (btn) btn.click(); }, t);
     await new Promise(r => setTimeout(r, 150));
   }
+  // East dots via the debug spawn hook: this test probes MINIMAP RENDERING,
+  // and at headless tick rates (~10/s) the CPU fits only 1-2 buys into the
+  // sample window — whether they read as >3 red pixels was pure shopping luck
+  // (a 3-man squad passed, a lone artillery piece failed).
+  await p.waitForFunction('!!window.__ewDebug', { timeout: 30000 });
+  await p.evaluate(() => { for (let i = 0; i < 3; i++) window.__ewDebug.spawn('EAST', 'SOLDIER'); });
   // Sample repeatedly — East units come and go as the battle swings
   let m = null;
   for (let i = 0; i < 8; i++) {

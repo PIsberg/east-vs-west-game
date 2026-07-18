@@ -5,6 +5,7 @@ import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } fro
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST, factionAllowed } from './constants';
 import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
+import { OnlineSession, type OnlineSnapshot } from './services/online';
 import {
   CampaignState, TERRITORIES, territory, createCampaign, campaignMove, applyBattleResult,
   cpuCampaignTurn, reinforce, campaignWinner, battleSettings, bannedFor, saveCampaign, loadCampaign,
@@ -142,6 +143,10 @@ const REMATCH = (() => {
   return false;
 })();
 const PARAM_MAP = (URL_PARAMS.get('map') || '').toUpperCase();
+// ?seed=12345 pins the deterministic match seed (terrain, weather, combat
+// rolls) — the determinism harness runs two instances on one seed and demands
+// identical checksums. Undefined = every local match rolls its own.
+const PARAM_SEED = URL_PARAMS.has('seed') ? (Number(URL_PARAMS.get('seed')) >>> 0) : undefined;
 
 // Preset challenge missions: fixed settings + optional handicap, completion
 // badges persist in ewv-challenges
@@ -281,7 +286,103 @@ const App: React.FC = () => {
   // Whose assault the running battle settles — decides what the CPU still owes
   const campaignPhaseRef = useRef<'player' | 'cpu'>('player');
 
-  const playerSide = campaignBattle ? Team.WEST : playerSidePref;
+  // ── Online 1v1 (lockstep over WebRTC / loopback — services/online.ts) ────
+  const [session, setSession] = useState<OnlineSession | null>(null);
+  const [online, setOnline] = useState<OnlineSnapshot | null>(null);
+  const [joinCode, setJoinCode] = useState('');
+  const [netWaitMs, setNetWaitMs] = useState(0);   // lockstep hold duration (waiting overlay)
+  const [netClaimed, setNetClaimed] = useState(false); // player already claimed the win/loss overlay
+  const peerChecksumsRef = useRef<Record<number, number>>({});
+  const sessionRef = useRef(session); sessionRef.current = session;
+
+  const beginSession = (s: OnlineSession) => {
+    peerChecksumsRef.current = s.peerChecksums; // same object GameCanvas will compare & drain
+    setNetClaimed(false);
+    setSession(s);
+    setOnline({ ...s.snap });
+  };
+  const startHost = () => beginSession(OnlineSession.host({
+    loopback: URL_PARAMS.has('loop'),
+    code: URL_PARAMS.get('netcode') ?? undefined, // pinned code for the loopback e2e
+  }));
+  const startJoin = (code: string) => {
+    if (!code.trim()) return;
+    beginSession(OnlineSession.join(code.trim().toUpperCase(), { loopback: URL_PARAMS.has('loop') }));
+  };
+  const endOnline = () => {
+    sessionRef.current?.close();
+    setSession(null);
+    setOnline(null);
+    setShowSplash(true);
+    setSplashFading(false);
+  };
+
+  // Mirror the session's snapshot into React state
+  useEffect(() => {
+    if (!session) return;
+    (window as any).__ewNet = session; // debug/e2e probe surface
+    const un = session.subscribe(() => setOnline({ ...session.snap }));
+    setOnline({ ...session.snap });
+    return () => { un(); if ((window as any).__ewNet === session) delete (window as any).__ewNet; };
+  }, [session]);
+  useEffect(() => () => sessionRef.current?.close(), []); // tab close / unmount
+
+  // The host's regular menu picks ARE the lobby settings — stream them over
+  useEffect(() => {
+    session?.setSettings({
+      map: mapType, mode: gameMode, asymmetry: asym, fogOfWar: fow,
+      hostTeam: playerSidePref === Team.EAST ? 'EAST' : 'WEST',
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, mapType, gameMode, asym, fow, playerSidePref]);
+
+  // lobby -> playing: boot the engine on the shared config (fresh mount = the
+  // seed, banlists and lockstep all apply cleanly; same pattern as challenges)
+  const onlinePrevPhaseRef = useRef<string | null>(null);
+  useEffect(() => {
+    const phase = online?.phase ?? null;
+    if (phase === 'playing' && onlinePrevPhaseRef.current !== 'playing' && online?.config) {
+      setMapType(online.config.map as MapType);
+      setGameMode(online.config.mode as GameMode);
+      setPaused(false);
+      setGameSpeed(1);
+      setChallenge(null);
+      setGameKey(k => k + 1);
+      if (showSplash) handleStartClick();
+    }
+    onlinePrevPhaseRef.current = phase;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online?.phase]);
+
+  // Hidden e2e/dev params: ?loop&netrole=host&netcode=EW-TEST&netauto drives
+  // the whole flow headlessly (loopback transport, auto-host/join, auto-ready)
+  const netAutoRef = useRef(false);
+  useEffect(() => {
+    if (netAutoRef.current || !URL_PARAMS.has('netrole')) return;
+    netAutoRef.current = true;
+    if (URL_PARAMS.get('netrole') === 'host') startHost();
+    else startJoin(URL_PARAMS.get('netcode') || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (URL_PARAMS.has('netauto') && online?.phase === 'lobby' && !online.selfReady) sessionRef.current?.setReady(true);
+  }, [online?.phase, online?.selfReady]);
+
+  // Lockstep hold poll — drives the "waiting for opponent" overlay
+  useEffect(() => {
+    if (online?.phase !== 'playing') { setNetWaitMs(0); return; }
+    const t = setInterval(() => {
+      const ws = sessionRef.current?.scheduler?.waitingSince ?? 0;
+      setNetWaitMs(ws ? Date.now() - ws : 0);
+    }, 500);
+    return () => clearInterval(t);
+  }, [online?.phase]);
+
+  const onlinePlaying = !!(online && online.phase === 'playing' && online.config && session);
+  const onlineTeam = onlinePlaying ? (session!.localTeam() === 'EAST' ? Team.EAST : Team.WEST) : null;
+  const onlineFoe = onlineTeam ? (onlineTeam === Team.WEST ? Team.EAST : Team.WEST) : null;
+
+  const playerSide = campaignBattle ? Team.WEST : (onlineTeam ?? playerSidePref);
 
   // Remember menu choices for the next visit
   useEffect(() => {
@@ -294,8 +395,9 @@ const App: React.FC = () => {
   // give the width back to the battlefield, so a single-player game (or a
   // spectated one) fits a phone instead of only a tablet/PC. A human side always
   // keeps its panel.
-  const westIsCpu = SPECTATE || cpuTeam === Team.WEST;
-  const eastIsCpu = SPECTATE || cpuTeam === Team.EAST;
+  // Online, the opponent's panel is dead space exactly like a CPU's — hide it
+  const westIsCpu = SPECTATE || cpuTeam === Team.WEST || onlineFoe === Team.WEST;
+  const eastIsCpu = SPECTATE || cpuTeam === Team.EAST || onlineFoe === Team.EAST;
   const cycleCpuLevel = () => setCpuLevel(l => l === 'off' ? 'easy' : l === 'easy' ? 'normal' : l === 'normal' ? 'hard' : 'off');
 
   const [cmdHint, setCmdHint] = useState(false);
@@ -615,6 +717,12 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setSelection(null); setTargetingInfo(null); return; }
+      // Never steal keystrokes from a text field (the online join-code input
+      // sits on the splash — typing "EW-B8TL" used to arm a Mine Tank via the
+      // '8' hotkey), and nothing spawns before the battle starts.
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+      if (showSplash) return;
       // Unit Order (Top to Bottom as rendered)
       const unitOrder = [
         UnitType.SOLDIER, UnitType.SPECIAL_FORCES, UnitType.MINE_PERSONAL, // Infantry
@@ -629,15 +737,19 @@ const App: React.FC = () => {
       // East: F12 down to F1. F12=Top(0), F11=1...
       const eastKeys = ['F12', 'F11', 'F10', 'F9', 'F8', 'F7', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
+      // Hotseat convenience keys — but only for sides THIS player commands
+      // (never the CPU's army, never the online opponent's).
+      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe;
+
       // Check West
       const westIndex = westKeys.indexOf(e.key);
-      if (westIndex !== -1 && westIndex < unitOrder.length) {
+      if (westIndex !== -1 && westIndex < unitOrder.length && canCommand(Team.WEST)) {
         handleSpawnRequest(Team.WEST, unitOrder[westIndex]);
       }
 
       // Check East
       const eastIndex = eastKeys.indexOf(e.key);
-      if (eastIndex !== -1 && eastIndex < unitOrder.length) {
+      if (eastIndex !== -1 && eastIndex < unitOrder.length && canCommand(Team.EAST)) {
         e.preventDefault(); // F-keys often have browser defaults
         handleSpawnRequest(Team.EAST, unitOrder[eastIndex]);
       }
@@ -645,7 +757,8 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState.money]); // Dep on money for validation inside handleSpawnRequest? 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState.money, showSplash, onlineFoe, cpuLevel]); // Dep on money for validation inside handleSpawnRequest?
   // Actually handleSpawnRequest uses state, so we need to be careful with closure stale state or dependency.
   // handleSpawnRequest depends on gameState.money.
   // Better to use ref for money or include handleSpawnRequest in dep array and wrap it in useCallback?
@@ -835,9 +948,11 @@ const App: React.FC = () => {
   // Commander powers: one prominent group per human-controlled team, centered
   // under the battlefield where they can't be missed.
   const renderCommandBar = () => {
-    const humanTeams = SPECTATE ? [] : [Team.WEST, Team.EAST].filter(t => t !== cpuTeam);
+    const humanTeams = SPECTATE ? [] : [Team.WEST, Team.EAST].filter(t => t !== cpuTeam && t !== onlineFoe);
     if (humanTeams.length === 0) return null;
-    const now = Date.now();
+    // Rally timestamps are SIM time — the sim clock freezes on pause and scales
+    // with game speed, so wall-clock comparisons would drift the countdowns.
+    const now = gameState.simNowMs ?? 0;
     return (
       <div ref={cmdBarRef} className={`flex justify-center ${compact ? 'gap-2 mt-1' : 'gap-4 mt-2'}`}>
         {humanTeams.map(team => {
@@ -1014,6 +1129,83 @@ const App: React.FC = () => {
                 })}
               </div>
             </div>
+            {/* Online 1v1 — peer-to-peer lockstep; a room code is the only handshake */}
+            <div data-testid="online-panel" className={`bg-black/70 backdrop-blur-sm rounded-lg border border-sky-800 ${compact ? 'p-1.5' : 'p-2.5'} flex flex-col items-center gap-1.5`}>
+              <p className="text-sky-400 text-[10px] uppercase tracking-widest text-center">Online 1v1</p>
+              {!online ? (
+                <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
+                  <button
+                    data-testid="host-btn"
+                    onClick={startHost}
+                    className={`rounded border border-sky-600 hover:border-sky-400 bg-sky-950/60 text-sky-200 font-bold uppercase transition-all ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'}`}
+                  >Host game</button>
+                  <input
+                    data-testid="join-input"
+                    value={joinCode}
+                    onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                    onKeyDown={e => { if (e.key === 'Enter') startJoin(joinCode); }}
+                    placeholder="EW-XXXX"
+                    className={`bg-black/60 border border-stone-600 rounded font-mono text-stone-200 uppercase ${compact ? 'px-1.5 py-1 text-[10px] w-20' : 'px-2 py-1.5 text-xs w-24'}`}
+                  />
+                  <button
+                    data-testid="join-btn"
+                    onClick={() => startJoin(joinCode)}
+                    disabled={!joinCode.trim()}
+                    className={`rounded border border-stone-600 hover:border-sky-400 bg-black/40 text-stone-300 font-bold uppercase transition-all disabled:opacity-30 ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'}`}
+                  >Join</button>
+                </div>
+              ) : online.error ? (
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-red-400 text-[11px] max-w-sm text-center">{online.error}</span>
+                  <button onClick={endOnline} className="rounded border border-stone-600 hover:border-stone-400 px-2 py-1 text-[10px] uppercase font-bold text-stone-300">Back</button>
+                </div>
+              ) : online.phase === 'connecting' ? (
+                <div className="flex flex-col items-center gap-1.5">
+                  {online.role === 'host' ? (
+                    <>
+                      <span className="text-stone-300 text-[11px]">Room code — send it to your opponent:</span>
+                      <div className="flex items-center gap-2">
+                        <span data-testid="room-code" className="font-mono text-lg text-amber-300 tracking-widest">{online.code}</span>
+                        <button
+                          onClick={() => { try { navigator.clipboard.writeText(online.code); } catch { /* clipboard may be blocked */ } }}
+                          className="rounded border border-stone-600 hover:border-stone-400 px-1.5 py-0.5 text-[9px] uppercase font-bold text-stone-400"
+                        >Copy</button>
+                      </div>
+                      <span className="text-stone-500 text-[10px] animate-pulse">Waiting for opponent to join…</span>
+                    </>
+                  ) : (
+                    <span className="text-stone-400 text-[11px] animate-pulse">Connecting to {online.code}…</span>
+                  )}
+                  <button onClick={endOnline} className="rounded border border-stone-600 hover:border-stone-400 px-2 py-1 text-[10px] uppercase font-bold text-stone-300">Cancel</button>
+                </div>
+              ) : online.phase === 'lobby' ? (
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-stone-300 text-[11px]">
+                    <span className="text-green-400 font-bold">Opponent connected.</span>
+                    {' '}{online.settings.map.toLowerCase()} · {online.settings.mode} · {online.settings.asymmetry ? 'asymmetric' : 'classic'} · {online.settings.fogOfWar ? 'fog on' : 'fog off'} · you play <span className={((online.role === 'host') === (online.settings.hostTeam === 'WEST')) ? 'text-blue-400 font-bold' : 'text-red-400 font-bold'}>{(online.role === 'host') === (online.settings.hostTeam === 'WEST') ? 'WEST' : 'EAST'}</span>
+                  </span>
+                  {online.role === 'host'
+                    ? <span className="text-stone-500 text-[10px]">Map, mode and side follow your menu choices above</span>
+                    : <span className="text-stone-500 text-[10px]">The host picks map, mode and sides</span>}
+                  <div className="flex items-center gap-2">
+                    <button
+                      data-testid="ready-btn"
+                      onClick={() => sessionRef.current?.setReady(!online.selfReady)}
+                      className={`rounded border font-bold uppercase px-3 py-1.5 text-xs transition-all ${online.selfReady ? 'border-green-500 bg-green-950/60 text-green-300' : 'border-amber-400 bg-amber-900/60 text-amber-300 animate-pulse'}`}
+                    >{online.selfReady ? '✓ Ready' : 'Ready?'}</button>
+                    <span className={`text-[10px] uppercase font-bold ${online.peerReady ? 'text-green-400' : 'text-stone-500'}`}>
+                      {online.peerReady ? 'Opponent ready' : 'Opponent not ready'}
+                    </span>
+                    <button onClick={endOnline} className="rounded border border-stone-600 hover:border-stone-400 px-2 py-1 text-[10px] uppercase font-bold text-stone-300">Leave</button>
+                  </div>
+                </div>
+              ) : null}
+              {!online && !compact && (
+                <span className="text-stone-500 text-[9px] max-w-md text-center">
+                  Peer-to-peer over the internet. Host a room, send the code, both press Ready. Same browser family (e.g. Chrome/Edge) recommended.
+                </span>
+              )}
+            </div>
             {/* Grand Campaign: the strategic board wrapping the battles */}
             <button
               data-testid="campaign-btn"
@@ -1065,9 +1257,15 @@ const App: React.FC = () => {
         <div className="text-center flex flex-col items-center">
           {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
           <div className={`flex items-center ${compact ? 'gap-1' : 'gap-4'}`}>
-            <button onClick={resetGame} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />Reset</button>
-            <button onClick={() => setPaused(p => !p)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
-            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
+            <button onClick={() => { if (onlinePlaying) { endOnline(); } else { resetGame(); } }} title={onlinePlaying ? 'Leave the online match (forfeits)' : 'Reset the battle'} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />{onlinePlaying ? 'Leave' : 'Reset'}</button>
+            <button onClick={() => setPaused(p => !p)} disabled={onlinePlaying} title={onlinePlaying ? 'No pausing online (v1) — both sims must advance together' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
+            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} disabled={onlinePlaying} title={onlinePlaying ? 'Speed is locked at 1x online' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
+            {onlinePlaying && (
+              <div data-testid="ping-badge" className={`flex items-center gap-1 border px-1.5 py-0.5 rounded ${(online!.pingMs ?? 999) < 80 ? 'border-green-700 text-green-400' : (online!.pingMs ?? 999) < 180 ? 'border-amber-600 text-amber-400' : 'border-red-700 text-red-400'}`} title="Connection to your opponent (round-trip)">
+                <Radio size={10} />
+                <span className="text-[9px] font-bold">{online!.pingMs != null ? `${online!.pingMs}ms` : '—'}</span>
+              </div>
+            )}
             <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
             {!compact && !muted && (
               <input
@@ -1101,7 +1299,7 @@ const App: React.FC = () => {
             {gameState.weather === 'clear' && gameState.weatherNext && gameState.weatherNext.type !== 'clear' && (
               <div className="flex items-center gap-1 text-stone-400" title={`${gameState.weatherNext.type} rolling in — plan around the combat penalties`}>
                 <Wind size={14} />
-                <span className="text-[10px] font-bold uppercase">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - Date.now()) / 1000))}s</span>
+                <span className="text-[10px] font-bold uppercase">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - (gameState.simNowMs ?? 0)) / 1000))}s</span>
               </div>
             )}
             {gameState.weather === 'clear' && !compact && (!gameState.weatherNext || gameState.weatherNext.type === 'clear') && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
@@ -1120,13 +1318,50 @@ const App: React.FC = () => {
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
         <div className="relative">
-          <GameCanvas key={gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={fow && cpuTeams.length === 1} asymmetry={asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={paused} gameSpeed={gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
+          {/* Online: keyed by the match seed so the canvas swap is ATOMIC with
+              the phase flip — the outgoing splash canvas must never render
+              even once with the lockstep scheduler attached (see the frozen
+              lockstepRef in GameCanvas for why). */}
+          <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={useCallback((s: GameState) => setGameState(s), [])} spawnQueue={spawnQueue} clearSpawnQueue={useCallback(() => setSpawnQueue([]), [])} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={mapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={gameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={useCallback(() => setCommandQueue([]), [])} orderQueue={orderQueue} clearOrderQueue={useCallback(() => setOrderQueue([]), [])} onSelectUnits={useCallback((team: Team, ids: string[]) => {
             setSelection(ids.length ? { team, ids } : null);
             if (ids.length) {
               setTroopHint(false); // they found it — never nag again
               try { localStorage.setItem('ewv-hint-troopctl', '1'); } catch { /* ignore */ }
             }
-          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} />
+          }, [])} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
+          {/* Online status overlays. Order matters: desync trumps everything
+              (the match is void), disconnect next, then the routine hold. */}
+          {onlinePlaying && online?.desyncTick != null && (
+            <div data-testid="desync-overlay" className="absolute inset-0 z-50 flex items-center justify-center bg-black/80">
+              <div className="flex flex-col items-center gap-3 bg-stone-900 border-2 border-red-700 rounded-lg px-8 py-6 max-w-md text-center">
+                <span className="text-red-400 font-black uppercase tracking-widest">Simulations diverged</span>
+                <span className="text-stone-300 text-sm">The two games disagreed at tick {online.desyncTick} and the match can't fairly continue. No result is recorded — this is a bug worth reporting (seed, tick and build id are in the browser console via __ewDebug).</span>
+                <button onClick={endOnline} className="px-6 py-2 bg-stone-700 hover:bg-stone-600 rounded font-bold uppercase text-sm">Back to menu</button>
+              </div>
+            </div>
+          )}
+          {onlinePlaying && online?.desyncTick == null && (online?.peerLeft || (online?.resignedBy && online.resignedBy !== online.role)) && !netClaimed && (
+            <div data-testid="gone-overlay" className="absolute inset-0 z-50 flex items-center justify-center bg-black/70">
+              <div className="flex flex-col items-center gap-3 bg-stone-900 border-2 border-amber-700 rounded-lg px-8 py-6 max-w-md text-center">
+                <span className="text-amber-300 font-black uppercase tracking-widest">
+                  {online.peerLeft ? 'Opponent disconnected' : 'Opponent resigned'}
+                </span>
+                <span className="text-stone-300 text-sm">{online.peerLeft ? 'The connection is gone and is not coming back (no reconnection in this version).' : 'They struck their colors.'}</span>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => { setNetClaimed(true); (window as any).__ewDebug?.winTeam?.(onlineTeam === Team.EAST ? 'EAST' : 'WEST'); }}
+                    className="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-stone-950 rounded font-black uppercase text-sm"
+                  >Claim victory</button>
+                  <button onClick={endOnline} className="px-6 py-2 bg-stone-700 hover:bg-stone-600 rounded font-bold uppercase text-sm">Exit</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {onlinePlaying && online?.desyncTick == null && !online?.peerLeft && netWaitMs > 600 && (
+            <div data-testid="waiting-overlay" className="absolute top-14 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-stone-950/90 border border-sky-600 rounded-lg px-4 py-2 shadow-2xl">
+              <span className="text-sky-300 text-xs font-bold uppercase animate-pulse">Waiting for opponent… {Math.floor(netWaitMs / 1000)}s</span>
+            </div>
+          )}
           {/* Armed-strike banner: tells the player what to do next (worded for
               their input device) and offers the only cancel path besides Esc */}
           {targetingInfo && (

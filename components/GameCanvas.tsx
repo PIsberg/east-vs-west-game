@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useCallback } from 'react';
+import { mulberry32, deriveSeed, randomSeed, DOMAIN_SIM, DOMAIN_TERRAIN, DOMAIN_PERSONA, DOMAIN_WEATHER0, type Rng } from '../utils/rng';
 import {
   CANVAS_WIDTH,
   CANVAS_HEIGHT,
@@ -48,6 +49,7 @@ import {
   AIR_OPS_COOLDOWN_TICKS,
   AIR_OPS_NUKE_TICKS,
   GAME_TEMPO,
+  SIM_MS_PER_TICK,
   AVOID_LOOKAHEAD,
   AVOID_COMMIT_MS,
   STUCK_SAMPLE_TICKS,
@@ -102,7 +104,8 @@ import {
   factionAllowed,
   WEST_WHEELED_HILL_RELIEF,
 } from '../constants';
-import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand } from '../types';
+import { Team, Unit, UnitState, Projectile, Particle, GameState, GameEvent, UnitType, TerrainObject, Vector2D, Flyover, Missile, MapType, CapturePoint, GameMode, Stance, LaserStrike, SupplyCrate, SmokeZone, RallyState, TeamCommand, SimCommand } from '../types';
+import type { LockstepScheduler } from '../services/lockstep';
 import { soundService } from '../services/audio';
 import { GameScene, type Marquee } from './GameScene';
 import { SpatialHash } from '../utils/spatialHash';
@@ -453,14 +456,32 @@ interface GameCanvasProps {
   // real space between header, side panels and command bar exactly.
   viewW?: number;
   viewH?: number;
+  // Deterministic match seed (terrain, weather, combat rolls, sim ids). Online
+  // play passes the host's seed to both clients; omitted = random local match.
+  matchSeed?: number;
+  // ── Online lockstep ──────────────────────────────────────────────────────
+  // When `lockstep` is present the loop advances only through ticks the
+  // scheduler has confirmed (both sides' inputs arrived) and every local
+  // intent routes through it instead of executing locally.
+  lockstep?: LockstepScheduler;
+  // Which side THIS client commands online (selection, fog, click ownership).
+  // Local play derives it from cpuTeams as before.
+  localTeam?: Team;
+  // Called at every determinism checkpoint so App can ship the hash to the peer
+  onNetChecksum?: (tick: number, hash: number) => void;
+  // App writes the peer's incoming checkpoint hashes here; the tick compares
+  // them against its own log and calls onDesync on the first mismatch.
+  peerChecksumsRef?: React.MutableRefObject<Record<number, number>>;
+  onDesync?: (tick: number) => void;
 }
 
 // One weather table per map — the climate has to make sense: Winter snows
 // instead of raining, the Desert never sees snow (rain is rare, and fog reads
 // as dust haze). Used by BOTH roll sites (initial forecast + in-game re-roll)
 // so the tables can't drift apart.
-const rollNextWeather = (map: MapType): 'clear' | 'rain' | 'snow' | 'fog' | 'storm' => {
-  const r = Math.random();
+// `r` is a uniform [0,1) sample from the caller — weather is sim state, so
+// the draw must come from the seeded stream (or a derived one at mount).
+const rollNextWeather = (map: MapType, r: number): 'clear' | 'rain' | 'snow' | 'fog' | 'storm' => {
   if (map === MapType.WINTER) return r < 0.48 ? 'snow' : r < 0.60 ? 'fog' : r < 0.68 ? 'storm' : 'clear';
   if (map === MapType.DESERT) return r < 0.14 ? 'rain' : r < 0.40 ? 'fog' : r < 0.52 ? 'storm' : 'clear';
   return r < 0.28 ? 'rain' : r < 0.44 ? 'snow' : r < 0.56 ? 'fog' : r < 0.65 ? 'storm' : 'clear';
@@ -499,6 +520,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onChallengeWon,
   viewW,
   viewH,
+  matchSeed,
+  lockstep,
+  localTeam,
+  onNetChecksum,
+  peerChecksumsRef,
+  onDesync,
 }) => {
   const requestRef = useRef<number>(0);
   const [gameOver, setGameOver] = useState<Team | null>(null);
@@ -525,7 +552,46 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); };
   }, [compact, viewW, viewH]);
 
+  // FX/event ids ONLY (particles, decals, feed entries). Anything the sim
+  // reads gets its id from simId() below — FX creation counts legitimately
+  // differ between lockstep peers, so a shared counter would drift.
   const generateId = () => Math.random().toString(36).substr(2, 9);
+
+  // ── Determinism kit ──────────────────────────────────────────────────────────
+  // One seed defines the whole match. The sim stream (srand) may only be
+  // consumed inside the tick/command path, where execution order is identical
+  // on every client; mount-time randomness (terrain, persona, opening weather)
+  // derives its own pure streams so React re-renders can't advance anything.
+  const simSeedRef = useRef<number>(matchSeed ?? randomSeed());
+  const simRngRef = useRef<Rng | null>(null);
+  if (simRngRef.current === null) simRngRef.current = mulberry32(deriveSeed(simSeedRef.current, DOMAIN_SIM));
+  // Draw counter rides along: two clients disagreeing on HOW MANY sim draws
+  // happened is the fastest possible desync signal, and it's nearly free.
+  const simDrawsRef = useRef(0);
+  const srand: Rng = () => { simDrawsRef.current++; return simRngRef.current!(); };
+  const simIdRef = useRef(1);
+  const simId = () => 'e' + (simIdRef.current++).toString(36);
+  // Sim clock: milliseconds of SIMULATION time (tick × SIM_MS_PER_TICK). At 1×
+  // speed it advances like the wall clock, but it freezes under pause, doubles
+  // under 2×, and — critically — is identical on every lockstep client. All
+  // gameplay timers (suppression, builds, rally, weather, cover) live on it;
+  // Date.now() below is display/telemetry only.
+  const tickCountRef = useRef(0);
+  const simNow = () => tickCountRef.current * SIM_MS_PER_TICK;
+  // Online lockstep plumbing — FROZEN AT MOUNT, deliberately not synced to the
+  // prop. During the lobby->match transition React briefly re-renders the
+  // OUTGOING splash canvas with the scheduler prop set; if that stale canvas
+  // adopted it, its next rAF would flush the scheduler at its own (huge) tick
+  // count, flooding the peer with empty bundles for steps the real match
+  // hasn't reached and silently swallowing early commands (the intermittent
+  // "guest never saw the host's opening wave" desync). A canvas either owns
+  // its scheduler from birth or never touches one.
+  const lockstepRef = useRef(lockstep);
+  const onNetChecksumRef = useRef(onNetChecksum);
+  onNetChecksumRef.current = onNetChecksum;
+  const onDesyncRef = useRef(onDesync);
+  onDesyncRef.current = onDesync;
+  const desyncedRef = useRef(false);
 
   const terrainRef = useRef<TerrainObject[]>([]);
   const flyoversRef = useRef<Flyover[]>([]);
@@ -593,9 +659,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const shakeRef = useRef(0); // camera shake magnitude, decays in GameScene
   const shockRef = useRef(0); // shell-shock post-processing weight (0..1), decays in GameScene
   const weatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>('clear');
-  const weatherTimerRef = useRef(Date.now() + 10000);
+  const weatherTimerRef = useRef(10000); // sim-ms — first roll ~10s of sim time in
   // Pre-rolled upcoming weather so the HUD can warn the player ahead of time
-  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>(rollNextWeather(mapType));
+  const nextWeatherRef = useRef<'clear' | 'rain' | 'snow' | 'fog' | 'storm'>(rollNextWeather(mapType, mulberry32(deriveSeed(simSeedRef.current, DOMAIN_WEATHER0))()));
   const CAPTURE_TICKS = 300; // ~5s of uncontested presence to flip
   const captureRef = useRef<CapturePoint>({
     x: CANVAS_WIDTH / 2,
@@ -632,7 +698,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     teams: cpuTeams, difficulty: cpuDifficulty,
     persona: cpuPersona && cpuPersona !== 'random'
       ? cpuPersona
-      : CPU_PERSONA_IDS[1 + Math.floor(Math.random() * (CPU_PERSONA_IDS.length - 1))],
+      : CPU_PERSONA_IDS[1 + Math.floor(mulberry32(deriveSeed(simSeedRef.current, DOMAIN_PERSONA))() * (CPU_PERSONA_IDS.length - 1))],
   });
   const speedRef = useRef<{ paused: boolean, speed: number }>({ paused, speed: gameSpeed });
   const statsRef = useRef({
@@ -653,10 +719,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   useEffect(() => { gameModeRef.current = gameMode; }, [gameMode]);
   const stancesRef = useRef<Record<Team, Stance>>(stances);
   useEffect(() => {
-    // The hard CPU steers its own stance — don't let UI state overwrite it
-    const next = { ...stances };
-    cpuRef.current.teams.forEach(t => { next[t] = stancesRef.current[t]; });
-    stancesRef.current = next;
+    // Stance changes are sim input — they ride the tick-stamped pipeline like
+    // every other command. Per-team diff so online clients never write the
+    // other side's stance (execInput also shields CPU-steered stances).
+    ([Team.WEST, Team.EAST] as Team[]).forEach(t => {
+      if (stances[t] !== stancesRef.current[t]) scheduleInput({ kind: 'stance', team: t, stance: stances[t] });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stances]);
 
   // Double-click detection for own-unit selection (expand to all of a type)
@@ -669,7 +738,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   });
 
   // Drag-select: the side you actually command (spectator matches have none)
-  const humanTeam = ([Team.WEST, Team.EAST] as Team[]).find(t => !cpuTeams.includes(t)) ?? null;
+  // Online: the side THIS client commands. Local: the (first) non-CPU side.
+  const humanTeam = localTeam ?? (([Team.WEST, Team.EAST] as Team[]).find(t => !cpuTeams.includes(t)) ?? null);
   const [marquee, setMarquee] = useState<Marquee>(null);
   // Releasing a marquee also lands as a click on open ground, and that click
   // clears the selection we just made. Swallow exactly one click after a drag —
@@ -696,8 +766,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
     // Clicking one of your own units selects it (whole squad for squad-spawned
     // infantry). A quick second click on the same unit expands the selection
-    // to every unit of that type on your team.
-    if (!cpuTeams.includes(clicked.team)) {
+    // to every unit of that type on your team. Online, "own" means the local
+    // side — both teams are human, but only one is yours to select.
+    if (localTeam ? clicked.team === localTeam : !cpuTeams.includes(clicked.team)) {
       const now = Date.now();
       const last = lastUnitClickRef.current;
       const isDouble = last.id === clicked.id && now - last.time < 400;
@@ -713,8 +784,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return;
     }
     const focuser = clicked.team === Team.WEST ? Team.EAST : Team.WEST;
-    if (cpuTeams.includes(focuser)) return; // can't give orders to the CPU's army
-    focusRef.current[focuser] = { targetId: clicked.id, until: Date.now() + 6000 };
+    if (localTeam ? focuser !== localTeam : cpuTeams.includes(focuser)) return; // only your own army takes the order
+    // Focus fire changes targeting = sim state, so the click is a command —
+    // it must land on the same tick on both lockstep clients.
+    scheduleInput({ kind: 'focus', team: focuser, targetId: clicked.id });
     soundService.playHitSound();
   };
   // Latest click handler for the tick closure's test hook (headless runs
@@ -796,20 +869,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Debug Keys
   useEffect(() => {
+    // Weather is SIM state: a local-only mutation desyncs a lockstep match on
+    // the next checksum. Debug toggle stays local-play-only, and never steals
+    // keystrokes from a text field (the room-code alphabet contains R).
+    if (lockstep) return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       if (e.key.toLowerCase() === 'r') {
         weatherRef.current = weatherRef.current === 'clear' ? 'rain' : 'clear';
-        weatherTimerRef.current = Date.now() + 20000; // Lock state for 20s
+        weatherTimerRef.current = simNow() + 20000; // Lock state for 20s
         nextWeatherRef.current = 'clear';
         console.log("Debug: Weather toggled to", weatherRef.current);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [lockstep]);
 
   useEffect(() => {
-    const gid = generateId;
+    // Terrain must be identical on both lockstep clients: layout AND ids come
+    // from a stream derived purely from the match seed, so an effect re-run
+    // can't disturb the sim stream and ids stay stable for cross-client refs.
+    let tid = 1;
+    const gid = () => 't' + (tid++).toString(36);
+    const trand = mulberry32(deriveSeed(simSeedRef.current, DOMAIN_TERRAIN));
     const t: TerrainObject[] = [];
 
     // Helper: add a river channel, return its segments
@@ -843,9 +927,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const placeHills = (n: number, xMin: number, xMax: number, rSegs: TerrainObject[], rBuf = 90) => {
       for (let i = 0; i < n * 4; i++) {
         if (t.filter(o => o.type === 'hill').length >= n + (mapType === MapType.COUNTRYSIDE ? 0 : 0)) break;
-        const x = xMin + Math.random() * (xMax - xMin);
-        const y = HORIZON_Y + 40 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 80);
-        const size = 65 + Math.random() * 45;
+        const x = xMin + trand() * (xMax - xMin);
+        const y = HORIZON_Y + 40 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 80);
+        const size = 65 + trand() * 45;
         if (!avoidCheck(x, y, size, rSegs, rBuf) && !t.some(o => o.type === 'hill' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < 120))
           t.push({ id: gid(), x, y, type: 'hill', size });
       }
@@ -854,55 +938,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const placeTrees = (n: number, xMin: number, xMax: number, rSegs: TerrainObject[]) => {
       let placed = 0;
       for (let i = 0; i < n * 5 && placed < n; i++) {
-        const x = xMin + Math.random() * (xMax - xMin);
-        const y = HORIZON_Y + 20 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 40);
+        const x = xMin + trand() * (xMax - xMin);
+        const y = HORIZON_Y + 20 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 40);
         if (!avoidCheck(x, y, 40, rSegs, 75) && !t.some(o => o.type === 'tree' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < 62))
-          { t.push({ id: gid(), x, y, type: 'tree', size: 40 + Math.random() * 28 }); placed++; }
+          { t.push({ id: gid(), x, y, type: 'tree', size: 40 + trand() * 28 }); placed++; }
       }
     };
 
     const placeRocks = (n: number, xMin: number, xMax: number, rSegs: TerrainObject[]) => {
       let placed = 0;
       for (let i = 0; i < n * 5 && placed < n; i++) {
-        const x = xMin + Math.random() * (xMax - xMin);
-        const y = HORIZON_Y + 10 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 20);
+        const x = xMin + trand() * (xMax - xMin);
+        const y = HORIZON_Y + 10 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 20);
         if (!avoidCheck(x, y, 15, rSegs, 62) && !t.some(o => o.type === 'rock' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < 42))
-          { t.push({ id: gid(), x, y, type: 'rock', size: 10 + Math.random() * 18 }); placed++; }
+          { t.push({ id: gid(), x, y, type: 'rock', size: 10 + trand() * 18 }); placed++; }
       }
     };
 
     if (mapType === MapType.COUNTRYSIDE) {
       let rSegs: TerrainObject[] = [];
-      if (Math.random() < 0.55) {
-        const cx = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 180;
-        rSegs = addChannel(cx, 30 + Math.random() * 40, 0.005 + Math.random() * 0.005, Math.random() * Math.PI * 2, 55);
+      if (trand() < 0.55) {
+        const cx = CANVAS_WIDTH / 2 + (trand() - 0.5) * 180;
+        rSegs = addChannel(cx, 30 + trand() * 40, 0.005 + trand() * 0.005, trand() * Math.PI * 2, 55);
         const span = CANVAS_HEIGHT - HORIZON_Y - 100;
-        addBridge(rSegs, HORIZON_Y + 50 + span * 0.35 + (Math.random() - 0.5) * 30);
-        addBridge(rSegs, HORIZON_Y + 50 + span * 0.70 + (Math.random() - 0.5) * 30);
+        addBridge(rSegs, HORIZON_Y + 50 + span * 0.35 + (trand() - 0.5) * 30);
+        addBridge(rSegs, HORIZON_Y + 50 + span * 0.70 + (trand() - 0.5) * 30);
       }
       placeHills(6, 100, CANVAS_WIDTH - 100, rSegs);
       placeTrees(18, 55, CANVAS_WIDTH - 55, rSegs);
       placeRocks(24, 40, CANVAS_WIDTH - 40, rSegs);
 
     } else if (mapType === MapType.URBAN) {
-      const wallX = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 24;
+      const wallX = CANVAS_WIDTH / 2 + (trand() - 0.5) * 24;
       const wallSegs: TerrainObject[] = [];
       for (let y = -400; y < CANVAS_HEIGHT + 400; y += 20) {
         const s: TerrainObject = { id: gid(), x: wallX, y, type: 'river', size: 0, width: 40, height: 22 };
         t.push(s); wallSegs.push(s);
       }
       const span = CANVAS_HEIGHT - HORIZON_Y - 130;
-      t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.28 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
-      t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.72 + (Math.random() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
+      t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.28 + (trand() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
+      t.push({ id: gid(), x: wallX, y: HORIZON_Y + 65 + span * 0.72 + (trand() - 0.5) * 18, type: 'bridge', size: 0, width: 85, height: 40 });
       // City blocks both sides. Kept a touch sparser and better-spaced than the
       // old grid: 13-a-side with tight gaps funnelled tanks into dead-ends and
       // wedged them (~11% of 3s windows went nowhere). Wider spacing leaves
       // driveable streets between blocks while still reading as a dense city.
       const placeBuilding = (xMin: number, xMax: number) => {
         for (let attempt = 0; attempt < 14; attempt++) {
-          const x = xMin + Math.random() * (xMax - xMin);
-          const y = HORIZON_Y + 22 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 44);
-          const size = 18 + Math.random() * 22;
+          const x = xMin + trand() * (xMax - xMin);
+          const y = HORIZON_Y + 22 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 44);
+          const size = 18 + trand() * 22;
           if (!avoidCheck(x, y, size, wallSegs, 34) && !t.some(o => o.type === 'building' && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < size + (o.size || 0) + 84))
             { t.push({ id: gid(), x, y, type: 'building', size, width: size * 2.6, height: size * 2.0 }); return; }
         }
@@ -914,28 +998,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       placeHills(2, wallX + 50, CANVAS_WIDTH - 35, wallSegs, 40);
 
     } else if (mapType === MapType.DESERT) {
-      const cx = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 110;
-      const rSegs = addChannel(cx, 20 + Math.random() * 22, 0.004 + Math.random() * 0.003, Math.random() * Math.PI * 2, 48);
+      const cx = CANVAS_WIDTH / 2 + (trand() - 0.5) * 110;
+      const rSegs = addChannel(cx, 20 + trand() * 22, 0.004 + trand() * 0.003, trand() * Math.PI * 2, 48);
       const span = CANVAS_HEIGHT - HORIZON_Y - 100;
-      addBridge(rSegs, HORIZON_Y + 50 + span * 0.20 + (Math.random() - 0.5) * 20, 72);
-      addBridge(rSegs, HORIZON_Y + 50 + span * 0.55 + (Math.random() - 0.5) * 20, 72);
-      addBridge(rSegs, HORIZON_Y + 50 + span * 0.85 + (Math.random() - 0.5) * 20, 72);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.20 + (trand() - 0.5) * 20, 72);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.55 + (trand() - 0.5) * 20, 72);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.85 + (trand() - 0.5) * 20, 72);
       // Sand dunes (bigger hills), no trees
       placeHills(10, 55, CANVAS_WIDTH - 55, rSegs, 95);
       placeRocks(40, 30, CANVAS_WIDTH - 30, rSegs);
 
     } else if (mapType === MapType.ARCHIPELAGO) {
       // Wide sea straits — nearly straight, prominent channels
-      const ch1x = 230 + Math.random() * 30;
-      const ch2x = 540 + Math.random() * 30;
+      const ch1x = 230 + trand() * 30;
+      const ch2x = 540 + trand() * 30;
       const seaWidth = 120;
-      const s1 = addChannel(ch1x, 3 + Math.random() * 4, 0.003, Math.random() * Math.PI * 2, seaWidth);
-      const s2 = addChannel(ch2x, 3 + Math.random() * 4, 0.003, Math.random() * Math.PI * 2, seaWidth);
+      const s1 = addChannel(ch1x, 3 + trand() * 4, 0.003, trand() * Math.PI * 2, seaWidth);
+      const s2 = addChannel(ch2x, 3 + trand() * 4, 0.003, trand() * Math.PI * 2, seaWidth);
       const span = CANVAS_HEIGHT - HORIZON_Y - 120;
-      addBridge(s1, HORIZON_Y + 60 + span * 0.28 + (Math.random() - 0.5) * 18, seaWidth + 10);
-      addBridge(s1, HORIZON_Y + 60 + span * 0.72 + (Math.random() - 0.5) * 18, seaWidth + 10);
-      addBridge(s2, HORIZON_Y + 60 + span * 0.32 + (Math.random() - 0.5) * 18, seaWidth + 10);
-      addBridge(s2, HORIZON_Y + 60 + span * 0.68 + (Math.random() - 0.5) * 18, seaWidth + 10);
+      addBridge(s1, HORIZON_Y + 60 + span * 0.28 + (trand() - 0.5) * 18, seaWidth + 10);
+      addBridge(s1, HORIZON_Y + 60 + span * 0.72 + (trand() - 0.5) * 18, seaWidth + 10);
+      addBridge(s2, HORIZON_Y + 60 + span * 0.32 + (trand() - 0.5) * 18, seaWidth + 10);
+      addBridge(s2, HORIZON_Y + 60 + span * 0.68 + (trand() - 0.5) * 18, seaWidth + 10);
       const allR = [...s1, ...s2];
       // Trees and rocks on each island (staying clear of wide channels)
       placeTrees(5, 25, ch1x - seaWidth / 2 - 20, allR);
@@ -948,12 +1032,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // The frozen river is the map's identity, so it's always present (no
       // countryside-style coin flip). Infantry cross the ice anywhere — slowed
       // and in the open — while vehicles still funnel over the two bridges.
-      const cx = CANVAS_WIDTH / 2 + (Math.random() - 0.5) * 160;
-      const rSegs = addChannel(cx, 26 + Math.random() * 36, 0.005 + Math.random() * 0.004, Math.random() * Math.PI * 2, 58);
+      const cx = CANVAS_WIDTH / 2 + (trand() - 0.5) * 160;
+      const rSegs = addChannel(cx, 26 + trand() * 36, 0.005 + trand() * 0.004, trand() * Math.PI * 2, 58);
       rSegs.forEach(s => { s.frozen = true; });
       const span = CANVAS_HEIGHT - HORIZON_Y - 100;
-      addBridge(rSegs, HORIZON_Y + 50 + span * 0.30 + (Math.random() - 0.5) * 25);
-      addBridge(rSegs, HORIZON_Y + 50 + span * 0.72 + (Math.random() - 0.5) * 25);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.30 + (trand() - 0.5) * 25);
+      addBridge(rSegs, HORIZON_Y + 50 + span * 0.72 + (trand() - 0.5) * 25);
       // Pine forest, snowdrifts (hills) and half-buried boulders
       placeHills(5, 90, CANVAS_WIDTH - 90, rSegs);
       placeTrees(20, 55, CANVAS_WIDTH - 55, rSegs);
@@ -1001,9 +1085,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // Bias across three vertical lanes so they don't clump on one flank
         const lane = placed % 3;
         const laneTop = bandTop + lane * (bandH / 3);
-        const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
-        const y = laneTop + Math.random() * (bandH / 3);
-        const size = 20 + Math.random() * 22; // 20–42 footprint
+        const x = xMinBand + trand() * (xMaxBand - xMinBand);
+        const y = laneTop + trand() * (bandH / 3);
+        const size = 20 + trand() * 22; // 20–42 footprint
         const width = size * 2.6, height = size * 2.0;
         if (!clearStrict(x, y, width / 2, height / 2)) continue;
         const hp = Math.round(size * BUILDING_HP_PER_SIZE);
@@ -1018,10 +1102,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Guarantee at least a couple of strongpoints even on a cramped map: relax
       // the lane bias and scan the whole band for any water/building-free spot.
       for (let i = 0; placed < Math.min(2, OCCUPIABLE_PER_MAP) && i < 400; i++) {
-        const size = 20 + Math.random() * 16;
+        const size = 20 + trand() * 16;
         const width = size * 2.6, height = size * 2.0;
-        const x = xMinBand + Math.random() * (xMaxBand - xMinBand);
-        const y = bandTop + Math.random() * bandH;
+        const x = xMinBand + trand() * (xMaxBand - xMinBand);
+        const y = bandTop + trand() * bandH;
         if (!clearFor(x, y, width / 2, height / 2)) continue;
         const hp = Math.round(size * BUILDING_HP_PER_SIZE);
         t.push({
@@ -1041,15 +1125,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const riverSegs = t.filter(o => o.type === 'river');
       let placed = 0;
       for (let i = 0; i < 160 && placed < 8; i++) {
-        const x = 140 + Math.random() * (CANVAS_WIDTH - 280);
-        const y = HORIZON_Y + 25 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 50);
+        const x = 140 + trand() * (CANVAS_WIDTH - 280);
+        const y = HORIZON_Y + 25 + trand() * (CANVAS_HEIGHT - HORIZON_Y - 50);
         if (avoidCheck(x, y, 12, riverSegs, 55)) continue;
         if (t.some(o => (o.type === 'crate' || o.type === 'barrel') && Math.sqrt((o.x - x) ** 2 + (o.y - y) ** 2) < 70)) continue;
-        const isBarrel = Math.random() < 0.3;
-        t.push({ id: gid(), x, y, type: isBarrel ? 'barrel' : 'crate', size: 6 + Math.random() * 4, health: 1 });
+        const isBarrel = trand() < 0.3;
+        t.push({ id: gid(), x, y, type: isBarrel ? 'barrel' : 'crate', size: 6 + trand() * 4, health: 1 });
         // Crates often sit in pairs — reads as a dropped supply cache
-        if (!isBarrel && Math.random() < 0.4) {
-          t.push({ id: gid(), x: x + 9 + Math.random() * 4, y: y + (Math.random() - 0.5) * 8, type: 'crate', size: 5 + Math.random() * 3, health: 1 });
+        if (!isBarrel && trand() < 0.4) {
+          t.push({ id: gid(), x: x + 9 + trand() * 4, y: y + (trand() - 0.5) * 8, type: 'crate', size: 5 + trand() * 3, health: 1 });
         }
         placed++;
       }
@@ -1105,7 +1189,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       return true;
     }
     const r = rallyRef.current[team];
-    const now = Date.now();
+    const now = simNow();
     if (now < r.readyAt || moneyRef.current[team] < RALLY_COST) return false;
     moneyRef.current[team] -= RALLY_COST;
     r.until = now + RALLY_DURATION_MS;
@@ -1138,8 +1222,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       options = {
         ...options,
         absolutePos: {
-          x: Math.max(10, Math.min(CANVAS_WIDTH - 10, options.absolutePos.x + (Math.random() - 0.5) * 2 * FOW_BLIND_SCATTER)),
-          y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, options.absolutePos.y + (Math.random() - 0.5) * 2 * FOW_BLIND_SCATTER)),
+          x: Math.max(10, Math.min(CANVAS_WIDTH - 10, options.absolutePos.x + (srand() - 0.5) * 2 * FOW_BLIND_SCATTER)),
+          y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, options.absolutePos.y + (srand() - 0.5) * 2 * FOW_BLIND_SCATTER)),
         },
       };
     }
@@ -1147,7 +1231,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Satellite laser: no delivery vehicle — a designator, then a beam from orbit
     if (type === UnitType.SATELLITE && options?.absolutePos) {
       lasersRef.current.push({
-        id: generateId(), team,
+        id: simId(), team,
         x: options.absolutePos.x, y: options.absolutePos.y,
         life: LASER_LIFE, maxLife: LASER_LIFE,
         radius: (UNIT_CONFIG[UnitType.SATELLITE] as any).radius,
@@ -1176,11 +1260,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Cruise missile: launched from a ship somewhere off the bottom edge
     if (type === UnitType.CRUISE && options?.absolutePos) {
       const cfg = UNIT_CONFIG[UnitType.CRUISE] as any;
-      const startX = options.absolutePos.x + (Math.random() - 0.5) * 220;
+      const startX = options.absolutePos.x + (srand() - 0.5) * 220;
       const startY = CANVAS_HEIGHT + 160;
       const flightTicks = 95;
       missilesRef.current.push({
-        id: generateId(), team,
+        id: simId(), team,
         target: { ...options.absolutePos },
         current: { x: startX, y: startY },
         velocity: { x: (options.absolutePos.x - startX) / flightTicks, y: (options.absolutePos.y - startY) / flightTicks },
@@ -1195,7 +1279,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     if (type === UnitType.SMOKE && options?.absolutePos) {
       const cfg = UNIT_CONFIG[UnitType.SMOKE] as any;
       smokesRef.current.push({
-        id: generateId(), team,
+        id: simId(), team,
         x: options.absolutePos.x, y: options.absolutePos.y,
         life: SMOKE_LIFE, maxLife: SMOKE_LIFE, radius: cfg.radius,
       });
@@ -1233,7 +1317,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const isMissile = type === UnitType.MISSILE_STRIKE || type === UnitType.NUKE;
       const isGunship = type === UnitType.GUNSHIP;
       const flyover: Flyover = {
-        id: generateId(),
+        id: simId(),
         team, type,
         targetPos: options.absolutePos,
         currentX: team === Team.WEST ? -250 : CANVAS_WIDTH + 250,
@@ -1254,10 +1338,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const playTop = HORIZON_Y + 50;
     const playH = CANVAS_HEIGHT - HORIZON_Y - 100;
     let yPos =
-      options?.lane === 'top' ? playTop + Math.random() * (playH / 3) :
-      options?.lane === 'mid' ? playTop + playH / 3 + Math.random() * (playH / 3) :
-      options?.lane === 'bot' ? playTop + (2 * playH) / 3 + Math.random() * (playH / 3) :
-      playTop + Math.random() * playH;
+      options?.lane === 'top' ? playTop + srand() * (playH / 3) :
+      options?.lane === 'mid' ? playTop + playH / 3 + srand() * (playH / 3) :
+      options?.lane === 'bot' ? playTop + (2 * playH) / 3 + srand() * (playH / 3) :
+      playTop + srand() * playH;
 
     if (options?.absolutePos) { xPos = options.absolutePos.x; yPos = options.absolutePos.y; }
     else if (options?.offset) { xPos += options.offset.x; yPos += options.offset.y; }
@@ -1274,19 +1358,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const baseHp = config.health * (mods?.hp ?? 1);
 
     const newUnit: Unit = {
-      id: generateId(), team, type,
+      id: simId(), team, type,
       position: { x: xPos, y: yPos },
       state: UnitState.MOVING,
       health: isBunker ? baseHp * BUNKER_BUILD_START_HP : baseHp,
       maxHealth: baseHp,
       attackCooldown: 0, targetId: null,
       width: config.width, height: config.height,
-      spawnTime: Date.now(), isInCover: false,
+      spawnTime: simNow(), isInCover: false,
       squadId: options?.squadId,
       ...(mods?.damage ? { dmgMult: mods.damage } : {}),
       ...(mods?.reload ? { reloadMult: mods.reload } : {}),
       ...(mods?.speed ? { speedMult: mods.speed } : {}),
-      ...(isBunker ? { buildUntil: Date.now() + BUNKER_BUILD_MS, garrison: 0 } : {}),
+      ...(isBunker ? { buildUntil: simNow() + BUNKER_BUILD_MS, garrison: 0 } : {}),
     };
 
     unitsRef.current.push(newUnit);
@@ -1298,18 +1382,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     sp.spawned[type] = (sp.spawned[type] || 0) + 1;
   }, []);
 
-  useEffect(() => {
-    if (commandQueue.length > 0) {
-      commandQueue.forEach(c => runCommand(c.team, c.cmd));
-      clearCommandQueue();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [commandQueue, clearCommandQueue]);
-
-  // Per-unit order overrides and ability triggers from the selection panel
-  useEffect(() => {
-    if (orderQueue.length > 0) {
-      orderQueue.forEach(({ ids, order, ability }) => {
+  // Per-unit order overrides and ability triggers (selection panel). Runs
+  // inside the tick via the input pipeline below — never directly from React.
+  const applyOrder = ({ ids, order, ability }: Extract<SimCommand, { kind: 'order' }>) => {
+    {
+      {
         const idSet = new Set(ids);
         if (ability) {
           const now = tickCountRef.current;
@@ -1386,31 +1463,193 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (order === null) delete u.orders;
           else if (order !== undefined) u.orders = order;
         });
-      });
+      }
+    }
+  };
+
+  // ── Tick-stamped input pipeline ──────────────────────────────────────────
+  // Every gameplay intent is scheduled for a tick and executed at the START
+  // of that tick in a stable order (tick, then arrival). React effects only
+  // ENQUEUE — effect timing is frame-dependent, and lockstep needs both
+  // clients to execute a command on the same tick. Local play schedules for
+  // the next tick (imperceptible); online play raises the delay so the same
+  // command reaches the peer before its execution tick comes up.
+  const pendingInputsRef = useRef<{ tick: number, seq: number, cmd: SimCommand }[]>([]);
+  const inputSeqRef = useRef(0);
+  const inputDelayTicksRef = useRef(0); // lockstep will raise this
+  const scheduleInput = (cmd: SimCommand, atTick?: number) => {
+    // Online: local intents go to the lockstep scheduler, which bundles them,
+    // mirrors them to the peer and hands them back for an agreed future tick.
+    // (Explicit atTick stays local — that's the harness poking the pipeline.)
+    if (lockstepRef.current && atTick === undefined) { lockstepRef.current.localInput(cmd); return; }
+    pendingInputsRef.current.push({
+      tick: atTick ?? (tickCountRef.current + inputDelayTicksRef.current),
+      seq: inputSeqRef.current++,
+      cmd,
+    });
+  };
+  const execInput = (cmd: SimCommand) => {
+    switch (cmd.kind) {
+      case 'spawn': {
+        const ok = spawnUnit(cmd.team, cmd.type, { offset: cmd.offset, absolutePos: cmd.absolutePos, squadId: cmd.squadId, lane: cmd.lane });
+        // Deduction lives HERE, not at enqueue: a vetoed spawn (gunboat on dry
+        // land, locked air command) must charge nothing, and money is sim
+        // state — it only ever moves inside the tick.
+        if (ok !== false && cmd.cost) moneyRef.current[cmd.team] = Math.max(0, moneyRef.current[cmd.team] - cmd.cost);
+        break;
+      }
+      case 'command': runCommand(cmd.team, cmd.cmd); break;
+      case 'order': applyOrder(cmd); break;
+      case 'stance':
+        // The hard CPU steers its own stance — never let UI state overwrite it
+        if (!cpuRef.current.teams.includes(cmd.team)) {
+          stancesRef.current = { ...stancesRef.current, [cmd.team]: cmd.stance };
+        }
+        break;
+      case 'focus':
+        focusRef.current[cmd.team] = { targetId: cmd.targetId, until: simNow() + 6000 };
+        break;
+    }
+  };
+  const drainInputs = () => {
+    const q = pendingInputsRef.current;
+    if (!q.length) return;
+    const nowTick = tickCountRef.current;
+    const due = q.filter(i => i.tick <= nowTick).sort((a, b) => a.tick - b.tick || a.seq - b.seq);
+    if (!due.length) return;
+    pendingInputsRef.current = q.filter(i => i.tick > nowTick);
+    due.forEach(i => execInput(i.cmd));
+  };
+
+  useEffect(() => {
+    if (commandQueue.length > 0) {
+      commandQueue.forEach(c => scheduleInput({ kind: 'command', team: c.team, cmd: c.cmd }));
+      clearCommandQueue();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commandQueue, clearCommandQueue]);
+
+  useEffect(() => {
+    if (orderQueue.length > 0) {
+      orderQueue.forEach(({ ids, order, ability }) => scheduleInput({ kind: 'order', ids, order, ability }));
       clearOrderQueue();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderQueue, clearOrderQueue]);
 
   useEffect(() => {
     if (spawnQueue.length > 0) {
-      spawnQueue.forEach(req => {
-        const ok = spawnUnit(req.team, req.type, { offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane });
-        if (ok !== false && req.cost) {
-          moneyRef.current[req.team] = Math.max(0, moneyRef.current[req.team] - req.cost);
-        }
-      });
+      spawnQueue.forEach(req => scheduleInput({ kind: 'spawn', team: req.team, type: req.type, cost: req.cost, offset: req.offset, absolutePos: req.absolutePos, squadId: req.squadId, lane: req.lane }));
       clearSpawnQueue();
     }
-  }, [spawnQueue, spawnUnit, clearSpawnQueue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spawnQueue, clearSpawnQueue]);
 
-  const tickCountRef = useRef(0);
   // FX telemetry: particles ALIVE decays every tick, so sampling it cannot tell
   // you how big one shot was. These are monotonic counts of what was created.
   const fxStatsRef = useRef({ shots: 0, fireParticles: 0, hits: 0, impactParticles: 0 });
 
+  // ── Sim checksum ─────────────────────────────────────────────────────────
+  // FNV-1a over everything the simulation owns, hashing float BITS (never
+  // strings or rounded values). Two lockstep clients on the same seed and
+  // input schedule must produce identical hashes at identical ticks — any
+  // mismatch is a desync. Arrays are iterated in index order only; Map/Set/
+  // object-key order is never part of the sim and must not enter the hash.
+  const checksumBufRef = useRef<{ f: Float64Array, u: Uint32Array } | null>(null);
+  if (!checksumBufRef.current) {
+    const f = new Float64Array(1);
+    checksumBufRef.current = { f, u: new Uint32Array(f.buffer) };
+  }
+  const simChecksum = (): number => {
+    const { f, u } = checksumBufRef.current!;
+    let h = 0x811c9dc5 >>> 0;
+    const mix = (n: number) => { h = Math.imul(h ^ (n >>> 0), 0x01000193) >>> 0; };
+    const mixF = (x: number) => { f[0] = x; mix(u[0]); mix(u[1]); };
+    const mixS = (s: string | null | undefined) => { if (!s) { mix(0); return; } for (let i = 0; i < s.length; i++) mix(s.charCodeAt(i)); };
+    mix(tickCountRef.current); mix(simIdRef.current); mix(simDrawsRef.current);
+    mixF(moneyRef.current[Team.WEST]); mixF(moneyRef.current[Team.EAST]);
+    mix(scoreRef.current[Team.WEST]); mix(scoreRef.current[Team.EAST]);
+    mix(baseHPRef.current[Team.WEST]); mix(baseHPRef.current[Team.EAST]);
+    mixS(weatherRef.current); mixS(nextWeatherRef.current); mixF(weatherTimerRef.current);
+    mix(incomeLevelRef.current[Team.WEST]); mix(incomeLevelRef.current[Team.EAST]);
+    mixF(rallyRef.current[Team.WEST].until); mixF(rallyRef.current[Team.WEST].readyAt);
+    mixF(rallyRef.current[Team.EAST].until); mixF(rallyRef.current[Team.EAST].readyAt);
+    mix(airOpsRef.current[Team.WEST]); mix(airOpsRef.current[Team.EAST]);
+    mixS(stancesRef.current[Team.WEST]); mixS(stancesRef.current[Team.EAST]);
+    const cap = (c: CapturePoint) => { mixS(c.owner ?? ''); mixF(c.progress); };
+    cap(captureRef.current); flankCapsRef.current.forEach(cap); goldMinesRef.current.forEach(cap); ctfFlagsRef.current.forEach(cap);
+    for (const un of unitsRef.current) {
+      mixS(un.id); mixS(un.team); mixS(un.type);
+      mixF(un.position.x); mixF(un.position.y);
+      mixF(un.health); mixF(un.maxHealth); mixF(un.attackCooldown);
+      mix(un.kills || 0); mix(un.veterancy || 0);
+      mixF(un.suppressedUntil || 0); mix(un.boarded ? 1 : 0); mix(un.isEntrenched ? 1 : 0);
+      mixS(un.targetId); mixS(un.orders ?? '');
+      if (un.vel) { mixF(un.vel.x); mixF(un.vel.y); }
+    }
+    for (const p of projectilesRef.current) {
+      mixS(p.id); mixF(p.position.x); mixF(p.position.y);
+      mixF(p.velocity.x); mixF(p.velocity.y); mixF(p.damage); mixF(p.distanceTraveled);
+    }
+    for (const t of terrainRef.current) {
+      mixS(t.id); mixF(t.x); mixF(t.y); mixS(t.type); mixF(t.health ?? -1);
+      mixS(t.state ?? ''); mixS(t.occupant ?? ''); mix(t.garrisonUnits?.length ?? 0);
+    }
+    for (const fl of flyoversRef.current) { mixS(fl.id); mixF(fl.currentX); mixF(fl.health); mix(fl.missileCount || 0); }
+    for (const m of missilesRef.current) { mixS(m.id); mixF(m.current.x); mixF(m.current.y); }
+    for (const sm of smokesRef.current) { mixS(sm.id); mixF(sm.x); mixF(sm.y); mixF(sm.life); }
+    for (const c of cratesRef.current) { mixS(c.id); mixF(c.x); mixF(c.y); mixF(c.alt); mixF(c.life); mixS(c.type); }
+    for (const c4 of c4Ref.current) { mixS(c4.id); mixF(c4.x); mixF(c4.y); mix(c4.fuse); }
+    for (const L of lasersRef.current) { mixS(L.id); mixF(L.x); mixF(L.y); mixF(L.life); }
+    return h >>> 0;
+  };
+  // Checkpoint hashes recorded at fixed ticks so two clients (or two runs)
+  // can be compared tick-for-tick after the fact. The info journal beside it
+  // is the desync triage kit: WHICH aggregate diverged first (entity count?
+  // rng draws? money?) points straight at the offending subsystem.
+  const checksumLogRef = useRef<Record<number, number>>({});
+  const checksumInfoRef = useRef<Record<number, string>>({});
+
   const update = useCallback(() => {
-    const time = Date.now();
+    // 'time' feeds steering commits and hover-bob MOVEMENT — sim state, so it
+    // must come off the sim clock, not the wall.
     tickCountRef.current++;
+    const time = simNow();
+    // Scheduled inputs for this tick land before anything moves or shoots.
+    // Online, the lockstep scheduler is the source of truth for BOTH sides'
+    // commands (host's first — canonical order); local pending inputs still
+    // drain for harness pokes.
+    if (lockstepRef.current) {
+      for (const cmd of lockstepRef.current.commandsFor(tickCountRef.current)) execInput(cmd);
+    }
+    drainInputs();
+    // Determinism checkpoint every 150 ticks (~2s of sim time). Online, the
+    // hash also goes to the peer, and any peer hash for a tick we've logged
+    // must match — the first mismatch is a desync and ends the match honestly.
+    if (tickCountRef.current % 150 === 0) {
+      const h = simChecksum();
+      checksumLogRef.current[tickCountRef.current] = h;
+      checksumInfoRef.current[tickCountRef.current] =
+        `u${unitsRef.current.length} p${projectilesRef.current.length} d${simDrawsRef.current} id${simIdRef.current}` +
+        ` $${moneyRef.current[Team.WEST].toFixed(2)}/${moneyRef.current[Team.EAST].toFixed(2)}` +
+        ` fly${flyoversRef.current.length} t${terrainRef.current.length}`;
+      if (lockstepRef.current && !desyncedRef.current) {
+        onNetChecksumRef.current?.(tickCountRef.current, h);
+        const peer = peerChecksumsRef?.current;
+        if (peer) {
+          for (const key of Object.keys(peer)) {
+            const t = Number(key);
+            const mine = checksumLogRef.current[t];
+            if (mine === undefined) continue; // peer is ahead of us — compare when we get there
+            if (mine !== peer[t]) {
+              desyncedRef.current = true;
+              onDesyncRef.current?.(t);
+            }
+            delete peer[t];
+          }
+        }
+      }
+    }
     // Staggers O(terrain)/O(units) searches: each unit re-evaluates every 4th tick
     const isSearchTick = (u: Unit) =>
       ((tickCountRef.current + u.id.charCodeAt(0) + u.id.charCodeAt(u.id.length - 1)) & 3) === 0;
@@ -1426,7 +1665,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         spatialHash.current.queryCallback(p.x, p.y, 28, u => {
           if (Math.sqrt((u.position.x - p.x) ** 2 + (u.position.y - p.y) ** 2) < 28 && !(UNIT_CONFIG[u.type] as any).isFlying) {
             u.health -= 16;
-            u.lastHitTime = Date.now();
+            u.lastHitTime = simNow();
           }
         });
         for (let k = 0; k < 8; k++) {
@@ -1765,7 +2004,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const ti = terrainRef.current.indexOf(oldest);
         if (ti >= 0) terrainRef.current.splice(ti, 1);
       }
-      const crater: TerrainObject = { id: generateId(), x, y, type: 'crater', size };
+      const crater: TerrainObject = { id: simId(), x, y, type: 'crater', size };
       cratersRef.current.push(crater);
       terrainRef.current.push(crater);
     };
@@ -1811,8 +2050,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Rally status computed once per tick, read in the unit loop
     const rallyOn: Record<Team, boolean> = {
-      [Team.WEST]: Date.now() < rallyRef.current[Team.WEST].until,
-      [Team.EAST]: Date.now() < rallyRef.current[Team.EAST].until,
+      [Team.WEST]: simNow() < rallyRef.current[Team.WEST].until,
+      [Team.EAST]: simNow() < rallyRef.current[Team.EAST].until,
     };
 
     // Underdog rubber-band, two signals:
@@ -2072,14 +2311,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // The cadence and the cash bias are deliberately hot — fighting over the
     // midfield economy MID-battle is a fight worth having, not a footnote.
     if (tickCountRef.current >= nextCrateTickRef.current) {
-      nextCrateTickRef.current = tickCountRef.current + 900 + Math.floor(Math.random() * 900);
+      nextCrateTickRef.current = tickCountRef.current + 900 + Math.floor(srand() * 900);
       const types: SupplyCrate['type'][] = ['cash', 'cash', 'cash', 'squad', 'medkit']; // cash-heavy
       cratesRef.current.push({
-        id: generateId(),
-        x: 300 + Math.random() * 200,
-        y: HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120),
+        id: simId(),
+        x: 300 + srand() * 200,
+        y: HORIZON_Y + 60 + srand() * (CANVAS_HEIGHT - HORIZON_Y - 120),
         alt: 230,
-        type: types[Math.floor(Math.random() * types.length)],
+        type: types[Math.floor(srand() * types.length)],
         life: 1300, // ~22s on the ground before it despawns
       });
     }
@@ -2108,14 +2347,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         particlesRef.current.push({ id: generateId(), position: { x: c.x, y: c.y }, velocity: { x: 0, y: 0.5 }, life: 90, color: '#22c55e', size: 8, text: '+$150' });
       } else if (c.type === 'squad') {
         const cfg = UNIT_CONFIG[UnitType.SOLDIER];
-        const sqId = generateId();
+        const sqId = simId();
         for (let s = 0; s < 3; s++) {
           unitsRef.current.push({
-            id: generateId(), team, type: UnitType.SOLDIER,
+            id: simId(), team, type: UnitType.SOLDIER,
             position: { x: c.x + (s - 1) * 14, y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, c.y + (s % 2) * 18 - 9)) },
             state: UnitState.MOVING, health: cfg.health, maxHealth: cfg.health,
             attackCooldown: 0, targetId: null, width: cfg.width, height: cfg.height,
-            spawnTime: Date.now(), isInCover: false, squadId: sqId,
+            spawnTime: simNow(), isInCover: false, squadId: sqId,
             kills: 3, veterancy: 1, // drop-in veterans
           });
           statsRef.current[team].built++;
@@ -2174,7 +2413,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (u.team === L.team) return;
           if (Math.sqrt((u.position.x - L.x) ** 2 + (u.position.y - L.y) ** 2) < L.radius) {
             u.health -= dmg;
-            u.lastHitTime = Date.now();
+            u.lastHitTime = simNow();
           }
         });
         // Embers boiling off the impact zone
@@ -2267,11 +2506,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           fly.shotTimer = (fly.shotTimer || 0) + 1;
           if (fly.shotTimer >= 45) {
             fly.shotTimer = 0;
-            const spreadX = (Math.random() - 0.5) * 160;
-            const spreadY = (Math.random() - 0.5) * 110;
+            const spreadX = (srand() - 0.5) * 160;
+            const spreadY = (srand() - 0.5) * 110;
             const tgt = { x: fly.targetPos.x + spreadX, y: fly.targetPos.y + spreadY };
             missilesRef.current.push({
-              id: generateId(), team: fly.team,
+              id: simId(), team: fly.team,
               target: tgt, current: { x: fly.currentX, y: fly.altitudeY },
               velocity: { x: (tgt.x - fly.currentX) / 40, y: (tgt.y - fly.altitudeY) / 40 }
             } as any);
@@ -2284,7 +2523,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       } else if (!fly.dropped && Math.abs(fly.currentX - fly.targetPos.x) < 30) {
         if ((fly.type === UnitType.MISSILE_STRIKE || fly.type === UnitType.NUKE) && fly.missileCount && fly.missileCount > 0) {
           missilesRef.current.push({
-            id: generateId(), team: fly.team, target: { x: fly.targetPos.x + (fly.type === UnitType.NUKE ? 0 : (2 - fly.missileCount) * 30), y: fly.targetPos.y },
+            id: simId(), team: fly.team, target: { x: fly.targetPos.x + (fly.type === UnitType.NUKE ? 0 : (2 - fly.missileCount) * 30), y: fly.targetPos.y },
             current: { x: fly.currentX, y: fly.altitudeY },
             velocity: { x: (fly.targetPos.x - fly.currentX) / 40, y: (fly.targetPos.y - fly.altitudeY) / 40 },
             isNuke: fly.type === UnitType.NUKE
@@ -2300,14 +2539,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             // the game (0.48 kill-value/$ where a rifleman does 1.46). They also
             // landed as loose individuals; a squadId means they select, and fight,
             // as the unit they are supposed to be.
-            const stick = generateId();
+            const stick = simId();
             for (let j = 0; j < AIRBORNE_STICK; j++) {
               unitsRef.current.push({
-                id: generateId(), team: fly.team, type: UnitType.AIRBORNE,
+                id: simId(), team: fly.team, type: UnitType.AIRBORNE,
                 position: { x: fly.targetPos.x + (j - (AIRBORNE_STICK - 1) / 2) * 25, y: fly.targetPos.y },
                 state: UnitState.MOVING, health: config.health, maxHealth: config.health,
                 attackCooldown: 0, targetId: null, width: config.width, height: config.height,
-                spawnTime: Date.now(), planeAltitudeAtDrop: fly.altitudeY, squadId: stick,
+                spawnTime: simNow(), planeAltitudeAtDrop: fly.altitudeY, squadId: stick,
               });
             }
             // Dropped troops bypass spawnUnit — keep built/spawned telemetry honest
@@ -2325,19 +2564,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     // Weather Logic — the NEXT weather is pre-rolled so the HUD can forecast it
-    if (Date.now() > weatherTimerRef.current) {
+    if (simNow() > weatherTimerRef.current) {
       const incoming = nextWeatherRef.current;
       const wasClear = weatherRef.current === 'clear';
       weatherRef.current = incoming;
       const holdMs =
-        incoming === 'rain'  ? 15000 + Math.random() * 15000 :
-        incoming === 'snow'  ? 18000 + Math.random() * 18000 :
-        incoming === 'fog'   ? 12000 + Math.random() * 12000 :
-        incoming === 'storm' ? 10000 + Math.random() * 10000 :
-        wasClear ? 22000 + Math.random() * 20000 : 28000 + Math.random() * 28000;
-      weatherTimerRef.current = Date.now() + holdMs;
+        incoming === 'rain'  ? 15000 + srand() * 15000 :
+        incoming === 'snow'  ? 18000 + srand() * 18000 :
+        incoming === 'fog'   ? 12000 + srand() * 12000 :
+        incoming === 'storm' ? 10000 + srand() * 10000 :
+        wasClear ? 22000 + srand() * 20000 : 28000 + srand() * 28000;
+      weatherTimerRef.current = simNow() + holdMs;
       if (incoming !== 'clear') nextWeatherRef.current = 'clear';
-      else nextWeatherRef.current = rollNextWeather(mapType);
+      else nextWeatherRef.current = rollNextWeather(mapType, srand());
     }
 
     // Snow particle generation (drifts down to ground level)
@@ -2356,15 +2595,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     // Storm lightning strikes — random area damage + flash
-    if (weatherRef.current === 'storm' && Math.random() < 0.0012) {
-      const lx = 80 + Math.random() * (CANVAS_WIDTH - 160);
-      const ly = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
+    if (weatherRef.current === 'storm' && srand() < 0.0012) {
+      const lx = 80 + srand() * (CANVAS_WIDTH - 160);
+      const ly = HORIZON_Y + 60 + srand() * (CANVAS_HEIGHT - HORIZON_Y - 120);
       flashOpacity.current = Math.max(flashOpacity.current, 0.35);
       shakeRef.current = Math.max(shakeRef.current, 3);
       unitsRef.current.forEach(u => {
         if (Math.sqrt((u.position.x - lx) ** 2 + (u.position.y - ly) ** 2) < 55) {
           u.health -= 25;
-          u.lastHitTime = Date.now();
+          u.lastHitTime = simNow();
         }
       });
       for (let k = 0; k < 10; k++) {
@@ -2489,7 +2728,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Units Logic
     unitsRef.current.forEach(unit => {
-      const lifeTime = Date.now() - (unit.spawnTime || 0);
+      const lifeTime = simNow() - (unit.spawnTime || 0);
       const isDescent = unit.type === UnitType.AIRBORNE && lifeTime < 3000;
       if (unit.type === UnitType.NAPALM) {
         unit.health--;
@@ -2544,7 +2783,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const d = Math.sqrt((v.position.x - unit.position.x) ** 2 + (v.position.y - unit.position.y) ** 2);
             if (d < radius * 2) {
               v.health -= damage * (1 - d / (radius * 2)); // Falloff
-              v.lastHitTime = Date.now();
+              v.lastHitTime = simNow();
               if (v.team !== unit.team) v.lastAttackerId = unit.id;
             }
           });
@@ -2574,7 +2813,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           spatialHash.current.queryCallback(unit.position.x, unit.position.y, 44, o => {
             if (unit.passengers!.length >= cap) return;
             if (o.team !== unit.team || o.boarded || o.health <= 0 || !TRANSPORTABLE.has(o.type)) return;
-            if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return; // still descending
+            if (o.type === UnitType.AIRBORNE && simNow() - (o.spawnTime || 0) < 3000) return; // still descending
             // An engineer already working a job stays on it — a jeep driving past
             // must not abduct the mechanic mid-weld.
             if (o.type === UnitType.ENGINEER && o.jobX !== undefined) return;
@@ -2614,7 +2853,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (unit.type === UnitType.BUNKER) {
         if (unit.buildUntil) {
           const cfg = UNIT_CONFIG[UnitType.BUNKER];
-          const left = unit.buildUntil - Date.now();
+          const left = unit.buildUntil - simNow();
           if (left <= 0) {
             unit.buildUntil = undefined;
             pushEvent('command', `${teamName(unit.team)} bunker is manned and ready`, unit.team);
@@ -2676,14 +2915,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
           for (let si = 0; si < APC_SQUAD; si++) {
             unitsRef.current.push({
-              id: generateId(), team: unit.team, type: UnitType.SOLDIER,
+              id: simId(), team: unit.team, type: UnitType.SOLDIER,
               position: {
                 x: unit.position.x + back * (16 + si * 4),
                 y: Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, unit.position.y + (si - 1) * 16)),
               },
               state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
               attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
-              spawnTime: Date.now(), isInCover: false, squadId: unit.id,
+              spawnTime: simNow(), isInCover: false, squadId: unit.id,
             });
             statsRef.current[unit.team].built++;
           }
@@ -2705,7 +2944,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // Field repairs: wounded units patch up slowly near their own edge when
       // they haven't been shot at recently — makes Fall Back worth ordering.
       if (!isDescent && unit.health > 0 && unit.health < unit.maxHealth &&
-          (!unit.lastHitTime || Date.now() - unit.lastHitTime > REPAIR_COMBAT_LOCKOUT_MS)) {
+          (!unit.lastHitTime || simNow() - unit.lastHitTime > REPAIR_COMBAT_LOCKOUT_MS)) {
         const nearOwnEdge = unit.team === Team.WEST ? unit.position.x < REPAIR_ZONE : unit.position.x > CANVAS_WIDTH - REPAIR_ZONE;
         if (nearOwnEdge) {
           unit.health = Math.min(unit.maxHealth, unit.health + REPAIR_PER_TICK);
@@ -2742,7 +2981,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Pinned by incoming fire: he crawls until he gets a moment's peace
-      const suppressed = !!unit.suppressedUntil && Date.now() < unit.suppressedUntil;
+      const suppressed = !!unit.suppressedUntil && simNow() < unit.suppressedUntil;
 
       if (unit.type !== UnitType.BUNKER && (unit.state === UnitState.MOVING || (unit.type === UnitType.ARTILLERY && !unit.isInCover)) && !isDescent) {
         const weatherMovePenalty = config.isFlying
@@ -2800,8 +3039,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             } else {
               unit.isInCover = true;
               unit.coverType = 'tree';
-              unit.coverEnterTime = Date.now();
-              unit.coverDuration = 4500 + Math.random() * 9000;
+              unit.coverEnterTime = simNow();
+              unit.coverDuration = 4500 + srand() * 9000;
             }
           }
         }
@@ -2834,7 +3073,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Suppression: units recently hit slow to a crawl (infantry only)
-        const isUnderFire = !config.isFlying && !!unit.lastHitTime && (Date.now() - unit.lastHitTime) < 650;
+        const isUnderFire = !config.isFlying && !!unit.lastHitTime && (simNow() - unit.lastHitTime) < 650;
 
         if (config.isFlying) {
           unit.isInCover = false; // Force out of cover (Flyers never take cover)
@@ -2947,7 +3186,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               for (const m of unitsRef.current) {
                 if (m.team !== unit.team || m.id === unit.id || !isMechanical(m.type)) continue;
                 if (m.health <= 0 || m.health >= m.maxHealth) continue;
-                if (m.buildUntil && Date.now() < m.buildUntil) continue;
+                if (m.buildUntil && simNow() < m.buildUntil) continue;
                 const d = Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2);
                 if (d < 260) consider(m.position.x, m.position.y, d * (m.health / m.maxHealth));
               }
@@ -2973,7 +3212,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 moveX = 0; moveY = 0;   // on station: work
                 if (unit.c4X !== undefined && unit.c4Y !== undefined) {
                   // On the objective: set the satchel and clear out
-                  c4Ref.current.push({ id: generateId(), team: unit.team, x: unit.c4X, y: unit.c4Y, fuse: C4_FUSE_TICKS, ownerId: unit.id });
+                  c4Ref.current.push({ id: simId(), team: unit.team, x: unit.c4X, y: unit.c4Y, fuse: C4_FUSE_TICKS, ownerId: unit.id });
                   pushEvent('strike', `${teamName(unit.team)} engineer sets a C4 charge!`, unit.team);
                   soundService.playHitSound(unit.c4X);
                   delete unit.c4X; delete unit.c4Y;
@@ -3073,7 +3312,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               }
 
               if (unit.isInCover && unit.coverEnterTime) {
-                if (Date.now() - unit.coverEnterTime > (unit.coverDuration || 8000)) {
+                if (simNow() - unit.coverEnterTime > (unit.coverDuration || 8000)) {
                   unit.isInCover = false;
                   unit.lastCoverId = terrainRef.current.find(t =>
                     Math.sqrt((t.x - unit.position.x) ** 2 + (t.y - unit.position.y) ** 2) < 60
@@ -3111,10 +3350,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                     unit.isInCover = true;
                     // Records what he's behind — the sniper's ghillie only takes in foliage
                     unit.coverType = cover.type === 'tree' ? 'tree' : 'rock';
-                    unit.coverEnterTime = Date.now();
+                    unit.coverEnterTime = simNow();
                     unit.coverDuration = isUnderFire
-                      ? 2500 + Math.random() * 3500
-                      : 4500 + Math.random() * 9000;
+                      ? 2500 + srand() * 3500
+                      : 4500 + srand() * 9000;
                   }
                 }
               }
@@ -3278,7 +3517,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             unit.camoTicks = (unit.camoTicks ?? 0) + 1;
             // Ordered to stay: the cover dwell timer doesn't run out from under
             // the ghillie while he holds (it resumes when the order changes)
-            unit.coverEnterTime = Date.now();
+            unit.coverEnterTime = simNow();
           } else {
             unit.camoTicks = 0;
           }
@@ -3417,7 +3656,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           // AA targets Drones AND Descending Paratroopers
           let target = unitsRef.current.find(u => {
             if (u.team === unit.team) return false;
-            const isAirTarget = u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER || (u.type === UnitType.AIRBORNE && (Date.now() - (u.spawnTime || 0) < 3000));
+            const isAirTarget = u.type === UnitType.HELICOPTER || u.type === UnitType.DRONE || u.type === UnitType.FIGHTER || (u.type === UnitType.AIRBORNE && (simNow() - (u.spawnTime || 0) < 3000));
             return isAirTarget && Math.sqrt((u.position.x - unit.position.x) ** 2 + (u.position.y - unit.position.y) ** 2) < range;
           });
 
@@ -3439,7 +3678,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const a = Math.atan2(fly.altitudeY - unit.position.y, aimX - unit.position.x);
               // The intercept point can sit a little beyond the launch range —
               // let the round live long enough to get there
-              projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range * 1.2, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+              projectilesRef.current.push({ id: simId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range * 1.2, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
               unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound(unit.position.x);
             } else {
               // Sky's clear — depress the guns and rake enemy infantry. Flak
@@ -3459,15 +3698,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               });
               if (gt) {
                 const t = gt as Unit;
-                const a = Math.atan2(t.position.y - unit.position.y, t.position.x - unit.position.x) + spreadAtRange(unit.type, gd, groundRange);
-                projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult * 0.5, maxRange: groundRange, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                const a = Math.atan2(t.position.y - unit.position.y, t.position.x - unit.position.x) + spreadAtRange(unit.type, gd, groundRange, srand());
+                projectilesRef.current.push({ id: simId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult * 0.5, maxRange: groundRange, distanceTraveled: 0, targetType: 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                 unit.attackCooldown = Math.round(config.attackSpeed * vetReload);
                 fireFx(unit, a); soundService.playRifleShot(unit.position.x);
               }
             }
           } else {
             const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
-            projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
+            projectilesRef.current.push({ id: simId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: config.damage * vetMult, maxRange: range, distanceTraveled: 0, targetType: 'air', sourceType: unit.type, sourceUnitId: unit.id, isMissile: true });
             unit.attackCooldown = Math.round(config.attackSpeed * vetReload); soundService.playRocketSound(unit.position.x);
           }
         } else {
@@ -3488,7 +3727,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const dist = Math.sqrt((v.position.x - unit.position.x) ** 2 + (v.position.y - unit.position.y) ** 2);
                 if (dist < range) {
                   v.health -= config.damage * vetMult;
-                  v.lastHitTime = Date.now();
+                  v.lastHitTime = simNow();
                   v.lastAttackerId = unit.id;
                   fired = true;
                   for (let fp = 0; fp < 3; fp++) {
@@ -3581,7 +3820,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 const wrecks = spatialHash.current.query(unit.position.x, unit.position.y, ENGINEER_REPAIR_RANGE)
                   .filter(m => m.team === unit.team && m.id !== unit.id && isMechanical(m.type) &&
                     m.health > 0 && m.health < m.maxHealth &&
-                    !(m.buildUntil && Date.now() < m.buildUntil) &&
+                    !(m.buildUntil && simNow() < m.buildUntil) &&
                     Math.sqrt((m.position.x - unit.position.x) ** 2 + (m.position.y - unit.position.y) ** 2) < ENGINEER_REPAIR_RANGE);
                 if (wrecks.length > 0) {
                   const patient = wrecks.reduce((a, b) => (a.health / a.maxHealth) < (b.health / b.maxHealth) ? a : b);
@@ -3648,7 +3887,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
               for (let hop = 0; hop < TESLA_CHAIN_MAX && link; hop++) {
                 link.health -= dmg;
-                link.lastHitTime = Date.now();
+                link.lastHitTime = simNow();
                 link.lastAttackerId = unit.id;
 
                 // Arc segment from the previous node to this man (a beam particle
@@ -3687,7 +3926,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
             // Player focus-fire target takes priority when in range and engageable
             const focus = focusRef.current[unit.team];
-            if (focus.targetId && Date.now() < focus.until) {
+            if (focus.targetId && simNow() < focus.until) {
               const ft = unitsRef.current.find(o => o.id === focus.targetId && o.team !== unit.team && o.health > 0);
               if (ft) {
                 const ftIsAir = !!(UNIT_CONFIG[ft.type] as any).isFlying;
@@ -3764,7 +4003,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               target = potentialTargets.find(o => {
                 if (o.team === unit.team || o.type === UnitType.NAPALM || o.type === UnitType.MINE_PERSONAL || o.type === UnitType.MINE_TANK) return false;
                 if ((UNIT_CONFIG[o.type] as any).isFlying) return false; // ground pass only
-                const oLife = Date.now() - (o.spawnTime || 0);
+                const oLife = simNow() - (o.spawnTime || 0);
                 if (o.type === UnitType.AIRBORNE && oLife < 3000 && unit.type !== UnitType.HELICOPTER) return false;
                 if (smokeBlocked(unit, o)) return false;
                 return Math.sqrt((o.position.x - unit.position.x) ** 2 + ((o.position.y - unit.position.y) * 2) ** 2) < range;
@@ -3816,9 +4055,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
               // Sniper Accuracy Check
               if (unit.type === UnitType.SNIPER) {
-                if (Math.random() > 0.7) { // 30% Miss Chance
-                  const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (Math.random() - 0.5) * 0.5;
-                  projectilesRef.current.push({ id: generateId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
+                if (srand() > 0.7) { // 30% Miss Chance
+                  const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x) + (srand() - 0.5) * 0.5;
+                  projectilesRef.current.push({ id: simId(), team: unit.team, position: { ...unit.position }, velocity: { x: Math.cos(a) * roundSpeed(unit.type), y: Math.sin(a) * roundSpeed(unit.type) }, damage: 0, maxRange: range, distanceTraveled: 0, targetType: targetIsAir ? 'air' : 'ground', sourceType: unit.type, sourceUnitId: unit.id });
                   unit.attackCooldown = config.attackSpeed; soundService.playSniperShot(unit.position.x);
                   fireFx(unit, a);   // a miss still throws dust and gives his hide away
                   return;
@@ -3828,9 +4067,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               const a = Math.atan2(target.position.y - unit.position.y, target.position.x - unit.position.x);
               let spread = 0;
               if (unit.type === UnitType.ARTILLERY) {
-                spread = (Math.random() - 0.5) * 0.55;
+                spread = (srand() - 0.5) * 0.55;
               } else if (unit.type === UnitType.MORTAR) {
-                spread = (Math.random() - 0.5) * 0.4;
+                spread = (srand() - 0.5) * 0.4;
               }
               const isMissile = unit.type === UnitType.HELICOPTER;
               // Reach shows up in the shot: flat and fast for a long-barrelled
@@ -3840,10 +4079,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 (target.position.x - unit.position.x) ** 2 + (target.position.y - unit.position.y) ** 2);
               // Rounds wander the further out you shoot, so parking at max range
               // is no longer free — closing the distance buys accuracy.
-              spread += spreadAtRange(unit.type, shotDist, range);
+              spread += spreadAtRange(unit.type, shotDist, range, srand());
 
               projectilesRef.current.push({
-                id: generateId(),
+                id: simId(),
                 team: unit.team,
                 position: { ...unit.position },
                 velocity: { x: Math.cos(a + spread) * speed, y: Math.sin(a + spread) * speed },
@@ -3860,7 +4099,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   : {}),
               });
               // A man with rounds cracking past him is slower to work his weapon
-              const suppressReload = (unit.suppressedUntil && Date.now() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
+              const suppressReload = (unit.suppressedUntil && simNow() < unit.suppressedUntil) ? SUPPRESSION_RELOAD_MULT : 1;
               unit.attackCooldown = Math.floor(config.attackSpeed * (unit.isOnHill ? HILL_RELOAD_BONUS : 1.0) * vetReload * suppressReload * (unit.reloadMult ?? 1));
               fireFx(unit, a + spread);
               if (unit.type === UnitType.TANK || unit.type === UnitType.APC || unit.type === UnitType.BUNKER || unit.type === UnitType.GUNBOAT) soundService.playHeavyShot(unit.position.x);
@@ -3940,10 +4179,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const hw = (bld.width || bld.size * 2.6) / 2;
       let lost = 0;
       g.forEach((p, idx) => {
-        if (opts.survive != null && Math.random() >= opts.survive) { lost++; return; }
+        if (opts.survive != null && srand() >= opts.survive) { lost++; return; }
         p.boarded = false;
         p.health = Math.max(1, Math.floor(p.maxHealth * opts.healthMult));
-        p.lastHitTime = Date.now();
+        p.lastHitTime = simNow();
         p.state = UnitState.MOVING;
         p.suppressedUntil = 0;
         const back = p.team === Team.WEST ? -1 : 1;
@@ -3970,7 +4209,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (bld.garrisonUnits!.length >= cap) return;
           if (o.boarded || o.health <= 0 || !OCCUPIES_BUILDING(o.type)) return;
           // A paratrooper still under canopy can't duck into a doorway
-          if (o.type === UnitType.AIRBORNE && Date.now() - (o.spawnTime || 0) < 3000) return;
+          if (o.type === UnitType.AIRBORNE && simNow() - (o.spawnTime || 0) < 3000) return;
           if (Math.abs(o.position.x - bld.x) > hw + BUILDING_ENTRY_RANGE ||
               Math.abs(o.position.y - bld.y) > hd + BUILDING_ENTRY_RANGE) return;
           if (bld.occupant == null) {
@@ -4025,10 +4264,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             const ex = bld.x + Math.cos(baseA) * (hw + 4);
             const ey = bld.y + Math.sin(baseA) * (hd + 4);
             for (let g = 0; g < guns; g++) {
-              const spread = (Math.random() - 0.5) * 0.16;
+              const spread = (srand() - 0.5) * 0.16;
               projectilesRef.current.push({
-                id: generateId(), team: bld.occupant!,
-                position: { x: ex + (Math.random() - 0.5) * hw * 0.5, y: ey },
+                id: simId(), team: bld.occupant!,
+                position: { x: ex + (srand() - 0.5) * hw * 0.5, y: ey },
                 velocity: { x: Math.cos(baseA + spread) * sp, y: Math.sin(baseA + spread) * sp },
                 damage: BUILDING_GARRISON_DAMAGE, maxRange: BUILDING_FIRE_RANGE, distanceTraveled: 0,
                 targetType: 'ground', sourceType: UnitType.SOLDIER,
@@ -4143,7 +4382,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (d > C4_RADIUS) return;
         const mult = u.type === UnitType.BUNKER || u.type === UnitType.GUNBOAT ? 1 : 0.5;
         u.health -= C4_DAMAGE * mult * (1 - (d / C4_RADIUS) * 0.6);
-        u.lastHitTime = Date.now();
+        u.lastHitTime = simNow();
         u.lastAttackerId = c.ownerId; // kill credit, or the engineer earns nothing
       });
       soundService.playMineExplosion(c.x);
@@ -4179,7 +4418,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       spatialHash.current.queryCallback(p.position.x, p.position.y, SUPPRESSION_RADIUS, u => {
         if (u.team === p.team || u.health <= 0 || !isSuppressible(u.type)) return;
         if (Math.sqrt((u.position.x - p.position.x) ** 2 + (u.position.y - p.position.y) ** 2) > SUPPRESSION_RADIUS) return;
-        u.suppressedUntil = Date.now() + SUPPRESSION_MS;
+        u.suppressedUntil = simNow() + SUPPRESSION_MS;
       });
 
       let hit = false;
@@ -4285,7 +4524,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
 
             target.health -= damage;
-            target.lastHitTime = Date.now();
+            target.lastHitTime = simNow();
             if (p.sourceUnitId) target.lastAttackerId = p.sourceUnitId;
             // Blood or Sparks
             if (target.type === UnitType.SOLDIER || target.type === UnitType.SPECIAL_FORCES) {
@@ -4308,7 +4547,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // A heavy shell bursting in view rattles the viewer too (mildly)
         if (p.explosionRadius && p.damage >= 80) shockCam(p.position.x, 0.35);
         // ...and sometimes gouges a shell hole (throttled — the cap would churn)
-        if (p.explosionRadius && p.explosionRadius >= 45 && p.damage >= 80 && Math.random() < 0.3) {
+        if (p.explosionRadius && p.explosionRadius >= 45 && p.damage >= 80 && srand() < 0.3) {
           gougeCrater(p.position.x, p.position.y, 14 + p.explosionRadius * 0.18);
         }
 
@@ -4346,7 +4585,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 // the game is concerned — no veterancy for the gunner, and the
                 // stats credit the kill to no one (artillery and mortar showed 0
                 // kills in the harness the moment their damage moved to this path).
-                u.lastHitTime = Date.now();
+                u.lastHitTime = simNow();
                 if (p.sourceUnitId) u.lastAttackerId = p.sourceUnitId;
               }
             }
@@ -4370,9 +4609,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           terrainRef.current.forEach(t => {
             if (t.type === 'tree' && t.state !== 'burnt' && t.state !== 'broken') {
               if (Math.abs(t.x - p.position.x) < 30 && Math.abs(t.y - p.position.y) < 30) {
-                if (Math.random() < 0.6) {
+                if (srand() < 0.6) {
                   t.state = 'burning';
-                  t.health = 500 + Math.random() * 500;
+                  t.health = 500 + srand() * 500;
                 }
               }
             }
@@ -4407,11 +4646,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // A bunker that falls buries part of its garrison; the rest scramble out
       // of the rubble, hurt.
       if (u.type === UnitType.BUNKER && u.passengers?.length) {
-        const survivors = u.passengers.filter(() => Math.random() < 0.6);
+        const survivors = u.passengers.filter(() => srand() < 0.6);
         survivors.forEach((p, idx) => {
           p.boarded = false;
           p.health = Math.max(1, Math.floor(p.health * 0.45));
-          p.lastHitTime = Date.now();
+          p.lastHitTime = simNow();
           p.state = UnitState.MOVING;
           p.position.x = u.position.x + ((idx % 2) === 0 ? -1 : 1) * (14 + idx * 4);
           p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + (idx - 1) * 12));
@@ -4428,7 +4667,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         u.passengers.forEach((p, idx) => {
           p.boarded = false;
           p.health = Math.max(1, Math.floor(p.health * 0.5));
-          p.lastHitTime = Date.now();
+          p.lastHitTime = simNow();
           p.state = UnitState.MOVING;
           p.position.x = u.position.x + ((idx % 3) - 1) * 18;
           p.position.y = Math.max(HORIZON_Y + 12, Math.min(CANVAS_HEIGHT - 12, u.position.y + (Math.floor(idx / 3) - 0.5) * 26));
@@ -4481,11 +4720,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
         for (let si = 0; si < (u.deployed ? 0 : APC_SQUAD); si++) {
           unitsRef.current.push({
-            id: generateId(), team: u.team, type: UnitType.SOLDIER,
-            position: { x: u.position.x + (si - 1) * 16, y: u.position.y + (Math.random() - 0.5) * 20 },
+            id: simId(), team: u.team, type: UnitType.SOLDIER,
+            position: { x: u.position.x + (si - 1) * 16, y: u.position.y + (srand() - 0.5) * 20 },
             state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
             attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
-            spawnTime: Date.now(), isInCover: false
+            spawnTime: simNow(), isInCover: false
           });
         }
         for (let k = 0; k < 15; k++) {
@@ -4552,7 +4791,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           terrainRef.current.splice(terrainRef.current.indexOf(oldest), 1);
         }
         terrainRef.current.push({
-          id: generateId(), x: u.position.x, y: u.position.y, type: 'wreck',
+          id: simId(), x: u.position.x, y: u.position.y, type: 'wreck',
           size: getMoveClass(u.type) === 'tracked' ? 16 : 11,
           wreckOf: u.type, state: 'burning', health: WRECK_LIFE_TICKS,
         });
@@ -4656,11 +4895,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const lvl = incomeLevelRef.current[ME];
           if (lvl < INCOME_UPGRADE_MAX &&
               moneyRef.current[ME] > INCOME_UPGRADE_BASE_COST * (lvl + 1) + 350 &&
-              Math.random() < 0.3 * DIFF.commands * PERS.commandBias) {
+              srand() < 0.3 * DIFF.commands * PERS.commandBias) {
             runCommand(ME, 'income');
           }
           const myGroundCount = myActive.filter(u => !(UNIT_CONFIG[u.type] as any).isFlying).length;
-          if (myGroundCount >= 8 && moneyRef.current[ME] > RALLY_COST + 250 && Math.random() < 0.12 * DIFF.special * DIFF.commands * PERS.commandBias) {
+          if (myGroundCount >= 8 && moneyRef.current[ME] > RALLY_COST + 250 && srand() < 0.12 * DIFF.special * DIFF.commands * PERS.commandBias) {
             runCommand(ME, 'rally'); // validates its own cooldown
           }
         }
@@ -4697,7 +4936,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // --- Counter-picks (emergency priority) ---
         // Lower difficulties often fail to read the foe's composition and
         // just build from the general pool below.
-        if (Math.random() < DIFF.counterSmart) {
+        if (srand() < DIFF.counterSmart) {
           if (airThreats >= 2 && !myHasAA)  add(UnitType.ANTI_AIR, 10);
           else if (airThreats >= 1 && !myHasAA) add(UnitType.ANTI_AIR, 5);
           if (airThreats >= 2) add(UnitType.FIGHTER, 4);
@@ -4758,7 +4997,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // on ordnance the squadron can't launch yet. spawnUnit would veto it
         // anyway — this keeps the CPU's tactics reads honest.
         const airReady = tickCountRef.current >= airOpsRef.current[ME];
-        if (!specialSpawned && airReady && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && Math.random() < 0.3 * DIFF.special * PERS.tactic.airstrike) {
+        if (!specialSpawned && airReady && can(UnitType.AIRSTRIKE) && foeForts.length > 0 && srand() < 0.3 * DIFF.special * PERS.tactic.airstrike) {
           const fort = foeForts.reduce((a, b) => ((b.garrisonUnits?.length || 0) > (a.garrisonUnits?.length || 0) ? b : a));
           if (spawnUnit(ME, UnitType.AIRSTRIKE, { absolutePos: { x: fort.x, y: fort.y } }) !== false) {
             moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.AIRSTRIKE] as any).cost;
@@ -4775,7 +5014,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // permanent grey haze over the field. Now one cloud at a time, and only
         // when the foe fields a real battery (≥3), so it's a considered play.
         const foeLongRange = foeUnits.filter(u => u.type === UnitType.ARTILLERY || u.type === UnitType.SNIPER || u.type === UnitType.MORTAR);
-        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && Math.random() < 0.14 * DIFF.special * PERS.tactic.smoke) {
+        if (!specialSpawned && can(UnitType.SMOKE) && foeLongRange.length >= 3 && smokesRef.current.length < 1 && srand() < 0.14 * DIFF.special * PERS.tactic.smoke) {
           const cx = foeLongRange.reduce((s, u) => s + u.position.x, 0) / foeLongRange.length;
           const cy = foeLongRange.reduce((s, u) => s + u.position.y, 0) / foeLongRange.length;
           spawnUnit(ME, UnitType.SMOKE, { absolutePos: { x: cx, y: cy } });
@@ -4784,7 +5023,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Missile strike at enemy cluster
-        if (!specialSpawned && airReady && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && Math.random() < 0.25 * DIFF.special * PERS.tactic.missile) {
+        if (!specialSpawned && airReady && can(UnitType.MISSILE_STRIKE) && foeUnits.length >= 6 && srand() < 0.25 * DIFF.special * PERS.tactic.missile) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
           if (spawnUnit(ME, UnitType.MISSILE_STRIKE, { absolutePos: { x: cx, y: cy } }) !== false) {
@@ -4794,7 +5033,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Cruise missile at a big enemy cluster
-        if (!specialSpawned && airReady && can(UnitType.CRUISE) && foeUnits.length >= 8 && Math.random() < 0.15 * DIFF.special * PERS.tactic.cruise) {
+        if (!specialSpawned && airReady && can(UnitType.CRUISE) && foeUnits.length >= 8 && srand() < 0.15 * DIFF.special * PERS.tactic.cruise) {
           const cx = foeUnits.reduce((s, u) => s + u.position.x, 0) / foeUnits.length;
           const cy = foeUnits.reduce((s, u) => s + u.position.y, 0) / foeUnits.length;
           if (spawnUnit(ME, UnitType.CRUISE, { absolutePos: { x: cx, y: cy } }) !== false) {
@@ -4804,7 +5043,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Satellite laser on the foe's densest forward position when flush with cash
-        if (!specialSpawned && can(UnitType.SATELLITE) && money > 600 && foeUnits.length >= 10 && Math.random() < 0.08 * DIFF.special * PERS.tactic.satellite) {
+        if (!specialSpawned && can(UnitType.SATELLITE) && money > 600 && foeUnits.length >= 10 && srand() < 0.08 * DIFF.special * PERS.tactic.satellite) {
           const fwd = foeUnits.reduce((a, b) => (ME === Team.EAST ? a.position.x > b.position.x : a.position.x < b.position.x) ? a : b);
           spawnUnit(ME, UnitType.SATELLITE, { absolutePos: { x: fwd.position.x, y: fwd.position.y } });
           moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.SATELLITE] as any).cost;
@@ -4817,7 +5056,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // cycle (0.2) and sank $6-7k a session into sticks that died to a man —
         // the single biggest hole in its economy. It now raids rarely, and only
         // when the sampling below actually finds a hole to land in.
-        if (!specialSpawned && airReady && can(UnitType.AIRBORNE) && foePushedDeep && Math.random() < 0.07 * DIFF.special * PERS.tactic.airborne) {
+        if (!specialSpawned && airReady && can(UnitType.AIRBORNE) && foePushedDeep && srand() < 0.07 * DIFF.special * PERS.tactic.airborne) {
           // Drop into a GAP. This used to pick a blind random spot 80-200px from
           // the foe's edge — i.e. right on top of their spawn, the one place their
           // entire reinforcement stream walks through. The stick landed in the
@@ -4828,8 +5067,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             u.type !== UnitType.MINE_PERSONAL && u.type !== UnitType.MINE_TANK && u.type !== UnitType.NAPALM);
           let drop = { x: 0, y: 0 }, bestClear = -1;
           for (let s = 0; s < 8; s++) {
-            const x = FOE === Team.WEST ? 70 + Math.random() * 210 : CANVAS_WIDTH - 280 + Math.random() * 210;
-            const y = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
+            const x = FOE === Team.WEST ? 70 + srand() * 210 : CANVAS_WIDTH - 280 + srand() * 210;
+            const y = HORIZON_Y + 60 + srand() * (CANVAS_HEIGHT - HORIZON_Y - 120);
             let nearest = Infinity;
             for (const u of foeAlive) {
               const d = Math.sqrt((u.position.x - x) ** 2 + (u.position.y - y) ** 2);
@@ -4851,11 +5090,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         // the ground my infantry falls back through. Capped so a turtle
         // doesn't spend the whole match walling itself in.
         if (!specialSpawned && PERS.bunker > 0 && can(UnitType.BUNKER) &&
-            Math.random() < 0.12 * DIFF.special * PERS.bunker) {
+            srand() < 0.12 * DIFF.special * PERS.bunker) {
           const myBunkers = myActive.filter(u => u.type === UnitType.BUNKER).length;
           if (myBunkers < 3) {
-            const bx = ME === Team.WEST ? 150 + Math.random() * 180 : CANVAS_WIDTH - 330 + Math.random() * 180;
-            const by = HORIZON_Y + 70 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 140);
+            const bx = ME === Team.WEST ? 150 + srand() * 180 : CANVAS_WIDTH - 330 + srand() * 180;
+            const by = HORIZON_Y + 70 + srand() * (CANVAS_HEIGHT - HORIZON_Y - 140);
             if (spawnUnit(ME, UnitType.BUNKER, { absolutePos: { x: bx, y: by } }) !== false) {
               moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.BUNKER] as any).cost;
               specialSpawned = true;
@@ -4865,11 +5104,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
         // Naval picket: anchor a gunboat on a river segment to guard crossings
         // (spawnUnit vetoes dry positions, so a failed roll costs nothing)
-        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && Math.random() < 0.08 * DIFF.special * PERS.tactic.gunboat) {
+        if (!specialSpawned && can(UnitType.GUNBOAT) && money > 300 && srand() < 0.08 * DIFF.special * PERS.tactic.gunboat) {
           const rivers = terrainRef.current.filter(t => t.type === 'river' && !t.frozen);
           const myBoats = unitsRef.current.filter(u => u.team === ME && u.type === UnitType.GUNBOAT).length;
           if (rivers.length > 0 && myBoats < 2) {
-            const seg = rivers[Math.floor(Math.random() * rivers.length)];
+            const seg = rivers[Math.floor(srand() * rivers.length)];
             const ok = spawnUnit(ME, UnitType.GUNBOAT, { absolutePos: { x: seg.x, y: seg.y } });
             if (ok !== false) {
               moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.GUNBOAT] as any).cost;
@@ -4879,11 +5118,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // Tank mines when armor is a threat — laid just ahead of the foe's front line
-        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && Math.random() < 0.3 * DIFF.special * PERS.tactic.mines) {
+        if (!specialSpawned && can(UnitType.MINE_TANK) && armorThreats >= 2 && srand() < 0.3 * DIFF.special * PERS.tactic.mines) {
           const mineX = ME === Team.EAST
             ? Math.min(Math.max(foeFrontX + 50, 530), 720)
             : Math.max(Math.min(foeFrontX - 50, 270), 80);
-          const mineY = HORIZON_Y + 60 + Math.random() * (CANVAS_HEIGHT - HORIZON_Y - 120);
+          const mineY = HORIZON_Y + 60 + srand() * (CANVAS_HEIGHT - HORIZON_Y - 120);
           spawnUnit(ME, UnitType.MINE_TANK, { absolutePos: { x: mineX, y: mineY } });
           moneyRef.current[ME] -= (UNIT_CONFIG[UnitType.MINE_TANK] as any).cost;
           specialSpawned = true;
@@ -4916,34 +5155,34 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             }
 
             if (pool.length > 0) {
-              const chosen = pool[Math.floor(Math.random() * pool.length)];
+              const chosen = pool[Math.floor(srand() * pool.length)];
               const cost = (UNIT_CONFIG[chosen] as any).cost;
               // Flank pressure (normal/hard): lean spawns toward flank posts
               // the CPU doesn't hold — easy keeps building blind
               let lane: SpawnLane | undefined;
-              if (DIFF.commands > 0 && Math.random() < 0.45) {
+              if (DIFF.commands > 0 && srand() < 0.45) {
                 const [topCap, botCap] = flankCapsRef.current;
                 const wantTop = topCap.owner !== ME;
                 const wantBot = botCap.owner !== ME;
-                if (wantTop && wantBot) lane = Math.random() < 0.5 ? 'top' : 'bot';
+                if (wantTop && wantBot) lane = srand() < 0.5 ? 'top' : 'bot';
                 else if (wantTop) lane = 'top';
                 else if (wantBot) lane = 'bot';
               }
               if (chosen === UnitType.SOLDIER) {
                 const soldierCfg = UNIT_CONFIG[UnitType.SOLDIER];
-                const sqId = generateId();
+                const sqId = simId();
                 const playTop = HORIZON_Y + 50, playH = CANVAS_HEIGHT - HORIZON_Y - 100;
                 const laneY =
-                  lane === 'top' ? playTop + Math.random() * (playH / 3) :
-                  lane === 'bot' ? playTop + (2 * playH) / 3 + Math.random() * (playH / 3) :
-                  playTop + Math.random() * playH;
+                  lane === 'top' ? playTop + srand() * (playH / 3) :
+                  lane === 'bot' ? playTop + (2 * playH) / 3 + srand() * (playH / 3) :
+                  playTop + srand() * playH;
                 for (let si = 0; si < 3; si++) {
                   unitsRef.current.push({
-                    id: generateId(), team: ME, type: UnitType.SOLDIER,
+                    id: simId(), team: ME, type: UnitType.SOLDIER,
                     position: { x: ME === Team.WEST ? 30 : CANVAS_WIDTH - 30, y: Math.min(CANVAS_HEIGHT - 20, laneY + si * 12) },
                     state: UnitState.MOVING, health: soldierCfg.health, maxHealth: soldierCfg.health,
                     attackCooldown: 0, targetId: null, width: soldierCfg.width, height: soldierCfg.height,
-                    spawnTime: Date.now(), isInCover: false, squadId: sqId
+                    spawnTime: simNow(), isInCover: false, squadId: sqId
                   });
                   statsRef.current[ME].built++;
                   typeStatsRef.current[ME].spawned[UnitType.SOLDIER] = (typeStatsRef.current[ME].spawned[UnitType.SOLDIER] || 0) + 1;
@@ -4979,7 +5218,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), ctf: gameModeRef.current === 'ctf' ? { west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length, east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length, timeLeftSec: Math.max(0, Math.ceil((CTF_DURATION_TICKS - tickCountRef.current) / 60)), overtime: ctfOvertimeRef.current } : undefined, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current });
+      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), ctf: gameModeRef.current === 'ctf' ? { west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length, east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length, timeLeftSec: Math.max(0, Math.ceil((CTF_DURATION_TICKS - tickCountRef.current) / 60)), overtime: ctfOvertimeRef.current } : undefined, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current, simNowMs: simNow() });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -4998,7 +5237,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // march only ever escalated on a rally horn.)
       {
         const firing = unitsRef.current.reduce((n, u) => n + (u.attackCooldown > 0 && !u.boarded ? 1 : 0), 0);
-        const rallyOn = Date.now() < rallyRef.current[Team.WEST].until || Date.now() < rallyRef.current[Team.EAST].until;
+        const rallyOn = simNow() < rallyRef.current[Team.WEST].until || simNow() < rallyRef.current[Team.EAST].until;
         const level = (firing > 15 || rallyOn) ? 2 : firing > 4 ? 1 : 0;
         const tension = gameModeRef.current === 'basehp'
           ? Math.min(baseHPRef.current[Team.WEST], baseHPRef.current[Team.EAST]) < BASE_HP * 0.35
@@ -5011,6 +5250,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       (window as any).__ewDebug = {
         elapsedMs: Date.now() - matchStartRef.current,
         tickCount: tickCountRef.current, // with elapsedMs: measured sim rate (GAME_TEMPO probe)
+        simNowMs: simNow(), // sim clock — unit time-stamps compare against THIS, not Date.now()
         score: { ...scoreRef.current },
         baseHP: { ...baseHPRef.current },
         money: { WEST: Math.floor(moneyRef.current[Team.WEST]), EAST: Math.floor(moneyRef.current[Team.EAST]) },
@@ -5029,7 +5269,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         projectiles: projectilesRef.current.length,
         fxStats: { ...fxStatsRef.current },       // monotonic: particles CREATED by fire/impact, per shot and hit
         entrenched: unitsRef.current.filter(u => u.isEntrenched).length,
-        suppressed: unitsRef.current.filter(u => u.suppressedUntil && Date.now() < u.suppressedUntil).length,
+        suppressed: unitsRef.current.filter(u => u.suppressedUntil && simNow() < u.suppressedUntil).length,
         music: { ...musicDebugRef.current }, // adaptive-march probe: calls is monotonic, level post-hysteresis
         // Ability probes
         camouflaged: unitsRef.current.filter(u => u.camouflaged).length,
@@ -5124,6 +5364,37 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           buildUntil: u.buildUntil, garrison: u.garrison || 0,
           suppressedUntil: u.suppressedUntil,
         })),
+        // ── Determinism probes ──────────────────────────────────────────────
+        simSeed: simSeedRef.current,
+        simDraws: simDrawsRef.current,
+        checksum: () => simChecksum(),
+        checksums: { ...checksumLogRef.current }, // tick -> hash checkpoints
+        checksumInfo: { ...checksumInfoRef.current }, // tick -> compact state journal (desync triage)
+        // Schedule a spawn for an exact future tick through the real input
+        // pipeline — the determinism harness needs identical inputs to land on
+        // identical ticks in two independent browser instances.
+        queueSpawn: (atTick: number, team: 'WEST' | 'EAST', type: string, x?: number, y?: number) => {
+          const ut = UnitType[type as keyof typeof UnitType];
+          if (!ut) return false;
+          scheduleInput({
+            kind: 'spawn', team: team === 'WEST' ? Team.WEST : Team.EAST, type: ut,
+            ...(x !== undefined && y !== undefined ? { absolutePos: { x, y } } : {}),
+          }, atTick);
+          return true;
+        },
+        // Spawn for the LOCAL side through the normal input route — online this
+        // rides the lockstep scheduler to the peer, which is exactly what the
+        // loopback e2e needs to prove commands cross the wire. Coordinates
+        // make it a targeted placement (strikes, mines, gunboats).
+        spawnNet: (type: string, x?: number, y?: number) => {
+          const ut = UnitType[type as keyof typeof UnitType];
+          if (!ut || !humanTeam) return false;
+          scheduleInput({
+            kind: 'spawn', team: humanTeam, type: ut,
+            ...(x !== undefined && y !== undefined ? { absolutePos: { x, y } } : {}),
+          });
+          return true;
+        },
         gameOver: gameOverRef.current,
       };
     }
@@ -5138,41 +5409,78 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Game Loop - Stable Identity
   const lastFrameTimeRef = useRef(0);
   const tempoCarryRef = useRef(0); // fractional ticks carried between frames
-  const tick = useCallback(() => {
-    if (!gameOverRef.current) {
-      try {
-        if (!speedRef.current.paused) {
-          // Spectator/balance mode: catch up on wall-clock time so low headless
-          // frame rates still simulate at the requested speed. Normal play stays
-          // frame-locked (speed × GAME_TEMPO ticks per rAF); GAME_TEMPO is
-          // fractional, so leftover fractions accumulate across frames — at
-          // 1.25 that's five ticks every four frames, not a lost quarter-tick.
-          let ticksF = speedRef.current.speed * GAME_TEMPO;
-          if (cpuRef.current.teams.length === 2) {
-            const now = performance.now();
-            const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
-            lastFrameTimeRef.current = now;
-            ticksF = Math.min(240, Math.max(1, (elapsed / 16.7) * speedRef.current.speed * GAME_TEMPO));
-          }
-          tempoCarryRef.current += ticksF;
-          const ticks = Math.floor(tempoCarryRef.current);
-          tempoCarryRef.current -= ticks;
-          for (let s = 0; s < ticks; s++) {
-            updateRef.current();
-            if (gameOverRef.current) break;
-          }
+  // One frame of simulation — shared by the rAF loop and the hidden-tab
+  // driver below, so backgrounding can't fork the pacing logic in two.
+  const runFrame = useCallback(() => {
+    try {
+      if (!speedRef.current.paused) {
+        // Spectator/balance mode AND online lockstep: catch up on wall-clock
+        // time so low frame rates (headless, throttled hidden tab) still
+        // simulate at full speed — online the lockstep gate below bounds the
+        // catch-up to confirmed ticks, so pacing stays agreed. Normal local
+        // play stays frame-locked (speed × GAME_TEMPO ticks per rAF);
+        // GAME_TEMPO is fractional, so leftover fractions accumulate across
+        // frames — at 1.25 that's five ticks every four frames, not a lost
+        // quarter-tick.
+        let ticksF = speedRef.current.speed * GAME_TEMPO;
+        if (cpuRef.current.teams.length === 2 || lockstepRef.current) {
+          const now = performance.now();
+          const elapsed = lastFrameTimeRef.current ? now - lastFrameTimeRef.current : 16.7;
+          lastFrameTimeRef.current = now;
+          ticksF = Math.min(240, Math.max(1, (elapsed / 16.7) * speedRef.current.speed * GAME_TEMPO));
         }
-      } catch (e) {
-        console.error("Game Loop Error:", e);
+        tempoCarryRef.current += ticksF;
+        let ticks = Math.floor(tempoCarryRef.current);
+        tempoCarryRef.current -= ticks;
+        if (lockstepRef.current) {
+          // Lockstep gate: only run ticks both sides have inputs for. The
+          // carry is clamped so a long hold can't bank into a teleport-burst
+          // on resume (~1s of catch-up max feels like catch-up, not a cut).
+          tempoCarryRef.current = Math.min(tempoCarryRef.current, 90);
+          const allowed = lockstepRef.current.ticksAllowed(tickCountRef.current + 1);
+          if (ticks > allowed) ticks = allowed;
+        }
+        for (let s = 0; s < ticks; s++) {
+          updateRef.current();
+          if (gameOverRef.current) break;
+        }
+        lockstepRef.current?.gc(tickCountRef.current);
       }
-      requestRef.current = requestAnimationFrame(tick);
+    } catch (e) {
+      console.error("Game Loop Error:", e);
     }
   }, []);
+  const tick = useCallback(() => {
+    if (!gameOverRef.current) {
+      runFrame();
+      requestRef.current = requestAnimationFrame(tick);
+    }
+  }, [runFrame]);
 
   useEffect(() => {
     requestRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(requestRef.current!);
   }, [tick]);
+
+  // Timer backstop, ONLINE ONLY: rAF stops in a backgrounded tab, which
+  // would freeze this sim and stall the peer at the confirmation frontier.
+  // The interval runs UNCONDITIONALLY (document.hidden is unreliable in
+  // headless and during occlusion) — double-driving alongside rAF is safe
+  // because online pacing is wall-clock catch-up: each runFrame computes
+  // ticks from real elapsed time, so extra calls just top up to schedule.
+  // Local play deliberately keeps the old behavior — pausing when you
+  // alt-tab is a feature when no one else is waiting on your sim.
+  useEffect(() => {
+    if (!lockstep) return;
+    // 100ms: lockstep can only advance one confirmation window per frame
+    // exchange, so the backstop's rate directly floors the background-tab sim
+    // rate. (A real browser clamps background timers to ~1Hz — the match then
+    // runs slow-motion rather than freezing, and the peer sees the wait UI.)
+    const iv = setInterval(() => {
+      if (!gameOverRef.current) runFrame();
+    }, 100);
+    return () => clearInterval(iv);
+  }, [lockstep, runFrame]);
 
   return (
     <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900 overflow-hidden relative">
@@ -5188,6 +5496,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         smokes={smokesRef.current}
         selectedIds={selectedIds}
         fx={fx}
+        simNow={simNow()}
         onCameraApi={handleCameraApi}
         onCanvasClick={handleCanvasClickGuarded}
         targetingInfo={targetingInfo}
@@ -5206,7 +5515,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         onDragStart={handleDragStart}
         onMarquee={setMarquee}
         focusIds={[focusRef.current[Team.WEST], focusRef.current[Team.EAST]]
-          .filter(f => f.targetId && Date.now() < f.until)
+          .filter(f => f.targetId && simNow() < f.until)
           .map(f => f.targetId as string)}
       />
 
@@ -5271,7 +5580,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
             <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
-              {cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT') : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
+              {/* Online and vs-CPU both have a defined "you" — speak to them.
+                  Hotseat/spectate keep the neutral banner. */}
+              {localTeam ? (gameOver === localTeam ? 'VICTORY' : 'DEFEAT')
+                : cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT')
+                : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
             </h2>
             <div className="text-2xl font-bold text-stone-300">
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!
@@ -5317,12 +5630,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             )}
 
             <div className="flex gap-3">
-              <button
+              {/* Online, an instant local rematch would reload out of the peer
+                  session mid-handshake — back to the menu is the honest exit */}
+              {!lockstep && <button
                 onClick={() => { try { localStorage.setItem('ewv-rematch', '1'); } catch { /* ignore */ } window.location.reload(); }}
                 className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
               >
                 ⚔ Rematch
-              </button>
+              </button>}
               <button
                 onClick={() => window.location.reload()}
                 className="px-8 py-3 bg-stone-700 hover:bg-stone-600 text-stone-200 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"

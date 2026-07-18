@@ -13,7 +13,7 @@ const puppeteer = require('puppeteer-core');
     p.on('pageerror', e => errors.push(String(e).slice(0, 200)));
     await p.setViewport({ width: 1280, height: 800 });
     await p.evaluateOnNewDocument(() => { localStorage.setItem('ewv-hint-troopctl', '1'); localStorage.setItem('ewv-music', '0'); localStorage.setItem('ewv-fx', 'high'); });
-    await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'networkidle2', timeout: 90000 });
+    await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'load', timeout: 90000 });
     results.panel = await p.evaluate(() => !!document.querySelector('[data-testid="challenges"]'));
     await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(x => x.textContent.includes('Underdog')).click(); });
     await new Promise(r => setTimeout(r, 2000));
@@ -30,7 +30,7 @@ const puppeteer = require('puppeteer-core');
     p.on('pageerror', e => errors.push(String(e).slice(0, 200)));
     await p.setViewport({ width: 1280, height: 800 });
     await p.evaluateOnNewDocument(() => { localStorage.setItem('ewv-hint-troopctl', '1'); localStorage.setItem('ewv-music', '0'); localStorage.setItem('ewv-fx', 'high'); });
-    await p.goto('http://localhost:3000/east-vs-west-game/?speed=8', { waitUntil: 'networkidle2', timeout: 90000 });
+    await p.goto('http://localhost:3000/east-vs-west-game/?speed=8', { waitUntil: 'load', timeout: 90000 });
     await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(x => x.textContent.includes('First Blood')).click(); });
     await new Promise(r => setTimeout(r, 1500));
     // Fight briefly, then end the match through the real gameOver path
@@ -46,7 +46,7 @@ const puppeteer = require('puppeteer-core');
     };
     // Reload → splash should show the ✓ badge
     if (outcome === 'win') {
-      await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'networkidle2', timeout: 90000 });
+      await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'load', timeout: 90000 });
       results.badge = await p.evaluate(() => document.querySelector('[data-testid="challenges"]').textContent.includes('✓ First Blood'));
       await p.screenshot({ path: require('os').tmpdir() + '/ewv-challenges.png' });
     }

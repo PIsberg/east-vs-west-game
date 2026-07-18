@@ -216,7 +216,8 @@ export interface GameState {
     [Team.EAST]: number;
   };
   weather: 'clear' | 'rain' | 'snow' | 'fog' | 'storm';
-  // Pre-rolled forecast: what rolls in next and when (epoch ms)
+  // Pre-rolled forecast: what rolls in next and when (SIM ms — compare against
+  // simNowMs, never Date.now(); the sim clock freezes on pause, scales with speed)
   weatherNext?: { type: 'clear' | 'rain' | 'snow' | 'fog' | 'storm', at: number };
   events?: GameEvent[];
   captureOwner?: Team | null;
@@ -231,21 +232,41 @@ export interface GameState {
     [Team.EAST]: number;
   };
   tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
+  // Sim clock of this snapshot in ms (tick × SIM_MS_PER_TICK). Every sim-time
+  // field in the state (rally, weatherNext, unit stamps) compares against THIS.
+  simNowMs?: number;
   // Capture the Flag: per-team flag tallies and the match clock (overtime at 0 when tied)
   ctf?: { west: number; east: number; timeLeftSec: number; overtime: boolean };
 }
 
 export type GameMode = 'points' | 'basehp' | 'ctf';
 
-// Team command buffs (Date.now() timestamps)
+// Team command buffs (sim-clock ms timestamps — compare against GameState.simNowMs)
 export interface RallyState {
-  until: number;   // rally buff active while now < until
-  readyAt: number; // next activation allowed when now >= readyAt
+  until: number;   // rally buff active while simNow < until
+  readyAt: number; // next activation allowed when simNow >= readyAt
 }
 
 export type TeamCommand = 'rally' | 'income';
 
 export type Stance = 'advance' | 'hold' | 'retreat';
+
+// A serializable gameplay intent, executed at the START of a specific sim
+// tick. This is the ONLY doorway from the UI into sim state: React effects
+// enqueue these, the tick drains them — effect timing is frame-dependent, and
+// deterministic lockstep needs both clients to run a command on the SAME
+// tick. Everything here must stay plain JSON (it goes over the wire online).
+export type SimCommand =
+  | { kind: 'spawn'; team: Team; type: UnitType; cost?: number;
+      offset?: { x: number; y: number }; absolutePos?: { x: number; y: number };
+      squadId?: string; lane?: 'top' | 'mid' | 'bot' }
+  | { kind: 'command'; team: Team; cmd: TeamCommand }
+  | { kind: 'order'; ids: string[]; order?: Stance | null; ability?: 'overdrive' | 'c4' | 'sell' }
+  // Per-team on purpose: online, each client commands one side — a whole-record
+  // stance write from the guest would stomp the host's stance and vice versa.
+  | { kind: 'stance'; team: Team; stance: Stance }
+  // Focus fire is sim state (targeting reads it), so the click becomes a command
+  | { kind: 'focus'; team: Team; targetId: string };
 
 export interface CapturePoint {
   x: number;

@@ -53,7 +53,9 @@ const FOOT = new Set(['SOLDIER', 'SNIPER', 'SPECIAL_FORCES', 'FLAMETHROWER',
     for (let i = 0; i < SAMPLES; i++) {
       const s = await p.evaluate(() => {
         const d = window.__ewDebug;
-        const now = Date.now();
+        // suppressedUntil is SIM-clock ms (freezes on pause, identical across
+        // lockstep clients) — compare against the sim clock, never Date.now()
+        const now = d?.simNowMs ?? 0;
         return {
           shots: d?.fxStats?.shots ?? 0,
           units: (d?.unitList ?? []).filter(u => u.health > 0).map(u => ({
