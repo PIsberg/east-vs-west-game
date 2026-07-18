@@ -20,8 +20,11 @@ const SAMPLES = 22;
 const INTERVAL = 2000;
 const FOOT = new Set(['SOLDIER', 'SNIPER', 'SPECIAL_FORCES', 'FLAMETHROWER',
                       'MEDIC', 'ENGINEER', 'MORTAR', 'AIRBORNE']);
-// Flyers cross everything legitimately; boats are anchored by hand.
-const EXEMPT = new Set([...FOOT, 'HELICOPTER', 'FIGHTER', 'DRONE', 'GUNSHIP', 'GUNBOAT']);
+// Flyers cross everything legitimately; boats are anchored by hand; mines and
+// napalm are PLACED ordnance, not fording vehicles — the CPU may legitimately
+// drop a minefield on or beside the frozen channel.
+const EXEMPT = new Set([...FOOT, 'HELICOPTER', 'FIGHTER', 'DRONE', 'GUNSHIP', 'GUNBOAT',
+                        'MINE_TANK', 'MINE_PERSONAL', 'NAPALM']);
 
 (async () => {
   const b = await puppeteer.launch({
@@ -47,14 +50,18 @@ const EXEMPT = new Set([...FOOT, 'HELICOPTER', 'FIGHTER', 'DRONE', 'GUNSHIP', 'G
     return { ok };
   });
 
-  let iceCrossers = 0, armorInRiver = [];
+  let iceCrossers = 0;
   const weathers = new Set();
+  // A vehicle that momentarily clips the bank while steering around bridge
+  // congestion is not "fording" — only flag a vehicle seen mid-river in TWO
+  // OR MORE samples (a real forder spends many seconds in the channel).
+  const armorSightings = new Map(); // id -> { type, n }
   for (let i = 0; i < SAMPLES; i++) {
     const s = await p.evaluate(() => ({
       weather: __ewDebug.weather,
       boats: (__ewDebug.unitList ?? []).filter(u => u.type === 'GUNBOAT').length,
       units: (__ewDebug.unitList ?? []).filter(u => u.health > 0)
-        .map(u => ({ type: u.type, x: u.position.x, y: u.position.y })),
+        .map(u => ({ id: u.id, type: u.type, x: u.position.x, y: u.position.y })),
       segs: __ewDebug.riverSegs, bridges: __ewDebug.bridges,
     }));
     weathers.add(s.weather);
@@ -65,10 +72,15 @@ const EXEMPT = new Set([...FOOT, 'HELICOPTER', 'FIGHTER', 'DRONE', 'GUNSHIP', 'G
         Math.abs(u.x - br.x) < br.w / 2 + 12 && Math.abs(u.y - br.y) < br.h / 2 + 12);
       if (onBridge) continue;
       if (FOOT.has(u.type)) iceCrossers++;
-      else if (!EXEMPT.has(u.type)) armorInRiver.push(u.type);
+      else if (!EXEMPT.has(u.type)) {
+        const rec = armorSightings.get(u.id) ?? { type: u.type, n: 0 };
+        rec.n++;
+        armorSightings.set(u.id, rec);
+      }
     }
     await new Promise(r => setTimeout(r, INTERVAL));
   }
+  const armorInRiver = [...armorSightings.values()].filter(r => r.n >= 2).map(r => r.type);
   await b.close();
 
   console.log(`river segs       : ${geo.segs.length} (${geo.segs.filter(s => s.frozen).length} frozen)`);

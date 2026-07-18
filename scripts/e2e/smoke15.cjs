@@ -16,7 +16,9 @@ const measureFps = () => new Promise(res => {
   p.on('pageerror', e => errors.push(String(e).slice(0, 200)));
   await p.setViewport({ width: 1280, height: 800 });
   await p.evaluateOnNewDocument(() => { localStorage.setItem('ewv-hint-troopctl', '1'); localStorage.setItem('ewv-music', '0'); localStorage.setItem('ewv-prefs', JSON.stringify({ playerSide: 'WEST', cpuLevel: 'off', gameMode: 'points', mapType: 'COUNTRYSIDE' })); });
-  await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'networkidle2', timeout: 60000 });
+  await p.goto('http://localhost:3000/east-vs-west-game/', { waitUntil: 'load', timeout: 60000 });
+  await p.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('DEPLOY FORCES')), { timeout: 60000 });
+
   await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(x => x.textContent.includes('DEPLOY FORCES')).click(); });
   await new Promise(r => setTimeout(r, 2500));
 
