@@ -12,7 +12,9 @@
 | 4 Lockstep scheduler | **done** | `services/lockstep.ts`; gate wired into the GameCanvas loop; timer backstop for backgrounded tabs |
 | 5 Lobby + lifecycle | **done** | `services/online.ts` + App splash panel (host/join/ready), config+seed handshake; `smoke23.cjs` plays a full loopback match with cross-wire commands |
 | 6 In-match UX | **done (v1)** | ping badge, waiting overlay, disconnect/claim-victory, desync screen, pause/2× locked online, foe panel hidden |
-| 7 Hardening | **partial** | checksum exchange + desync surfacing live; TODO: real-internet soak, cross-browser matrix, TURN fallback |
+| 7 Hardening | **partial** | checksum exchange + desync surfacing + 10s heartbeat live; TODO: real-internet soak, cross-browser matrix, TURN fallback |
+
+**Playtested 2026-07-18** (scripted human flow: host → share code → join → ready → battle → targeted strike → rage-quit): all steps pass repeatedly. The playtest caught and fixed three real bugs — a lobby-transition race that intermittently desynced matches (stale splash canvas flushing the lockstep scheduler at its own tick count; scheduler now mount-frozen and the canvas swap is atomic), a hotkey leak where typing a room code containing '8' armed a Mine Tank (input/splash/ownership guards added), and silent peer-death going unnoticed (heartbeat added). Desync forensics kept: `__ewDebug.checksumInfo` journal + `scheduler.trace`.
 
 Not yet exercised: real PeerJS/WebRTC path over the internet (loopback covers everything above the transport), reconnection (out of scope v1 per spec), match-history "online" tag.
 
