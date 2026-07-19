@@ -1,7 +1,8 @@
 # East vs West 3D — Improvement Plan & Specs
 
-Plans and specs for sections 1–4 of the Strategic Improvement Report. Section 5 (network
-multiplayer) is deliberately out of scope for now.
+Plans and specs for sections 1–4 of the Strategic Improvement Report. Section 5
+(network multiplayer) was out of scope when this was written, but has since shipped
+as online 1v1 — see `spec.md`/`plan.md` at the repo root.
 
 Every spec below respects the house rules: game data lives in refs mutated by `tick()` in
 `GameCanvas.tsx`, React state only for HUD-frequency changes, tuning in `constants.ts`,

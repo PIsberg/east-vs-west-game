@@ -53,6 +53,7 @@ const DEFAULT_SETTINGS: LobbySettings = {
 const STEP_TICKS = 3;
 const INPUT_DELAY_STEPS = 2;
 
+// @lat: [[lat.md/online-play#Online multiplayer (lockstep netcode)#Session / lobby lifecycle]]
 export class OnlineSession {
   snap: OnlineSnapshot;
   readonly transport: Transport;
