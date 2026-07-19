@@ -2371,6 +2371,7 @@ const BoxSelect = ({ units, selectTeam, disabled, onBoxSelect, onMarquee, onDrag
     return null;
 };
 
+// @lat: [[lat.md/rendering#Rendering performance#Instanced particles and projectiles]]
 const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null!);
     const dummy = useMemo(() => new THREE.Object3D(), []);

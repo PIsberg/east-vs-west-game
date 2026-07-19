@@ -19,6 +19,7 @@ import type { SimCommand } from '../types';
 
 export interface StepBundle { host?: SimCommand[]; guest?: SimCommand[] }
 
+// @lat: [[lat.md/online-play#Online multiplayer (lockstep netcode)#Lockstep scheduler]]
 export class LockstepScheduler {
   readonly role: 'host' | 'guest';
   readonly stepTicks: number;

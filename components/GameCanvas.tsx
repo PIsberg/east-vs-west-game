@@ -145,6 +145,7 @@ const ENTRENCHABLE = new Set([
 // counterSmart: chance per cycle it reads your army and counter-picks
 // commands: how eagerly it buys economy upgrades / sounds the rally (0 = never)
 // stanceIQ: dynamically switches its army stance (regroup when weak, push when strong)
+// @lat: [[lat.md/cpu-ai#CPU opponent#Difficulty vs personality]]
 const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: number, special: number, counterSmart: number, commands: number, stanceIQ: boolean }> = {
   easy:   { interval: 1.9,  incomeBonus: 0,    special: 0.3, counterSmart: 0.3, commands: 0,   stanceIQ: false },
   normal: { interval: 1.0,  incomeBonus: 0.05, special: 1.0, counterSmart: 0.8, commands: 0.7, stanceIQ: false },
@@ -162,6 +163,7 @@ const CPU_DIFFICULTY: Record<CpuDifficulty, { interval: number, incomeBonus: num
 export type CpuPersonaId = 'balanced' | 'ivan' | 'anna' | 'kenji' | 'frederick';
 export type CpuPersona = CpuPersonaId | 'random';
 export const CPU_PERSONA_IDS: CpuPersonaId[] = ['balanced', 'ivan', 'anna', 'kenji', 'frederick'];
+// @lat: [[lat.md/cpu-ai#CPU opponent#Difficulty vs personality]]
 export const CPU_PERSONALITY: Record<CpuPersonaId, {
   name: string;
   blurb: string;
@@ -956,6 +958,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     };
 
+    // @lat: [[lat.md/map-system#Map system#Terrain generation]]
     if (mapType === MapType.COUNTRYSIDE) {
       let rSegs: TerrainObject[] = [];
       if (trand() < 0.55) {
@@ -1196,6 +1199,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const [frame, setFrame] = useState(0);
   const lastUiUpdateRef = useRef(0);
 
+  // @lat: [[lat.md/dual-state#Dual-state pattern#The useRef/useState split]]
   const unitsRef = useRef<Unit[]>([]);
   const projectilesRef = useRef<Projectile[]>([]);
   const particlesRef = useRef<Particle[]>([]);
@@ -1937,6 +1941,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         : o.type === 'wreck' ? o.size
         : o.size * 0.8;
 
+    // @lat: [[lat.md/movement#Movement model#Obstacle avoidance]]
     const steerAroundObstacles = (
       unit: Unit, mx: number, my: number, speed: number, body: number, solidProps: boolean
     ): Vector2D => {
@@ -5506,6 +5511,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       console.error("Game Loop Error:", e);
     }
   }, []);
+  // @lat: [[lat.md/game-loop#Game loop#The tick loop]]
   const tick = useCallback(() => {
     if (!gameOverRef.current) {
       runFrame();

@@ -2,7 +2,7 @@
 
 A real-time tug-of-war strategy game inspired by the classic Commodore Amiga title **[North & South](https://en.wikipedia.org/wiki/North_%26_South_(video_game))** (Infogrames, 1989). Command the West or East team, deploy units, and push to the enemy edge to claim victory! Available online here: https://pisberg.github.io/east-vs-west-game/
 
-Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), or two-player hotseat on one keyboard. Five battlefields, two win modes (**100 Points** or **Base HP**).
+Play solo against the computer (**Easy / Normal / Hard** — the hard AI counter-picks your army, invests in its economy and maneuvers its forces), two-player hotseat on one keyboard, or **online 1v1** — one player hosts and shares a short room code, the other joins (peer-to-peer, no accounts or install). Five battlefields, two win modes (**100 Points** or **Base HP**).
 
 ![Battle on the countryside map — 3D unit models, minimap and full HUD](docs/screenshot-battle.png)
 
