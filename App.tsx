@@ -380,6 +380,9 @@ const App: React.FC = () => {
   }, [online?.phase]);
 
   const onlinePlaying = !!(online && online.phase === 'playing' && online.config && session);
+  // Latest online-match flag for the stable game-over handler below.
+  const onlinePlayingRef = useRef(onlinePlaying);
+  onlinePlayingRef.current = onlinePlaying;
   const onlineTeam = onlinePlaying ? (session!.localTeam() === 'EAST' ? Team.EAST : Team.WEST) : null;
   const onlineFoe = onlineTeam ? (onlineTeam === Team.WEST ? Team.EAST : Team.WEST) : null;
   // Engine callbacks hoisted out of the JSX: the canvas is mounted
@@ -650,6 +653,16 @@ const App: React.FC = () => {
     setCampaign(s); saveCampaign(s);
     setCampaignReturn(winner);
   }, []);
+
+  // Every match ends here: hand off to the campaign resolver (a no-op outside a
+  // campaign battle), tell CrazyGames gameplay stopped, then show a midgame ad at
+  // this natural break — but never during an online match or a spectate run.
+  const handleGameOver = useCallback((winner: Team, durSec: number) => {
+    handleCampaignGameOver(winner);
+    crazyAds.gameplayStop();
+    if (!onlinePlayingRef.current && !SPECTATE) crazyAds.midgame();
+    void durSec;
+  }, [handleCampaignGameOver]);
 
   const continueCampaign = () => {
     setCampaignReturn(null);
@@ -1368,7 +1381,7 @@ const App: React.FC = () => {
               tearing it down mid-WebGL-init at match start raced R3F's event
               hookup into a null-target crash. Element is built unconditionally
               (inline hooks must run every render), mounted conditionally. */}
-          {(!online || onlinePlaying) ? <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={onGameStateChange} spawnQueue={spawnQueue} clearSpawnQueue={clearSpawnQueueCb} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleCampaignGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={effMapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={effGameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={clearCommandQueueCb} orderQueue={orderQueue} clearOrderQueue={clearOrderQueueCb} onSelectUnits={onSelectUnitsCb} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
+          {(!online || onlinePlaying) ? <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={onGameStateChange} spawnQueue={spawnQueue} clearSpawnQueue={clearSpawnQueueCb} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={effMapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={effGameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={clearCommandQueueCb} orderQueue={orderQueue} clearOrderQueue={clearOrderQueueCb} onSelectUnits={onSelectUnitsCb} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
           : <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900" />}
           {/* Online status overlays. Order matters: desync trumps everything
               (the match is void), disconnect next, then the routine hold. */}
