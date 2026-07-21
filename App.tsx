@@ -5,6 +5,7 @@ import { Team, GameState, UnitType, MapType, GameMode, Stance, TeamCommand } fro
 import { UNIT_CONFIG, INITIAL_MONEY, HORIZON_Y, BASE_HP, INCOME_UPGRADE_BASE_COST, INCOME_UPGRADE_MAX, RALLY_COST, factionAllowed } from './constants';
 import { Sword, Shield, User, Truck, Target, Zap, FileText, Wind, MapPin, RotateCcw, Flame, Crosshair, CircleDashed, Radio, ShieldAlert, Skull, Plane, Heart, Cpu, Building2, Pause, Play, FastForward, Car, PlaneTakeoff, Rocket, Satellite, Bus, Volume2, VolumeX, Music, Cloud, TrendingUp, Megaphone, BookOpen, Sparkles, Ship, Eye } from 'lucide-react';
 import { soundService } from './services/audio';
+import { crazyAds } from './services/crazyAds';
 import { OnlineSession, type OnlineSnapshot } from './services/online';
 import {
   CampaignState, TERRITORIES, territory, createCampaign, campaignMove, applyBattleResult,
@@ -487,6 +488,17 @@ const App: React.FC = () => {
     return () => { window.removeEventListener('resize', compute); window.removeEventListener('orientationchange', compute); ro.disconnect(); };
   }, [compact, cpuLevel, playerSide, westIsCpu, eastIsCpu]);
 
+
+  // CrazyGames SDK: load + init once, then signal that loading is done. No-op
+  // unless the integration is enabled (see services/crazyAds.ts).
+  useEffect(() => { crazyAds.init().then(() => crazyAds.loadingStop()); }, []);
+
+  // Tell CrazyGames when the player is actively in a battle vs. sitting in a
+  // menu / paused. Drives ad pacing on their side.
+  useEffect(() => {
+    if (!showSplash && !paused) crazyAds.gameplayStart();
+    else crazyAds.gameplayStop();
+  }, [showSplash, paused]);
   const handleStartClick = () => {
     soundService.playIntroJingle();
     // Battle music can only start from a user gesture (browser autoplay policy)
