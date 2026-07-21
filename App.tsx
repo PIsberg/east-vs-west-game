@@ -771,8 +771,11 @@ const App: React.FC = () => {
       const eastKeys = ['F12', 'F11', 'F10', 'F9', 'F8', 'F7', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
       // Hotseat convenience keys — but only for sides THIS player commands
-      // (never the CPU's army, never the online opponent's).
-      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe;
+      // (never the CPU's army, never the online opponent's). The player's OWN
+      // side is excluded here because the number-row quick keys (onKey, above)
+      // already own it — without this exclusion a single digit fired both
+      // handlers and spawned two different units at once.
+      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe && t !== playerSide;
 
       // Check West
       const westIndex = westCodes.indexOf(e.code);
@@ -791,7 +794,7 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.money, showSplash, onlineFoe, cpuLevel]); // Dep on money for validation inside handleSpawnRequest?
+  }, [gameState.money, showSplash, onlineFoe, cpuLevel, playerSide]); // Dep on money for validation inside handleSpawnRequest?
   // Actually handleSpawnRequest uses state, so we need to be careful with closure stale state or dependency.
   // handleSpawnRequest depends on gameState.money.
   // Better to use ref for money or include handleSpawnRequest in dep array and wrap it in useCallback?
