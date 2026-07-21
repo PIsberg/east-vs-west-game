@@ -196,6 +196,11 @@ const SAVED_PREFS: { playerSide?: string, cpuLevel?: string, gameMode?: string, 
 
 const App: React.FC = () => {
   const [gameKey, setGameKey] = useState(0);
+  // Rewarded-ad bonus: armed on the splash, grants +50% starting cash for the next
+  // skirmish, spent when that match ends. adsReady flips once the SDK reports a live
+  // ad environment, so the "watch ad" button only appears where ads actually serve.
+  const [adCashBonus, setAdCashBonus] = useState(false);
+  const [adsReady, setAdsReady] = useState(false);
   const [spawnQueue, setSpawnQueue] = useState<{ team: Team, type: UnitType, cost?: number, offset?: { x: number, y: number }, absolutePos?: { x: number, y: number }, squadId?: string, lane?: 'top' | 'mid' | 'bot' }[]>([]);
   const [laneChoice, setLaneChoice] = useState<Record<Team, 'random' | 'top' | 'mid' | 'bot'>>({ [Team.WEST]: 'random', [Team.EAST]: 'random' });
   const [commandQueue, setCommandQueue] = useState<{ team: Team, cmd: TeamCommand }[]>([]);
@@ -494,7 +499,7 @@ const App: React.FC = () => {
 
   // CrazyGames SDK: load + init once, then signal that loading is done. No-op
   // unless the integration is enabled (see services/crazyAds.ts).
-  useEffect(() => { crazyAds.init().then(() => crazyAds.loadingStop()); }, []);
+  useEffect(() => { crazyAds.init().then(() => { crazyAds.loadingStop(); setAdsReady(crazyAds.available); }); }, []);
 
   // Tell CrazyGames when the player is actively in a battle vs. sitting in a
   // menu / paused. Drives ad pacing on their side.
@@ -504,6 +509,9 @@ const App: React.FC = () => {
   }, [showSplash, paused]);
   const handleStartClick = () => {
     soundService.playIntroJingle();
+    // A rewarded cash bonus only lands if the engine remounts (starting money is
+    // read at mount), so force a fresh key when one is armed.
+    if (adCashBonus) setGameKey(prev => prev + 1);
     // Battle music can only start from a user gesture (browser autoplay policy)
     if (soundService.isMusicOn()) setTimeout(() => soundService.startMusic(), 4200);
     setSplashFading(true);
@@ -558,6 +566,7 @@ const App: React.FC = () => {
 
   const resetGame = () => {
     setChallenge(null); // leaving a challenge returns to free play
+    setAdCashBonus(false);
     setGameKey(prev => prev + 1);
     setGameState({ units: [], projectiles: [], particles: [], score: { [Team.WEST]: 0, [Team.EAST]: 0 }, money: { [Team.WEST]: INITIAL_MONEY, [Team.EAST]: INITIAL_MONEY }, weather: 'clear' }); setWeather('clear');
     setSpawnQueue([]); setCommandQueue([]); setOrderQueue([]); setSelection(null); setTargetingInfo(null); setWeather('clear'); setPaused(false);
@@ -660,6 +669,7 @@ const App: React.FC = () => {
   const handleGameOver = useCallback((winner: Team, durSec: number) => {
     handleCampaignGameOver(winner);
     crazyAds.gameplayStop();
+    setAdCashBonus(false); // one-battle bonus is spent
     if (!onlinePlayingRef.current && !SPECTATE) crazyAds.midgame();
     void durSec;
   }, [handleCampaignGameOver]);
@@ -1281,6 +1291,14 @@ const App: React.FC = () => {
             >
               ▶ DEPLOY FORCES
             </button>
+            {adsReady && (adCashBonus ? (
+              <span className="text-emerald-400 text-[11px] font-bold uppercase tracking-widest">✓ +50% starting cash armed for this battle</span>
+            ) : (
+              <button
+                onClick={async (e) => { e.stopPropagation(); if (await crazyAds.rewarded()) setAdCashBonus(true); }}
+                className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-amber-300 border border-amber-500/60 hover:bg-amber-950/60 active:scale-95 rounded px-3 py-1 transition-colors"
+              >📺 Watch ad: +50% starting cash</button>
+            ))}
             {!compact && <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>}
             <span className={`text-stone-500 tracking-wide text-center ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
@@ -1381,7 +1399,7 @@ const App: React.FC = () => {
               tearing it down mid-WebGL-init at match start raced R3F's event
               hookup into a null-target crash. Element is built unconditionally
               (inline hooks must run every render), mounted conditionally. */}
-          {(!online || onlinePlaying) ? <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={onGameStateChange} spawnQueue={spawnQueue} clearSpawnQueue={clearSpawnQueueCb} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={effMapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={effGameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={clearCommandQueueCb} orderQueue={orderQueue} clearOrderQueue={clearOrderQueueCb} onSelectUnits={onSelectUnitsCb} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
+          {(!online || onlinePlaying) ? <GameCanvas key={onlinePlaying ? `net-${online!.config!.seed}` : gameKey} onGameStateChange={onGameStateChange} spawnQueue={spawnQueue} clearSpawnQueue={clearSpawnQueueCb} onCanvasClick={handleCanvasClick} targetingInfo={targetingInfo} cpuTeams={onlinePlaying ? [] : cpuTeams} cpuDifficulty={cpuLevel === 'off' ? 'normal' : cpuLevel} cpuPersona={campaignBattle && campaign ? campaign.enemyPersona : cpuPersona} fogOfWar={onlinePlaying ? online!.config!.fogOfWar : (fow && cpuTeams.length === 1)} asymmetry={onlinePlaying ? online!.config!.asymmetry : asym} onGameOver={handleGameOver} moneyMultByTeam={campaignBattle?.mult} bannedUnits={campaignBattle?.banned} mapType={effMapType} paused={onlinePlaying ? false : paused} gameSpeed={onlinePlaying ? 1 : gameSpeed} gameMode={effGameMode} stances={stances} commandQueue={commandQueue} clearCommandQueue={clearCommandQueueCb} orderQueue={orderQueue} clearOrderQueue={clearOrderQueueCb} onSelectUnits={onSelectUnitsCb} selectedIds={selection?.ids} compact={compact} fx={fx} cb={cb} startMoneyMult={CHALLENGES.find(c => c.id === challenge)?.moneyMult ?? (adCashBonus ? 1.5 : undefined)} challengeId={challenge} onChallengeWon={onChallengeWon} viewW={viewSize.w} viewH={viewSize.h} matchSeed={onlinePlaying ? online!.config!.seed : PARAM_SEED} lockstep={onlinePlaying ? session!.scheduler ?? undefined : undefined} localTeam={onlineTeam ?? undefined} onNetChecksum={onlinePlaying ? session!.reportChecksum : undefined} peerChecksumsRef={peerChecksumsRef} onDesync={onlinePlaying ? session!.markDesync : undefined} />
           : <div style={{ width: viewSize.w, height: viewSize.h }} className="rounded-lg shadow-2xl border-4 border-stone-800 bg-stone-900" />}
           {/* Online status overlays. Order matters: desync trumps everything
               (the match is void), disconnect next, then the routine hold. */}

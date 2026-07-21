@@ -36,6 +36,8 @@ class CrazyGamesAds {
   /** True when the integration is switched on for this session (script may still be loading). */
   get isEnabled(): boolean { return this.enabled; }
   get environment(): CgEnv { return this.env; }
+  /** True once the SDK is initialized in an environment that actually serves ads. */
+  get available(): boolean { return this.live; }
 
   // Only these environments accept SDK method calls without throwing.
   private get live(): boolean { return this.ready && (this.env === 'crazygames' || this.env === 'local'); }
