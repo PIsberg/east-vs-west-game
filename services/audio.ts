@@ -94,6 +94,12 @@ class SoundService {
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.02);
     try { localStorage.setItem('ewv-muted', m ? '1' : '0'); } catch { /* ignore */ }
   }
+  // Silence everything for the duration of a video ad WITHOUT touching the saved
+  // mute preference (setMuted persists to localStorage). Restores to the user's
+  // real level when the ad ends. Used by the CrazyGames ad integration.
+  public duckForAd(on: boolean) {
+    if (this.master && this.ctx) this.master.gain.setTargetAtTime(on ? 0 : (this.muted ? 0 : this.volume), this.ctx.currentTime, 0.05);
+  }
   public getVolume() { return this.volume; }
   public setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
