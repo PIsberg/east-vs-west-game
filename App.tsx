@@ -691,8 +691,12 @@ const App: React.FC = () => {
       if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
-      if (e.key === 'p' || e.key === 'P') { setPaused(prev => !prev); return; }
-      const type = SPAWN_HOTKEYS[e.key];
+      // Match by physical key position (e.code), not the emitted character, so the
+      // number-row hotkeys work on AZERTY/QWERTZ and other layouts where the top row
+      // emits &é"'(- etc. rather than 1-0. CrazyGames requires layout-agnostic keys.
+      if (e.code === 'KeyP') { setPaused(prev => !prev); return; }
+      const digit = /^Digit([0-9])$/.exec(e.code)?.[1];
+      const type = digit ? SPAWN_HOTKEYS[digit] : undefined;
       if (!type) return;
       spawnReqRef.current(playerSide, type);
     };
@@ -759,25 +763,28 @@ const App: React.FC = () => {
         UnitType.AIRBORNE, UnitType.AIRSTRIKE, UnitType.MISSILE_STRIKE, UnitType.NUKE // Airstrikes
       ];
 
-      // West: 1-0 (indexes 0-9), and we'll add '-' and '=' for 11th/12th if needed.
-      // We'll map 1..0, -, = to indexes 0..11.
-      const westKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='];
+      // West: number row 1-0 then -/= (indexes 0..11). Matched by physical position
+      // (e.code) so AZERTY/QWERTZ players hit the same keys — see note in onKey above.
+      const westCodes = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'];
 
       // East: F12 down to F1. F12=Top(0), F11=1...
       const eastKeys = ['F12', 'F11', 'F10', 'F9', 'F8', 'F7', 'F6', 'F5', 'F4', 'F3', 'F2', 'F1'];
 
       // Hotseat convenience keys — but only for sides THIS player commands
-      // (never the CPU's army, never the online opponent's).
-      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe;
+      // (never the CPU's army, never the online opponent's). The player's OWN
+      // side is excluded here because the number-row quick keys (onKey, above)
+      // already own it — without this exclusion a single digit fired both
+      // handlers and spawned two different units at once.
+      const canCommand = (t: Team) => !cpuTeams.includes(t) && t !== onlineFoe && t !== playerSide;
 
       // Check West
-      const westIndex = westKeys.indexOf(e.key);
+      const westIndex = westCodes.indexOf(e.code);
       if (westIndex !== -1 && westIndex < unitOrder.length && canCommand(Team.WEST)) {
         handleSpawnRequest(Team.WEST, unitOrder[westIndex]);
       }
 
       // Check East
-      const eastIndex = eastKeys.indexOf(e.key);
+      const eastIndex = eastKeys.indexOf(e.code);
       if (eastIndex !== -1 && eastIndex < unitOrder.length && canCommand(Team.EAST)) {
         e.preventDefault(); // F-keys often have browser defaults
         handleSpawnRequest(Team.EAST, unitOrder[eastIndex]);
@@ -787,7 +794,7 @@ const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameState.money, showSplash, onlineFoe, cpuLevel]); // Dep on money for validation inside handleSpawnRequest?
+  }, [gameState.money, showSplash, onlineFoe, cpuLevel, playerSide]); // Dep on money for validation inside handleSpawnRequest?
   // Actually handleSpawnRequest uses state, so we need to be careful with closure stale state or dependency.
   // handleSpawnRequest depends on gameState.money.
   // Better to use ref for money or include handleSpawnRequest in dep array and wrap it in useCallback?
