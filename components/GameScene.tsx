@@ -3008,19 +3008,21 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         // ground texture (it used to be a lime cone that read as a blob) — the
         // raised slope catches the sun and casts a shadow, which is what makes
         // it read as high ground.
-        const slope = mapType === MapType.ARCHIPELAGO ? '#2b8448' : '#4a7d22';
-        const cap = mapType === MapType.ARCHIPELAGO ? '#236f3c' : '#3e6a1c';
+        // The slope and cap wear the map's own ground texture (a brighter
+        // patch of it, so the rise still reads as high ground) instead of a
+        // flat colour — the old lime cone read as a pancake on the turf.
+        const mapKey = mapType === MapType.ARCHIPELAGO ? MapType.ARCHIPELAGO : MapType.COUNTRYSIDE;
         return (
             <ClickableGroup position={[item.x, height / 2 - 1, item.y]} onCanvasClick={onCanvasClick}>
                 {/* Truncated Cone for Plateau */}
                 <mesh receiveShadow castShadow>
                     <cylinderGeometry args={[plateauRadius, radius, height, 32]} />
-                    <meshStandardMaterial color={slope} roughness={1} bumpMap={bumpTexture()} bumpScale={0.5} />
+                    <meshStandardMaterial map={hillTexture(mapKey, 'slope')} color={HILL_TINT_SLOPE} roughness={1} bumpMap={bumpTexture()} bumpScale={0.5} />
                 </mesh>
                 {/* Worn plateau cap */}
                 <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
                     <circleGeometry args={[plateauRadius * 0.85, 24]} />
-                    <meshStandardMaterial color={cap} roughness={1} />
+                    <meshStandardMaterial map={hillTexture(mapKey, 'cap')} color={HILL_TINT_CAP} roughness={1} />
                 </mesh>
                 {/* Rocky outcrops on the slope */}
                 {[0.9, 2.4, 4.1].map((a, i) => (
@@ -3939,11 +3941,12 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
         if (mapType === MapType.DESERT)
             return { tufts: 170, bushes: 16, grassTones: ['#a16207', '#ca8a04', '#854d0e'], bushTone: '#6b4310' };
         if (mapType === MapType.ARCHIPELAGO)
-            return { tufts: 300, bushes: 28, grassTones: ['#166534', '#15803d', '#3f8f3e'], bushTone: '#14532d' };
+            return { tufts: 300, bushes: 28, grassTones: ['#2f8a4a', '#3d9c55', '#4fa85a'], bushTone: '#1f6b3a' };
         if (mapType === MapType.WINTER) // dead straw and frost poking through the snow
             return { tufts: 140, bushes: 16, grassTones: ['#9c9270', '#a8b3bc', '#c3ccd3'], bushTone: '#44554d' };
-        // COUNTRYSIDE
-        return { tufts: 300, bushes: 28, grassTones: ['#22400d', '#33511a', '#405f22'], bushTone: '#1c3a0d' };
+        // COUNTRYSIDE — a shade lighter than the turf texture so tufts read as
+        // grass catching the light, not as dark spikes
+        return { tufts: 300, bushes: 28, grassTones: ['#4c8a28', '#5a9a36', '#6aa63e'], bushTone: '#2f6b1e' };
     }, [mapType]);
 
     useEffect(() => {
@@ -4014,7 +4017,7 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
     return (
         <group>
             <instancedMesh ref={grassRef} args={[undefined as any, undefined as any, plan.tufts]} frustumCulled={false}>
-                <coneGeometry args={[1.6, 4.5, 5]} />
+                <coneGeometry args={[2.1, 3.8, 5]} />
                 <meshStandardMaterial roughness={1} />
             </instancedMesh>
             <instancedMesh ref={bushRef} args={[undefined as any, undefined as any, plan.bushes]} frustumCulled={false}>
@@ -4106,6 +4109,29 @@ const groundTexture = (map: MapType): THREE.CanvasTexture | null => {
     }
     GROUND_TEX_CACHE.set(map, tex);
     return tex;
+};
+
+// Hill materials reuse the ground texture at a different repeat (a texture's
+// repeat is per-texture state, so each use gets its own clone). Colour > 1
+// brightens the sampled turf — hills must still read as higher ground.
+const HILL_TINT_SLOPE = new THREE.Color(1.32, 1.36, 1.12);
+const HILL_TINT_CAP = new THREE.Color(1.12, 1.16, 0.98);
+const HILL_TEX_CACHE = new Map<string, THREE.Texture | null>();
+const hillTexture = (map: MapType, part: 'slope' | 'cap'): THREE.Texture | null => {
+    const key = `${map}:${part}`;
+    if (HILL_TEX_CACHE.has(key)) return HILL_TEX_CACHE.get(key)!;
+    const base = groundTexture(map);
+    let t: THREE.Texture | null = null;
+    if (base) {
+        t = base.clone();
+        // slope: wrap the pattern around the cone a few times, squash it vertically;
+        // cap: a single patch of the pattern across the disc
+        if (part === 'slope') t.repeat.set(0.7, 0.15); else t.repeat.set(0.12, 0.12);
+        t.offset.set(0.31, 0.47);
+        t.needsUpdate = true;
+    }
+    HILL_TEX_CACHE.set(key, t);
+    return t;
 };
 
 let BUMP_TEX: THREE.CanvasTexture | null | undefined;
