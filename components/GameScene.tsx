@@ -237,7 +237,7 @@ const FogOverlay = ({ grid }: { grid: Uint8Array }) => {
     );
 };
 
-const RainEffect = () => {
+const RainEffect = ({ storm = false }: { storm?: boolean }) => {
     // Create 1000 rain drops
     const count = 1500;
     const positions = useMemo(() => {
@@ -250,31 +250,61 @@ const RainEffect = () => {
         return pos;
     }, []);
 
-    const rainRef = useRef<THREE.Points>(null!);
+    // Each drop is a short streak (two vertices) rather than a dot: rain at
+    // this speed reads as lines, and a storm leans them with the wind.
+    const segs = useMemo(() => new Float32Array(count * 6), []);
+    const rainRef = useRef<THREE.LineSegments>(null!);
+    const lean = storm ? 0.35 : 0.12;
+    const len = storm ? 16 : 11;
 
     useFrame((state, delta) => {
         if (!rainRef.current) return;
-        // Simple physics: move down
-        const positions = rainRef.current.geometry.attributes.position.array as Float32Array;
-        const speed = 450 * delta;
-
+        const speed = (storm ? 620 : 450) * delta;
+        const drift = speed * lean;
         for (let i = 0; i < count; i++) {
+            positions[i * 3] += drift;
             positions[i * 3 + 1] -= speed;
             if (positions[i * 3 + 1] < 0) {
                 positions[i * 3 + 1] = 400 + Math.random() * 200; // Reset to top with variation
+                positions[i * 3] = (Math.random() - 0.5) * 1600 + 400;
             }
+            const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+            segs[i * 6] = x; segs[i * 6 + 1] = y; segs[i * 6 + 2] = z;
+            segs[i * 6 + 3] = x - len * lean; segs[i * 6 + 4] = y + len; segs[i * 6 + 5] = z;
         }
         rainRef.current.geometry.attributes.position.needsUpdate = true;
     });
 
     return (
-        <points ref={rainRef}>
+        <lineSegments ref={rainRef} frustumCulled={false}>
             <bufferGeometry>
-                <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+                <bufferAttribute attach="attributes-position" args={[segs, 3]} />
             </bufferGeometry>
-            <pointsMaterial color="#a5f3fc" size={2} transparent opacity={0.6} sizeAttenuation={false} />
-        </points>
+            <lineBasicMaterial color="#bfe3f5" transparent opacity={storm ? 0.5 : 0.42} depthWrite={false} />
+        </lineSegments>
     );
+};
+
+// Soft round dot for snowflakes (PointsMaterial draws hard squares otherwise)
+let DOT_TEX: THREE.CanvasTexture | null | undefined;
+const softDotTexture = (): THREE.CanvasTexture | null => {
+    if (DOT_TEX !== undefined) return DOT_TEX;
+    DOT_TEX = null;
+    if (typeof document !== 'undefined') {
+        const cv = document.createElement('canvas');
+        cv.width = 32; cv.height = 32;
+        const ctx = cv.getContext('2d');
+        if (ctx) {
+            const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.7)');
+            g.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, 32, 32);
+            DOT_TEX = new THREE.CanvasTexture(cv);
+        }
+    }
+    return DOT_TEX;
 };
 
 const SnowEffect = () => {
@@ -305,7 +335,7 @@ const SnowEffect = () => {
             <bufferGeometry>
                 <bufferAttribute attach="attributes-position" args={[positions, 3]} />
             </bufferGeometry>
-            <pointsMaterial color="#e2e8f0" size={3.5} transparent opacity={0.75} sizeAttenuation={false} />
+            <pointsMaterial color="#eef2f6" size={4.5} transparent opacity={0.8} sizeAttenuation={false} map={softDotTexture()} depthWrite={false} />
         </points>
     );
 };
@@ -4314,7 +4344,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {weather === 'rain'  && <RainEffect />}
             {weather === 'snow'  && <SnowEffect />}
-            {weather === 'storm' && <RainEffect />}
+            {weather === 'storm' && <RainEffect storm />}
 
             <ambientLight intensity={baseAmbient * 0.55 * (0.3 + 0.7 * dayFactor)} />
             <hemisphereLight args={[skyColor, groundTint, baseAmbient * 0.9 * (0.3 + 0.7 * dayFactor)]} />
