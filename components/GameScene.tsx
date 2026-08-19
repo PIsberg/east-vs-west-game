@@ -3196,10 +3196,12 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                     <boxGeometry args={[w + 10, 0.8, d + 10]} />
                     <meshStandardMaterial color="#6b7280" roughness={1} />
                 </mesh>
-                {/* Roof */}
-                <mesh position={[0, h / 2 + 1, 0]}>
+                {/* Roof — concrete, a shade lighter than the walls: the camera
+                    looks down on roofs, so near-black roofs made the whole city
+                    read as a night scene */}
+                <mesh position={[0, h / 2 + 1, 0]} receiveShadow>
                     <boxGeometry args={[w + 2, 2, d + 2]} />
-                    <meshStandardMaterial color="#1f2937" roughness={0.9} />
+                    <meshStandardMaterial color={['#6b7280', '#5b6472', '#7b8491'][(seed >> 3) % 3]} roughness={0.95} />
                 </mesh>
                 {/* Upper-floor setback on taller buildings */}
                 {hasSetback && (
@@ -3693,13 +3695,16 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
         // Set back from the field's far edge so the range sits lower in the
         // default framing and picks up a little haze (it used to fill the top
         // third of the view as a dark wall right behind the battlefield)
+        // The city skyline stands closer than the mountain range (it should
+        // loom over the streets, not sit on a far horizon)
+        const near = mapType === MapType.URBAN;
         return Array.from({ length: 16 }, (_, i) => ({
             x: -350 + rand(i, 1) * 1500,
-            z: -190 - rand(i, 2) * 260,
+            z: near ? -110 - rand(i, 2) * 220 : -190 - rand(i, 2) * 260,
             h: 80 + rand(i, 3) * 170,
             w: 50 + rand(i, 4) * 80,
         }));
-    }, []);
+    }, [mapType]);
 
     if (mapType === MapType.URBAN) {
         return (
@@ -4033,7 +4038,7 @@ const GROUND_TILE = 1000;
 const GROUND_PALETTE: Record<MapType, { base: string; light: string; dark: string; accent: string; grain: number; contrast: number; streaks?: boolean }> = {
     [MapType.COUNTRYSIDE]: { base: '#3f6e1e', light: '#56902a', dark: '#2a4c13', accent: '#6b7a2e', grain: 14, contrast: 1.1 },
     [MapType.URBAN]:       { base: '#3d4249', light: '#4b5159', dark: '#2f343b', accent: '#52524f', grain: 10, contrast: 0.8 },
-    [MapType.DESERT]:      { base: '#ad783e', light: '#c8944f', dark: '#8e5d2a', accent: '#bd8a4c', grain: 12, contrast: 0.9, streaks: true },
+    [MapType.DESERT]:      { base: '#bf8a4e', light: '#dcab6c', dark: '#9a6a36', accent: '#d29a58', grain: 12, contrast: 0.9, streaks: true },
     [MapType.ARCHIPELAGO]: { base: '#237543', light: '#32924f', dark: '#195a30', accent: '#bfa060', grain: 12, contrast: 1.0 },
     [MapType.WINTER]:      { base: '#dfe6ec', light: '#f4f8fb', dark: '#c6d2dc', accent: '#d3dde5', grain: 5, contrast: 0.45, streaks: true },
 };
