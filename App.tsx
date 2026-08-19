@@ -1493,7 +1493,7 @@ const App: React.FC = () => {
             const isWest = selection.team === Team.WEST;
             const issue = (order: Stance | null) => setOrderQueue(prev => [...prev, { ids: liveIds, order }]);
             const issueAbility = (ability: 'overdrive' | 'c4' | 'sell') => setOrderQueue(prev => [...prev, { ids: liveIds, ability }]);
-            const btn = 'px-2 py-1 rounded border text-[9px] font-bold uppercase tracking-tight transition-colors active:scale-95';
+            const btn = 'hud-chip px-2 py-1 rounded border text-[10px] font-display font-bold uppercase tracking-wide transition-colors active:scale-95';
             // Ability buttons appear when the selection contains a capable type;
             // disabled (with a countdown) while every such unit is on cooldown
             const selUnits = gameState.units.filter(u => liveIds.includes(u.id));
@@ -1509,7 +1509,7 @@ const App: React.FC = () => {
             const hasBunker = selUnits.some(u => u.type === UnitType.BUNKER);
             return (
               <div className="absolute bottom-[70px] left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 bg-stone-900/95 border border-stone-500 rounded-lg px-2.5 py-1.5 shadow-2xl">
-                <span className={`text-[10px] font-black uppercase mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
+                <span className={`text-[11px] font-display font-bold uppercase tracking-wide mr-1 ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
                   {liveIds.length} unit{liveIds.length > 1 ? 's' : ''}
                 </span>
                 <button onClick={() => issue('advance')} title="Selected troops push toward the enemy edge" className={`${btn} border-green-600 text-green-400 hover:bg-green-900/60`}>⚔ Attack</button>
@@ -1641,7 +1641,7 @@ const App: React.FC = () => {
           <div data-testid="campaign-board" className="fixed inset-0 z-[10000] bg-stone-950/[.97] flex flex-col p-3 md:p-5 overflow-auto">
             <div className="flex items-center justify-between gap-2 mb-2">
               <div>
-                <h2 className="text-amber-400 font-black uppercase tracking-widest text-sm md:text-base">Grand Campaign — Turn {s.turn + 1}</h2>
+                <h2 className="font-display hud-title font-bold uppercase tracking-[0.2em] text-base md:text-xl leading-none">Grand Campaign — Turn {s.turn + 1}</h2>
                 <p className="text-stone-400 text-[11px]">Enemy commander: <span className="text-red-400 font-bold">{persona.name}</span> — {persona.blurb}</p>
                 <p className="text-stone-300 text-[11px] mt-0.5">🎯 <strong className="text-amber-300">Objective:</strong> capture <strong>★ Kreml Bastion</strong> in the far east — or destroy every enemy army.</p>
               </div>
@@ -1664,11 +1664,11 @@ const App: React.FC = () => {
                 <button onClick={openCampaign} className="ml-3 px-2 py-0.5 rounded border border-amber-500 text-amber-300 text-[10px] hover:bg-amber-950">New Campaign</button>
               </div>
             )}
-            <div className="relative flex-1 min-h-[320px] rounded-lg border border-stone-700 bg-[#141a12]">
+            <div className="relative flex-1 min-h-[320px] rounded-lg border border-stone-700 campaign-board">
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 {TERRITORIES.flatMap(t => t.adjacent.filter(a2 => a2 > t.id).map(a2 => {
                   const o = territory(a2);
-                  return <line key={`${t.id}-${a2}`} x1={`${t.x}%`} y1={`${t.y}%`} x2={`${o.x}%`} y2={`${o.y}%`} stroke="#3f3f34" strokeWidth={1.5} strokeDasharray="4 3" />;
+                  return <line key={`${t.id}-${a2}`} x1={`${t.x}%`} y1={`${t.y}%`} x2={`${o.x}%`} y2={`${o.y}%`} stroke="#6b6a58" strokeWidth={1.5} strokeDasharray="5 4" strokeOpacity={0.7} />;
                 }))}
               </svg>
               {TERRITORIES.map(t => {
@@ -1687,10 +1687,10 @@ const App: React.FC = () => {
                     className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border-2 ${ring} ${bg} px-1.5 py-1 text-center transition-all min-w-[64px]
                       ${isSel ? 'ring-2 ring-amber-400 scale-110 z-10' : ''} ${canGo ? 'ring-2 ring-amber-300/70 animate-pulse z-10' : ''} hover:scale-105`}
                   >
-                    <div className="text-[9px] font-bold text-stone-100 leading-tight whitespace-nowrap">
+                    <div className="text-[10px] font-display font-bold tracking-wide text-stone-100 leading-tight whitespace-nowrap">
                       {t.capital ? '★ ' : ''}{t.name} {bonusIcon(t.bonus)}
                     </div>
-                    <div className="text-[8px] text-stone-400 uppercase">{t.terrain.toLowerCase()}</div>
+                    <div className="text-[8px] font-display tracking-[0.15em] text-stone-400 uppercase">{t.terrain.toLowerCase()}</div>
                     {army && (
                       <div className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-black ${army.team === Team.WEST ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}
                         ${army.team === Team.WEST && !sel && !winner ? 'animate-pulse ring-2 ring-amber-300/80' : ''}`}>

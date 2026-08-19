@@ -52,3 +52,17 @@
   }
   .score-num { font-variant-numeric: tabular-nums; }
 }
+
+@layer components {
+  /* War-room board: a dark field map with a faint grid and a vignette so the
+     territory nodes sit on something instead of a flat slab */
+  .campaign-board {
+    background-color: #141a12;
+    background-image:
+      radial-gradient(ellipse 80% 70% at 50% 45%, rgba(60, 80, 40, 0.35) 0%, rgba(20, 26, 18, 0) 70%),
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+    box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.6);
+  }
+}

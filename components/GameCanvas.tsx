@@ -5696,13 +5696,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                   session mid-handshake — back to the menu is the honest exit */}
               {!lockstep && <button
                 onClick={() => { try { localStorage.setItem('ewv-rematch', '1'); } catch { /* ignore */ } window.location.reload(); }}
-                className="px-8 py-3 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+                className="px-8 py-3 bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-stone-950 font-display font-bold text-lg uppercase tracking-[0.2em] rounded border border-amber-300/70 shadow-lg transition-transform active:scale-95"
               >
                 ⚔ Rematch
               </button>}
               <button
                 onClick={() => window.location.reload()}
-                className="px-8 py-3 bg-stone-700 hover:bg-stone-600 text-stone-200 font-black uppercase tracking-wider rounded shadow-lg transition-transform active:scale-95"
+                className="hud-chip px-8 py-3 bg-stone-700 hover:bg-stone-600 text-stone-200 font-display font-bold text-lg uppercase tracking-[0.2em] rounded border border-stone-500 shadow-lg transition-transform active:scale-95"
               >
                 Menu
               </button>
