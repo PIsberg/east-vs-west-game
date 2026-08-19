@@ -391,13 +391,14 @@ const RiverMaterial = shaderMaterial(
 
       // Soft ripple highlights — smooth bands, not a hard threshold
       float ripple = smoothstep(0.55, 0.95, surf);
-      water = mix(water, uFoamColor, ripple * 0.45);
+      water = mix(water, uFoamColor, ripple * 0.32);
 
-      // Foam: a line where the water meets the bank, plus the brightest crests
+      // Foam: a line where the water meets the bank, plus the brightest crests.
+      // Kept restrained — heavy bank foam turned the whole channel milky.
       float edgeDist = min(vUv.x, 1.0 - vUv.x);
-      float bankFoam = smoothstep(0.34, 0.03, edgeDist) * (0.55 + 0.45 * surf);
-      float crest    = smoothstep(0.84, 0.99, surf);
-      water = mix(water, uFoamColor, clamp(bankFoam * 0.7 + crest * 0.6, 0.0, 1.0));
+      float bankFoam = smoothstep(0.26, 0.03, edgeDist) * (0.5 + 0.5 * surf);
+      float crest    = smoothstep(0.86, 0.99, surf);
+      water = mix(water, uFoamColor, clamp(bankFoam * 0.5 + crest * 0.5, 0.0, 1.0));
 
       // Sparse moving sun-glints
       float glint = smoothstep(0.9, 1.0, noise(vec2(vUv.x * 13.0, vUv.y * 22.0 - uTime * 0.8)));
@@ -506,7 +507,8 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
             <group>
                 {geometries.map((geo, i) => geo && (
                     <mesh key={i} geometry={geo} receiveShadow>
-                        <meshStandardMaterial color="#b45309" roughness={1} />
+                        {/* Dry riverbed: paler, greyer silt than the surrounding sand */}
+                        <meshStandardMaterial color="#c7a574" roughness={1} />
                     </mesh>
                 ))}
             </group>
@@ -543,11 +545,13 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
         );
     }
 
-    // Countryside: animated water shader, one mesh per channel
+    // Countryside: animated water shader, one mesh per channel. River blue is
+    // a muted teal-blue rather than UI blue — it used to match the West team
+    // colour almost exactly, which made the channel read as a giant West ring.
     return (
         <group>
             {geometries.map((geo, i) => geo && (
-                <AnimatedWater key={i} geo={geo} color="#3b82f6" foam="#e0f2fe" />
+                <AnimatedWater key={i} geo={geo} color="#2a6f9e" foam="#d9ecf6" />
             ))}
         </group>
     );
@@ -2790,14 +2794,16 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         if (mapType === MapType.DESERT) {
             return (
                 <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
+                    {/* Sand tones a shade lighter than the textured ground (the old
+                        burnt-orange dune read as a blob on the new sand) */}
                     <mesh position={[0, 1, 0]} scale={[radius, height + 4, radius * 0.85]} receiveShadow castShadow>
                         <sphereGeometry args={[1, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                        <meshStandardMaterial color="#b45309" roughness={1} />
+                        <meshStandardMaterial color="#c28d4a" roughness={1} bumpMap={bumpTexture()} bumpScale={0.4} />
                     </mesh>
                     {/* Wind ripple crest */}
                     <mesh position={[radius * 0.25, 1, radius * 0.3]} scale={[radius * 0.55, height * 0.5, radius * 0.4]} castShadow>
                         <sphereGeometry args={[1, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                        <meshStandardMaterial color="#c2620c" roughness={1} />
+                        <meshStandardMaterial color="#d1a05c" roughness={1} />
                     </mesh>
                 </ClickableGroup>
             );
@@ -2847,18 +2853,23 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
             );
         }
 
-        // Countryside / archipelago: grassy plateau
+        // Countryside / archipelago: grassy plateau. Tones sit close to the
+        // ground texture (it used to be a lime cone that read as a blob) — the
+        // raised slope catches the sun and casts a shadow, which is what makes
+        // it read as high ground.
+        const slope = mapType === MapType.ARCHIPELAGO ? '#2b8448' : '#4a7d22';
+        const cap = mapType === MapType.ARCHIPELAGO ? '#236f3c' : '#3e6a1c';
         return (
             <ClickableGroup position={[item.x, height / 2 - 1, item.y]} onCanvasClick={onCanvasClick}>
                 {/* Truncated Cone for Plateau */}
-                <mesh receiveShadow>
+                <mesh receiveShadow castShadow>
                     <cylinderGeometry args={[plateauRadius, radius, height, 32]} />
-                    <meshStandardMaterial color="#4d7c0f" roughness={0.9} />
+                    <meshStandardMaterial color={slope} roughness={1} bumpMap={bumpTexture()} bumpScale={0.5} />
                 </mesh>
                 {/* Worn plateau cap */}
-                <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <mesh position={[0, height / 2 + 0.15, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
                     <circleGeometry args={[plateauRadius * 0.85, 24]} />
-                    <meshStandardMaterial color="#3f6212" roughness={1} />
+                    <meshStandardMaterial color={cap} roughness={1} />
                 </mesh>
                 {/* Rocky outcrops on the slope */}
                 {[0.9, 2.4, 4.1].map((a, i) => (
@@ -3102,7 +3113,12 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const scaleMod = 1 + (seed % 50) / 100; // 1.0 - 1.5
 
         let trunkColor = "#451a03";
-        let leavesColor = type === 0 ? "#14532d" : (type === 1 ? "#166534" : "#15803d");
+        // Three foliage tones per species (seeded per tree) so a wood reads as
+        // many trees rather than one colour stamped out — still only 9 cached
+        // materials across every tree on the map.
+        const shade = (seed >> 4) % 3;
+        const PINE = ["#14532d", "#1a5f31", "#0f4726"], OAK = ["#166534", "#1f7a3d", "#2b7f36"], POPLAR = ["#15803d", "#2a8c3f", "#4d8f2f"];
+        let leavesColor = type === 0 ? PINE[shade] : (type === 1 ? OAK[shade] : POPLAR[shade]);
         let rot: [number, number, number] = [0, 0, 0];
         let yOffset = 0;
 
@@ -3464,11 +3480,14 @@ const BorderLine = React.memo(({ onCanvasClick }: { onCanvasClick: (x: number, y
 const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
     const items = useMemo(() => {
         const rand = (i: number, s: number) => { const v = Math.sin(i * 91.7 + s * 47.3) * 43758.5453; return v - Math.floor(v); };
-        return Array.from({ length: 14 }, (_, i) => ({
-            x: -150 + rand(i, 1) * 1100,
-            z: -70 - rand(i, 2) * 130,
-            h: 70 + rand(i, 3) * 150,
-            w: 45 + rand(i, 4) * 70,
+        // Set back from the field's far edge so the range sits lower in the
+        // default framing and picks up a little haze (it used to fill the top
+        // third of the view as a dark wall right behind the battlefield)
+        return Array.from({ length: 16 }, (_, i) => ({
+            x: -350 + rand(i, 1) * 1500,
+            z: -190 - rand(i, 2) * 260,
+            h: 80 + rand(i, 3) * 170,
+            w: 50 + rand(i, 4) * 80,
         }));
     }, []);
 
@@ -3478,7 +3497,7 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
                 {items.map((m, i) => (
                     <mesh key={i} position={[m.x, m.h / 2, m.z]}>
                         <boxGeometry args={[m.w, m.h, 30]} />
-                        <meshStandardMaterial color="#334155" roughness={1} />
+                        <meshStandardMaterial color="#46526a" roughness={1} />
                     </mesh>
                 ))}
             </group>
@@ -3490,7 +3509,7 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
                 {items.map((m, i) => (
                     <mesh key={i} position={[m.x, m.h * 0.35, m.z]}>
                         <cylinderGeometry args={[m.w * 0.8, m.w * 1.3, m.h * 0.7, 8]} />
-                        <meshStandardMaterial color="#92400e" roughness={1} />
+                        <meshStandardMaterial color="#a2603a" roughness={1} />
                     </mesh>
                 ))}
             </group>
@@ -3505,7 +3524,8 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
                 <group key={i} position={[m.x, 0, m.z]}>
                     <mesh position={[0, m.h * 0.8, 0]}>
                         <coneGeometry args={[m.w * 1.5, m.h * 1.6, 7]} />
-                        <meshStandardMaterial color={winter ? '#5b6b7d' : '#475569'} roughness={1} />
+                        {/* Blue-grey rock: reads as distance now that the haze no longer does it */}
+                        <meshStandardMaterial color={winter ? '#66768a' : '#56667c'} roughness={1} />
                     </mesh>
                     {m.h > (winter ? 85 : 150) && (
                         <mesh position={[0, m.h * 1.38, 0]}>
@@ -3519,31 +3539,151 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
     );
 });
 
-// Soft clouds drifting slowly across the sky
-const CLOUD_DEFS = Array.from({ length: 7 }, (_, i) => {
+// -- Sky --
+// A gradient dome replaces the flat clear colour: haze at the horizon, deeper
+// blue overhead, plus a soft sun glow on the light's side. One draw call, no
+// texture. It follows the camera so the gradient is a pure view direction, and
+// it runs through the same tone mapping as the lit scene so the fogged horizon
+// (which IS tone mapped) meets the sky without a seam. Weather/map/day colours
+// are uniforms updated in place — no material churn.
+const SkyMaterial = shaderMaterial(
+    {
+        uHorizon: new THREE.Color('#87CEEB'),
+        uZenith: new THREE.Color('#3b82c4'),
+        uSunColor: new THREE.Color('#fff4d6'),
+        uSunDir: new THREE.Vector3(0.35, 0.87, 0.35), // matches the directional light's bearing
+        uSunStrength: 1.0,
+    },
+    `
+    varying vec3 vDir;
+    void main() {
+      vDir = normalize(position);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+    `
+    uniform vec3 uHorizon;
+    uniform vec3 uZenith;
+    uniform vec3 uSunColor;
+    uniform vec3 uSunDir;
+    uniform float uSunStrength;
+    varying vec3 vDir;
+    void main() {
+      vec3 d = normalize(vDir);
+      float h = clamp(d.y, 0.0, 1.0);
+      // Haze hugs the horizon, the zenith colour takes over fast overhead
+      vec3 col = mix(uHorizon, uZenith, pow(h, 0.55));
+      // Below the horizon (only seen when the camera tilts low): darken gently
+      col = mix(col, uHorizon * 0.82, smoothstep(0.0, -0.25, d.y));
+      float s = max(dot(d, uSunDir), 0.0);
+      // Disc + wide corona. Kept modest so bloom doesn't run away with it.
+      col += uSunColor * uSunStrength * (pow(s, 600.0) * 0.9 + pow(s, 18.0) * 0.22 + pow(s, 3.0) * 0.06);
+      gl_FragColor = vec4(col, 1.0);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }
+  `
+);
+extend({ SkyMaterial });
+declare module '@react-three/fiber' {
+    interface ThreeElements {
+        skyMaterial: any;
+    }
+}
+
+const SKY_RADIUS = 2600; // camera far must exceed this — see the Canvas props
+const SkyDome = ({ horizon, zenith, sun, sunStrength }: { horizon: number, zenith: number, sun: number, sunStrength: number }) => {
+    const meshRef = useRef<THREE.Mesh>(null!);
+    const matRef = useRef<any>(null);
+    const { camera } = useThree();
+    useFrame(() => {
+        if (meshRef.current) meshRef.current.position.copy(camera.position);
+        const m = matRef.current;
+        if (!m) return;
+        m.uHorizon.set(horizon);
+        m.uZenith.set(zenith);
+        m.uSunColor.set(sun);
+        m.uSunStrength = sunStrength;
+    });
+    return (
+        <mesh ref={meshRef} frustumCulled={false} renderOrder={-10}>
+            <sphereGeometry args={[SKY_RADIUS, 32, 18]} />
+            <skyMaterial ref={matRef} side={THREE.BackSide} depthWrite={false} fog={false} />
+        </mesh>
+    );
+};
+
+// Soft clouds: camera-facing sprites with a procedurally painted puff texture,
+// parked high and far beyond the backdrop so they frame the battlefield instead
+// of floating through the middle of the view. Drift is wall-clock (pure
+// decoration, not sim state). Tinted by weather; hidden in fog where the haze
+// already owns the sky.
+const makeCloudTexture = (): THREE.CanvasTexture | null => {
+    if (typeof document === 'undefined') return null;
+    const W = 256, H = 128;
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d');
+    if (!ctx) return null;
+    const rnd = (i: number, s: number) => { const v = Math.sin(i * 91.3 + s * 17.7) * 43758.5453; return v - Math.floor(v); };
+    // A flat-bottomed heap of soft discs — cumulus reads from the silhouette
+    for (let i = 0; i < 18; i++) {
+        const x = 40 + rnd(i, 1) * (W - 80);
+        const y = H * 0.62 - rnd(i, 2) * H * 0.36 * (1 - Math.abs(x - W / 2) / (W / 2) * 0.6);
+        const r = 22 + rnd(i, 3) * 30;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(0.55, 'rgba(255,255,255,0.28)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    // Shaded underside: a faint grey wash on the lower third
+    const sh = ctx.createLinearGradient(0, H * 0.5, 0, H);
+    sh.addColorStop(0, 'rgba(150,160,175,0)');
+    sh.addColorStop(1, 'rgba(150,160,175,0.25)');
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = sh;
+    ctx.fillRect(0, 0, W, H);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+};
+let CLOUD_TEX: THREE.CanvasTexture | null | undefined;
+const cloudTexture = () => (CLOUD_TEX === undefined ? (CLOUD_TEX = makeCloudTexture()) : CLOUD_TEX);
+
+const CLOUD_DEFS = Array.from({ length: 9 }, (_, i) => {
     const r = (s: number) => { const v = Math.sin(i * 53.7 + s * 29.1) * 43758.5453; return v - Math.floor(v); };
-    return { base: r(1) * 1600, y: 250 + r(2) * 110, z: -80 + r(3) * 500, speed: 0.004 + r(4) * 0.005, s: 26 + r(5) * 30 };
+    return {
+        base: r(1) * 2400,
+        y: 330 + r(2) * 140,
+        z: -260 - r(3) * 640,
+        speed: 0.003 + r(4) * 0.004,
+        w: 300 + r(5) * 260,
+        op: 0.55 + r(6) * 0.3,
+    };
 });
 
-const Clouds = () => {
-    const t = Date.now();
+const Clouds = ({ tint, opacity = 1 }: { tint: string, opacity?: number }) => {
+    const tex = cloudTexture();
+    const refs = useRef<(THREE.Sprite | null)[]>([]);
+    useFrame(() => {
+        const t = Date.now();
+        for (let i = 0; i < CLOUD_DEFS.length; i++) {
+            const s = refs.current[i];
+            if (!s) continue;
+            const c = CLOUD_DEFS[i];
+            s.position.x = ((c.base + t * c.speed) % 2400) - 800;
+        }
+    });
+    if (!tex) return null;
     return (
         <group>
-            {CLOUD_DEFS.map((c, i) => {
-                const x = ((c.base + t * c.speed) % 1600) - 400;
-                return (
-                    <group key={i} position={[x, c.y, c.z]}>
-                        <mesh scale={[c.s * 2.1, c.s * 0.55, c.s]}>
-                            <sphereGeometry args={[1, 10, 8]} />
-                            <meshStandardMaterial color="white" transparent opacity={0.45} depthWrite={false} />
-                        </mesh>
-                        <mesh position={[c.s * 1.3, 3, c.s * 0.2]} scale={[c.s * 1.2, c.s * 0.45, c.s * 0.7]}>
-                            <sphereGeometry args={[1, 10, 8]} />
-                            <meshStandardMaterial color="white" transparent opacity={0.4} depthWrite={false} />
-                        </mesh>
-                    </group>
-                );
-            })}
+            {CLOUD_DEFS.map((c, i) => (
+                <sprite key={i} ref={el => { refs.current[i] = el; }} position={[0, c.y, c.z]} scale={[c.w, c.w * 0.5, 1]} frustumCulled={false}>
+                    <spriteMaterial map={tex} color={tint} transparent opacity={c.op * opacity} depthWrite={false} />
+                </sprite>
+            ))}
         </group>
     );
 };
@@ -3670,70 +3810,179 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
     );
 });
 
-const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
-    const groundColor =
-        mapType === MapType.URBAN       ? '#374151' :
-        mapType === MapType.DESERT      ? '#92400e' :
-        mapType === MapType.ARCHIPELAGO ? '#1a6b3a' :
-        mapType === MapType.WINTER      ? '#d4dde5' : '#365314';
-    // Two mottle tones — a lighter and a darker patch — dabbed across the field
-    // so the ground reads as uneven earth rather than a flat slab. Kept subtle
-    // (low opacity) so units still pop against it.
-    const [spotLight, spotDark] =
-        mapType === MapType.URBAN       ? ['#4b5563', '#2b3444'] :
-        mapType === MapType.DESERT      ? ['#b45309', '#7c3d0a'] :
-        mapType === MapType.ARCHIPELAGO ? ['#d97706', '#14532d'] : // sandy beach + turf on islands
-        mapType === MapType.WINTER      ? ['#eaf0f5', '#b6c2cd'] : // fresh powder + wind-scoured crust
-                                          ['#4a6b22', '#233d10'];   // countryside: sun-catch turf + damp earth
+// -- Ground texture --
+// Procedural, painted once per map on a canvas: a base tone, soft large and
+// medium blotches (what used to be 46 separate flat "spot" meshes — now baked,
+// 46 fewer draw calls and no hard circle edges) and fine grain. A shared small
+// grey noise tile rides as bumpMap so the sun catches relief. One colour tile
+// spans GROUND_TILE world units — more than the playfield — so no repeat is
+// visible where the player looks; tiles wrap seamlessly beyond it.
+const GROUND_TILE = 1000;
+// `contrast` scales every blotch's alpha: snow wants whisper-soft shading
+// (strong patches read as dirty slush), turf can take more.
+const GROUND_PALETTE: Record<MapType, { base: string; light: string; dark: string; accent: string; grain: number; contrast: number; streaks?: boolean }> = {
+    [MapType.COUNTRYSIDE]: { base: '#3f6e1e', light: '#56902a', dark: '#2a4c13', accent: '#6b7a2e', grain: 14, contrast: 1.1 },
+    [MapType.URBAN]:       { base: '#3d4249', light: '#4b5159', dark: '#2f343b', accent: '#52524f', grain: 10, contrast: 0.8 },
+    [MapType.DESERT]:      { base: '#ad783e', light: '#c8944f', dark: '#8e5d2a', accent: '#bd8a4c', grain: 12, contrast: 0.9, streaks: true },
+    [MapType.ARCHIPELAGO]: { base: '#237543', light: '#32924f', dark: '#195a30', accent: '#bfa060', grain: 12, contrast: 1.0 },
+    [MapType.WINTER]:      { base: '#dfe6ec', light: '#f4f8fb', dark: '#c6d2dc', accent: '#d3dde5', grain: 5, contrast: 0.45, streaks: true },
+};
+// Tiny seeded generator: the same texture on every machine, every mount
+const lcg = (seed: number) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 
-    // Distributed across the actual play area (not half off-map like before),
-    // alternating tone so patches of light and dark overlap into natural mottle.
-    const spots = [];
-    const srand = (i: number, s: number) => { const v = Math.sin(i * 12.9898 + s * 78.233) * 43758.5453; return v - Math.floor(v); };
-    for (let i = 0; i < 46; i++) {
-        const x = -CANVAS_WIDTH / 2 + srand(i, 1) * CANVAS_WIDTH * 2;
-        const y = -CANVAS_HEIGHT / 2 + srand(i, 2) * CANVAS_HEIGHT * 2;
-        const s = 26 + srand(i, 3) * 40;
-        spots.push({ x, y, s, color: i % 2 === 0 ? spotLight : spotDark });
+const GROUND_TEX_CACHE = new Map<MapType, THREE.CanvasTexture | null>();
+const groundTexture = (map: MapType): THREE.CanvasTexture | null => {
+    if (GROUND_TEX_CACHE.has(map)) return GROUND_TEX_CACHE.get(map)!;
+    let tex: THREE.CanvasTexture | null = null;
+    if (typeof document !== 'undefined') {
+        const S = 1024;
+        const cv = document.createElement('canvas');
+        cv.width = S; cv.height = S;
+        const ctx = cv.getContext('2d');
+        if (ctx) {
+            const p = GROUND_PALETTE[map];
+            const rnd = lcg(0x9e3779b9 ^ (map.length * 977));
+            ctx.fillStyle = p.base;
+            ctx.fillRect(0, 0, S, S);
+            // Soft blotch, drawn wrapped so the tile seams vanish
+            const blot = (x: number, y: number, r: number, color: string, a: number, sx = 1, sy = 1) => {
+                for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+                    const cx = x + ox * S, cy = y + oy * S;
+                    if (cx + r * sx < 0 || cx - r * sx > S || cy + r * sy < 0 || cy - r * sy > S) continue;
+                    ctx.save();
+                    ctx.translate(cx, cy);
+                    ctx.scale(sx, sy);
+                    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+                    g.addColorStop(0, color);
+                    g.addColorStop(1, 'rgba(0,0,0,0)');
+                    ctx.globalAlpha = Math.min(1, a * p.contrast);
+                    ctx.fillStyle = g;
+                    ctx.fillRect(-r, -r, r * 2, r * 2);
+                    ctx.restore();
+                }
+            };
+            // Large patches: broad light/dark ground variation
+            for (let i = 0; i < 26; i++)
+                blot(rnd() * S, rnd() * S, 90 + rnd() * 150, i % 2 ? p.light : p.dark, 0.35 + rnd() * 0.2, 1 + rnd() * 0.6, 1);
+            // Medium patches: turf clumps / worn earth
+            for (let i = 0; i < 160; i++)
+                blot(rnd() * S, rnd() * S, 18 + rnd() * 40, rnd() < 0.5 ? p.light : p.dark, 0.25 + rnd() * 0.25);
+            // Accent flecks (straw / sand / frost)
+            for (let i = 0; i < 90; i++)
+                blot(rnd() * S, rnd() * S, 6 + rnd() * 14, p.accent, 0.2 + rnd() * 0.25);
+            // Wind streaks for sand and snow: long low ellipses
+            if (p.streaks)
+                for (let i = 0; i < 70; i++)
+                    blot(rnd() * S, rnd() * S, 40 + rnd() * 90, rnd() < 0.5 ? p.light : p.dark, 0.18 + rnd() * 0.18, 2.2 + rnd() * 1.6, 0.18);
+            // Fine grain: per-pixel luminance jitter
+            const img = ctx.getImageData(0, 0, S, S);
+            const d = img.data;
+            const g = p.grain;
+            for (let i = 0; i < d.length; i += 4) {
+                const n = (rnd() - 0.5) * g;
+                d[i] += n; d[i + 1] += n; d[i + 2] += n;
+            }
+            ctx.putImageData(img, 0, 0);
+            tex = new THREE.CanvasTexture(cv);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.anisotropy = 8; // the camera looks across the ground at ~45°
+        }
     }
+    GROUND_TEX_CACHE.set(map, tex);
+    return tex;
+};
+
+let BUMP_TEX: THREE.CanvasTexture | null | undefined;
+const bumpTexture = (): THREE.CanvasTexture | null => {
+    if (BUMP_TEX !== undefined) return BUMP_TEX;
+    BUMP_TEX = null;
+    if (typeof document !== 'undefined') {
+        const S = 256;
+        const cv = document.createElement('canvas');
+        cv.width = S; cv.height = S;
+        const ctx = cv.getContext('2d');
+        if (ctx) {
+            const rnd = lcg(12345);
+            ctx.fillStyle = '#808080';
+            ctx.fillRect(0, 0, S, S);
+            // Wrapped soft bumps at two scales, then grain
+            const bump = (x: number, y: number, r: number, v: number, a: number) => {
+                for (let ox = -1; ox <= 1; ox++) for (let oy = -1; oy <= 1; oy++) {
+                    const cx = x + ox * S, cy = y + oy * S;
+                    if (cx + r < 0 || cx - r > S || cy + r < 0 || cy - r > S) continue;
+                    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+                    g.addColorStop(0, 'rgba(' + v + ',' + v + ',' + v + ',' + a + ')');
+                    g.addColorStop(1, 'rgba(' + v + ',' + v + ',' + v + ',0)');
+                    ctx.fillStyle = g;
+                    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+                }
+            };
+            for (let i = 0; i < 120; i++) bump(rnd() * S, rnd() * S, 10 + rnd() * 26, rnd() < 0.5 ? 40 : 215, 0.5);
+            for (let i = 0; i < 400; i++) bump(rnd() * S, rnd() * S, 3 + rnd() * 7, rnd() < 0.5 ? 30 : 225, 0.5);
+            const img = ctx.getImageData(0, 0, S, S);
+            const d = img.data;
+            for (let i = 0; i < d.length; i += 4) { const n = (rnd() - 0.5) * 40; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+            ctx.putImageData(img, 0, 0);
+            BUMP_TEX = new THREE.CanvasTexture(cv);
+            BUMP_TEX.wrapS = BUMP_TEX.wrapT = THREE.RepeatWrapping;
+            BUMP_TEX.anisotropy = 4;
+        }
+    }
+    return BUMP_TEX;
+};
+
+const GROUND_SIZE = 9000; // far larger than the field: the edge used to show as a hard horizon line once the haze thinned
+const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onCanvasClick: (x: number, y: number) => void, targetingInfo: { team: Team, type: UnitType } | null, mapType: MapType }) => {
+    const material = useMemo(() => {
+        const map = groundTexture(mapType);
+        const bump = bumpTexture();
+        if (map) map.repeat.set(GROUND_SIZE / GROUND_TILE, GROUND_SIZE / GROUND_TILE);
+        // The bump tile is ~40 world units, the colour tile 1000: three applies
+        // each map's own repeat, so the bump texture gets its own clone
+        let bumpMap: THREE.Texture | null = null;
+        if (bump) {
+            bumpMap = bump.clone();
+            bumpMap.repeat.set(GROUND_SIZE / 40, GROUND_SIZE / 40);
+            bumpMap.needsUpdate = true;
+        }
+        return new THREE.MeshStandardMaterial({
+            color: map ? '#ffffff' : GROUND_PALETTE[mapType].base,
+            map,
+            bumpMap,
+            bumpScale: mapType === MapType.WINTER ? 0.35 : mapType === MapType.URBAN ? 0.3 : 0.7,
+            roughness: 1,
+        });
+    }, [mapType]);
+    useEffect(() => () => { material.bumpMap?.dispose(); material.dispose(); }, [material]);
 
     return (
-        <group>
-            <mesh
-                rotation={[-Math.PI / 2, 0, 0]}
-                position={[CANVAS_WIDTH / 2, -1, CANVAS_HEIGHT / 2]}
-                receiveShadow
-                onClick={(e) => {
-                    e.stopPropagation();
-                    onCanvasClick(e.point.x, e.point.z);
-                }}
-                onPointerOver={() => {
-                    if (targetingInfo) document.body.style.cursor = 'crosshair';
-                }}
-                onPointerMove={(e) => {
-                    if (targetingInfo && targetingInfo.type === UnitType.NUKE) {
-                        const isWest = targetingInfo.team === Team.WEST;
-                        const x = e.point.x; // 3D x is logic x
-                        const invalid = (isWest && x < 400) || (!isWest && x > 400);
-                        document.body.style.cursor = invalid ? 'not-allowed' : 'crosshair';
-                    } else if (targetingInfo) {
-                        document.body.style.cursor = 'crosshair';
-                    }
-                }}
-                onPointerOut={() => document.body.style.cursor = 'default'}
-            >
-                <planeGeometry args={[2000, 2000]} />
-                <meshStandardMaterial color={groundColor} roughness={1} />
-            </mesh>
-
-            {/* Ground Decoration Spots */}
-            {spots.map((s, i) => (
-                <mesh key={i} rotation={[-Math.PI / 2, 0, 0]} position={[CANVAS_WIDTH / 2 + s.x, -0.5, CANVAS_HEIGHT / 2 + s.y]}>
-                    <circleGeometry args={[s.s, 16]} />
-                    <meshStandardMaterial color={s.color} transparent opacity={0.32} depthWrite={false} />
-                </mesh>
-            ))}
-        </group>
+        <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[CANVAS_WIDTH / 2, -1, CANVAS_HEIGHT / 2]}
+            receiveShadow
+            material={material}
+            onClick={(e) => {
+                e.stopPropagation();
+                onCanvasClick(e.point.x, e.point.z);
+            }}
+            onPointerOver={() => {
+                if (targetingInfo) document.body.style.cursor = 'crosshair';
+            }}
+            onPointerMove={(e) => {
+                if (targetingInfo && targetingInfo.type === UnitType.NUKE) {
+                    const isWest = targetingInfo.team === Team.WEST;
+                    const x = e.point.x; // 3D x is logic x
+                    const invalid = (isWest && x < 400) || (!isWest && x > 400);
+                    document.body.style.cursor = invalid ? 'not-allowed' : 'crosshair';
+                } else if (targetingInfo) {
+                    document.body.style.cursor = 'crosshair';
+                }
+            }}
+            onPointerOut={() => document.body.style.cursor = 'default'}
+        >
+            <planeGeometry args={[GROUND_SIZE, GROUND_SIZE]} />
+        </mesh>
     );
 });
 
@@ -3741,9 +3990,10 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
 
 // Reusable color temps for the day/night blend (avoid per-frame allocation)
 const TMP_SKY_COLOR = new THREE.Color();
+const TMP_ZENITH_COLOR = new THREE.Color();
 const TMP_SUN_COLOR = new THREE.Color();
 const NIGHT_SKY_COLOR = new THREE.Color('#0b1026');
-const MOON_COLOR = new THREE.Color('#93c5fd');
+const SUNSET_COLOR = new THREE.Color('#ffc98a');
 
 export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, particles, terrain, flyovers, missiles, lasers, crates, smokes, onCanvasClick, selectTeam, onBoxSelect, onMarquee, onDragStart, targetingInfo, weather, fx = 'high', cb = false, mapType, shake, shock, fogGrid, capture, flanks, mines, ctfFlags, onUnitClick, focusIds, selectedIds, onCameraApi, simNow }) => {
     // Must be set before children render — teamTint/eastColor read it
@@ -3759,6 +4009,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
     // Shell-shock post effects — one set per mount, uniforms driven by ShockDriver
     const shockFx = useMemo(makeShockFx, []);
+    // The sun's aim point (a DirectionalLight shines at its target object)
+    const sunTarget = useMemo(() => new THREE.Object3D(), []);
 
     useEffect(() => {
         const api = {
@@ -3812,23 +4064,50 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
     // Clear-weather sky carries each map's identity (fog inherits it, so the
     // desert reads as dust haze and the city as smog); weather overrides it.
+    // Horizon = the haze/fog colour; zenith = the deeper colour overhead that
+    // the sky dome grades into.
     const clearSky =
         mapType === MapType.DESERT      ? '#dfc08f' :
         mapType === MapType.URBAN       ? '#9fb2c0' :
         mapType === MapType.ARCHIPELAGO ? '#6fd0e8' :
         mapType === MapType.WINTER      ? '#b9cfdd' : '#87CEEB';
+    const clearZenith =
+        mapType === MapType.DESERT      ? '#6f9fd2' :
+        mapType === MapType.URBAN       ? '#5a7a9c' :
+        mapType === MapType.ARCHIPELAGO ? '#2a7fc4' :
+        mapType === MapType.WINTER      ? '#6d8fb4' : '#3a7fc6';
     const weatherSky =
         weather === 'rain'  ? '#334155' :
         weather === 'snow'  ? '#cbd5e1' :
         weather === 'fog'   ? '#94a3b8' :
         weather === 'storm' ? '#1e293b' : clearSky;
+    const weatherZenith =
+        weather === 'rain'  ? '#1f2937' :
+        weather === 'snow'  ? '#8d9db0' :
+        weather === 'fog'   ? '#8391a5' :
+        weather === 'storm' ? '#0b1220' : clearZenith;
     const skyColor = TMP_SKY_COLOR.set(weatherSky).lerp(NIGHT_SKY_COLOR, 1 - dayFactor).getHex();
-    const sunColor = TMP_SUN_COLOR.set('#ffffff').lerp(MOON_COLOR, 1 - dayFactor).getHex();
+    const zenithColor = TMP_ZENITH_COLOR.set(weatherZenith).lerp(NIGHT_SKY_COLOR, 1 - dayFactor).getHex();
+    // Sun: warm white at noon, sliding toward a late-afternoon amber as the day
+    // factor drops (the old pure-white light read flat and clinical)
+    const sunColor = TMP_SUN_COLOR.set('#fff3df').lerp(SUNSET_COLOR, 1 - dayFactor).getHex();
+    const overcast = weather === 'rain' || weather === 'storm' || weather === 'fog';
+    const cloudTint =
+        weather === 'rain'  ? '#aab4c2' :
+        weather === 'storm' ? '#7c8797' :
+        weather === 'snow'  ? '#e8edf2' : '#ffffff';
 
     const baseAmbient =
         weather === 'rain' || weather === 'fog' ? 0.3 :
         weather === 'storm' ? 0.15 :
         weather === 'snow'  ? 0.5 : 0.6;
+    // Hemisphere fill: sky-tinted from above, earth-tinted from below. Replaces
+    // part of the flat ambient so shaded faces pick up colour instead of grey.
+    const groundTint =
+        mapType === MapType.URBAN       ? '#3b4048' :
+        mapType === MapType.DESERT      ? '#8a5a2a' :
+        mapType === MapType.ARCHIPELAGO ? '#2b5a3a' :
+        mapType === MapType.WINTER      ? '#9aa8b4' : '#3a4a1e';
 
     // shadows='percentage' (PCFShadowMap), NOT the boolean: three r185
     // deprecated PCFSoftShadowMap and warns on EVERY assignment — R3F
@@ -3837,36 +4116,49 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // networkidle-based e2e waits from ever settling. Three maps soft->PCF
     // internally anyway, so the render output is identical.
     return (
-        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low' ? 'percentage' : false} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45 }} onCreated={(s) => { (window as any).__ewGL = s.gl; }}>
+        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low' ? 'percentage' : false} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45, near: 1, far: 6000 }} gl={{ toneMappingExposure: 1.12 }} onCreated={(s) => { (window as any).__ewGL = s.gl; (window as any).__ewScene = s.scene; }}>
+            {/* Fallback clear colour behind the dome (near/far widened for it:
+                near 1 also buys depth precision for the ground decals) */}
             <color attach="background" args={[skyColor]} />
-            {/* Default camera sits ~735 units out — keep fog far beyond that so
-                fog weather reads as heavy haze, not a total whiteout */}
+            <SkyDome horizon={skyColor} zenith={zenithColor} sun={sunColor} sunStrength={overcast ? 0 : weather === 'snow' ? 0.3 : 1} />
+            {/* Default camera sits ~735 units out and the far edge of the field
+                ~890. Clear-weather haze starts beyond the playfield so the
+                battlefield itself stays saturated and readable (it used to be
+                ~40% hazed at the far edge) and only the backdrop softens; fog
+                weather pulls it in to a heavy haze, never a total whiteout. */}
             <fog attach="fog" args={[
                 skyColor,
-                weather === 'fog' ? 350 : 500,
-                weather === 'fog' ? 1050 : 1500
+                weather === 'fog' ? 350 : overcast ? 650 : 880,
+                weather === 'fog' ? 1050 : overcast ? 1700 : 2300
             ]} />
 
             {weather === 'rain'  && <RainEffect />}
             {weather === 'snow'  && <SnowEffect />}
             {weather === 'storm' && <RainEffect />}
 
-            <ambientLight intensity={baseAmbient * (0.3 + 0.7 * dayFactor)} />
+            <ambientLight intensity={baseAmbient * 0.55 * (0.3 + 0.7 * dayFactor)} />
+            <hemisphereLight args={[skyColor, groundTint, baseAmbient * 0.9 * (0.3 + 0.7 * dayFactor)]} />
+            {/* Sun aimed at the field centre (same bearing as before — it used
+                to aim at the world origin, so the shadow box missed the far
+                corners of the field). */}
             <directionalLight
-                position={[200, 500, 200]}
-                intensity={1.5 * (0.18 + 0.82 * dayFactor)}
+                position={[CANVAS_WIDTH / 2 + 200, 500, CANVAS_HEIGHT / 2 + 200]}
+                target={sunTarget}
+                intensity={1.55 * (0.18 + 0.82 * dayFactor)}
                 color={sunColor}
                 castShadow
-                shadow-mapSize={[1024, 1024]}
-                shadow-camera-left={-600}
-                shadow-camera-right={600}
-                shadow-camera-top={600}
-                shadow-camera-bottom={-600}
+                shadow-mapSize={[2048, 2048]}
+                shadow-camera-left={-560}
+                shadow-camera-right={560}
+                shadow-camera-top={560}
+                shadow-camera-bottom={-560}
+                shadow-bias={-0.0002}
             />
+            <primitive object={sunTarget} position={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} />
 
             {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
             <Backdrop mapType={mapType} />
-            {fx !== 'low' && <Clouds />}
+            {fx !== 'low' && weather !== 'fog' && <Clouds tint={cloudTint} opacity={weather === 'clear' ? 1 : 0.8} />}
 
             <ShakeRig shake={shake}>
                 <GroundPlane onCanvasClick={onCanvasClick} targetingInfo={targetingInfo} mapType={mapType} />
