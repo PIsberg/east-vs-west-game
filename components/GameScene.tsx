@@ -2608,6 +2608,118 @@ const RepairMarker = () => {
     );
 };
 
+// Shared fittings of an occupiable strongpoint: ground objective ring,
+// sandbag ring, rooftop flag, the "5/30" readout and roofline fire. Used by
+// both the urban block and the rural farmhouse.
+const StrongpointFittings = ({ w, d, h, flagColor, occupant, burning, label, poleY, labelY, flicker }: {
+    w: number, d: number, h: number, flagColor: string, occupant: Team | null, burning: boolean,
+    label: THREE.SpriteMaterial | null, poleY: number, labelY: number, flicker: boolean,
+}) => {
+    const markR = Math.max(w, d) * 0.5;
+    const bw = w / 2 + 3, bd = d / 2 + 3, gy = -h / 2 + 2;
+    const spots: [number, number][] = [[-bw, -bd], [0, -bd], [bw, -bd], [bw, 0], [bw, bd], [0, bd], [-bw, bd], [-bw, 0]];
+    return (
+        <group>
+            {/* Objective marker ring on the ground — neutral grey while it's up
+                for grabs, the holder's colour once taken */}
+            <mesh position={[0, -h / 2 + 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[markR + 4, markR + 8, 40]} />
+                <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
+            </mesh>
+            {/* Sandbag barricade ringing the base — reads as a fortified position */}
+            {!burning && spots.map(([sx, sz], i) => (
+                <group key={`sb${i}`} position={[sx, gy, sz]} rotation={[0, ((i * 37) % 7) * 0.15, 0]}>
+                    <mesh position={[0, 2, 0]} scale={[1.2, 0.5, 0.9]} castShadow>
+                        <sphereGeometry args={[4, 8, 6]} />
+                        <meshStandardMaterial color="#7c6142" roughness={1} />
+                    </mesh>
+                    <mesh position={[0.8, 4.4, 0]} scale={[1, 0.45, 0.8]} castShadow>
+                        <sphereGeometry args={[4, 8, 6]} />
+                        <meshStandardMaterial color="#6b5238" roughness={1} />
+                    </mesh>
+                </group>
+            ))}
+            {/* Flag on a rooftop pole — team colours when held, a pale neutral
+                pennant when the house is still up for grabs */}
+            <group position={[w * 0.34, poleY, d * 0.3]}>
+                <mesh position={[0, 9, 0]} castShadow>
+                    <cylinderGeometry args={[0.5, 0.5, 18]} />
+                    <meshStandardMaterial color="#57534e" />
+                </mesh>
+                <mesh position={[3.6, 15, 0]}>
+                    <boxGeometry args={[7, 4.5, 0.4]} />
+                    <meshStandardMaterial color={flagColor} emissive={flagColor} emissiveIntensity={occupant ? 0.35 : 0} side={THREE.DoubleSide} />
+                </mesh>
+            </group>
+            {/* Occupancy readout, e.g. "5/30", above the roof */}
+            {label && <sprite position={[0, labelY, 0]} scale={[label.userData.w, label.userData.h, 1]} material={label} />}
+            {/* Fire licking the roofline once the house is burning */}
+            {burning && [[-w * 0.25, d * 0.1], [w * 0.2, -d * 0.15], [0, d * 0.2]].map(([lx, lz], i) => (
+                <mesh key={`f${i}`} position={[lx, h / 2 + 2 + (i % 2 ? 1 : 0), lz]}>
+                    <coneGeometry args={[3.5, 8, 6]} />
+                    <meshBasicMaterial color={flicker === (i % 2 === 0) ? '#f97316' : '#fbbf24'} toneMapped={false} />
+                </mesh>
+            ))}
+        </group>
+    );
+};
+
+// Bridge deck planks: a small tileable canvas (boards across the span with
+// dark seams and grain), repeated along the deck. Cached per width.
+const PLANK_CACHE = new Map<number, THREE.CanvasTexture | null>();
+const plankTexture = (width: number): THREE.CanvasTexture | null => {
+    const key = Math.round(width);
+    if (PLANK_CACHE.has(key)) return PLANK_CACHE.get(key)!;
+    let tex: THREE.CanvasTexture | null = null;
+    if (typeof document !== 'undefined') {
+        const W = 128, H = 32;
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d');
+        if (ctx) {
+            const rnd = lcg(4242);
+            const boards = 8;
+            for (let i = 0; i < boards; i++) {
+                const l = 150 + rnd() * 60;
+                ctx.fillStyle = `rgb(${l},${l * 0.72},${l * 0.46})`;
+                ctx.fillRect(i * (W / boards), 0, W / boards, H);
+                ctx.fillStyle = 'rgba(40,25,10,0.9)';
+                ctx.fillRect(i * (W / boards), 0, 1.5, H); // seam
+                // grain streaks
+                ctx.fillStyle = 'rgba(60,40,20,0.25)';
+                for (let g = 0; g < 3; g++) ctx.fillRect(i * (W / boards) + 2 + rnd() * (W / boards - 4), 0, 1, H);
+            }
+            tex = new THREE.CanvasTexture(cv);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+            tex.repeat.set(Math.max(1, Math.round(key / 32)), 1);
+            tex.anisotropy = 4;
+        }
+    }
+    PLANK_CACHE.set(key, tex);
+    return tex;
+};
+const GEO_POST = new THREE.BoxGeometry(1.4, 5, 1.4);
+const MAT_POST = new THREE.MeshStandardMaterial({ color: '#4b3a2a', roughness: 1 });
+const BridgePosts = ({ width, height }: { width: number, height: number }) => {
+    const ref = useRef<THREE.InstancedMesh>(null!);
+    const n = Math.max(2, Math.round(width / 18)) + 1;
+    useEffect(() => {
+        const m = ref.current;
+        if (!m) return;
+        const dummy = new THREE.Object3D();
+        let i = 0;
+        for (const s of [-1, 1]) for (let k = 0; k < n; k++) {
+            dummy.position.set(-width / 2 + (k / (n - 1)) * width, 2.5, s * (height / 2 - 1.2));
+            dummy.updateMatrix();
+            m.setMatrixAt(i++, dummy.matrix);
+        }
+        m.count = i;
+        m.instanceMatrix.needsUpdate = true;
+    }, [width, height, n]);
+    return <instancedMesh ref={ref} args={[GEO_POST, MAT_POST, n * 2]} castShadow frustumCulled={false} />;
+};
+
 const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObject, itemState?: TerrainObject['state'], itemHealth?: number, itemOccupant?: Team | null, itemGarrison?: number, onCanvasClick: (x: number, y: number) => void, mapType?: MapType }) => {
     // River handled by RiverRenderer now
     // if (item.type === 'river') { ... } 
@@ -2636,20 +2748,24 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const damaged = (item.health ?? 320) < 320;
         return (
             <group position={[item.x, 0.5, item.y]}>
-                {/* Bridge Deck (darkens when damaged) */}
+                {/* Bridge deck: planked timber (darkens when damaged) */}
                 <mesh castShadow receiveShadow>
-                    <boxGeometry args={[width, 1, height]} />
-                    <meshStandardMaterial color={damaged ? '#57350f' : '#78350f'} roughness={0.9} />
+                    <boxGeometry args={[width, 1.4, height]} />
+                    <meshStandardMaterial color={damaged ? '#7a5a3a' : '#b48a5c'} roughness={0.95} map={plankTexture(width)} />
                 </mesh>
-                {/* Railings */}
-                <mesh position={[0, 2, -height / 2 + 1]}>
-                    <boxGeometry args={[width, 2, 1]} />
-                    <meshStandardMaterial color="#4b5563" />
+                {/* Stringers under the deck, dark, so the bridge reads as a structure */}
+                <mesh position={[0, -1, 0]}>
+                    <boxGeometry args={[width, 1.2, height - 6]} />
+                    <meshStandardMaterial color="#3f2d1c" roughness={1} />
                 </mesh>
-                <mesh position={[0, 2, height / 2 - 1]}>
-                    <boxGeometry args={[width, 2, 1]} />
-                    <meshStandardMaterial color="#4b5563" />
-                </mesh>
+                {/* Rails + posts (one instanced mesh for the posts) */}
+                {[-1, 1].map(s => (
+                    <mesh key={s} position={[0, 3.2, s * (height / 2 - 1.2)]} castShadow>
+                        <boxGeometry args={[width, 0.9, 0.9]} />
+                        <meshStandardMaterial color="#5a4634" roughness={1} />
+                    </mesh>
+                ))}
+                <BridgePosts width={width} height={height} />
             </group>
         );
     }
@@ -2982,7 +3098,60 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         // so a house you can take reads as an objective at a glance — even amid a
         // block of ordinary buildings.
         const occLabel = occ ? labelMaterial(`${filled}/${capv}`, flagColor) : null;
-        const markR = Math.max(w, d) * 0.5;
+
+        // Rural maps: a farmhouse — plaster or stone walls under a pitched
+        // roof with a chimney — instead of the city's office block (the same
+        // slate tower used to stand in every countryside field).
+        if (mapType !== MapType.URBAN) {
+            const winter = mapType === MapType.WINTER;
+            const fh = 22 + (seed % 14); // lower than a city block
+            const walls = item.state === 'burning' ? '#4a403a' : item.state === 'broken' ? '#8a7f72'
+                : (winter ? ['#d8d1c4', '#c9c2b6', '#bdb3a4'] : ['#d9c9a8', '#c7b089', '#b8a48c'])[seed % 3];
+            const roof = item.state === 'burnt' ? '#292524' : winter ? '#e9eef2' : ['#9a4a34', '#5b5f68', '#6b4a2b'][(seed >> 2) % 3];
+            const span = Math.max(w, d);
+            const alongX = w >= d; // ridge runs along the longer side
+            const side = (Math.min(w, d) + 6) / Math.SQRT2; // diamond cross-section spans the short side + eaves
+            return (
+                <ClickableGroup position={[item.x, fh / 2, item.y]} onCanvasClick={onCanvasClick}>
+                    <mesh castShadow receiveShadow>
+                        <boxGeometry args={[w, fh, d]} />
+                        <meshStandardMaterial color={walls} roughness={0.95} />
+                    </mesh>
+                    {/* Gable roof: a box rotated 45° about the ridge, lower half hidden in the walls */}
+                    {item.state !== 'burnt' && (
+                        <mesh position={[0, fh / 2, 0]} rotation={alongX ? [Math.PI / 4, 0, 0] : [0, 0, Math.PI / 4]} castShadow>
+                            <boxGeometry args={alongX ? [span + 6, side, side] : [side, side, span + 6]} />
+                            <meshStandardMaterial color={roof} roughness={1} />
+                        </mesh>
+                    )}
+                    {/* Chimney */}
+                    {item.state !== 'burnt' && (
+                        <mesh position={[alongX ? span * 0.25 : Math.min(w, d) * 0.18, fh / 2 + Math.min(w, d) * 0.38, alongX ? Math.min(w, d) * 0.18 : span * 0.25]} castShadow>
+                            <boxGeometry args={[4, 10, 4]} />
+                            <meshStandardMaterial color="#6b5244" roughness={1} />
+                        </mesh>
+                    )}
+                    {/* Door on the camera-facing wall + a couple of windows */}
+                    <mesh position={[-w * 0.25, -fh / 2 + 5, d / 2 + 0.2]}>
+                        <boxGeometry args={[6, 10, 0.4]} />
+                        <meshStandardMaterial color="#4a2e1a" roughness={1} />
+                    </mesh>
+                    {[w * 0.1, w * 0.32].map((wx, i) => (
+                        <mesh key={`w${i}`} position={[wx, fh * 0.1, d / 2 + 0.2]}>
+                            <boxGeometry args={[5, 5, 0.4]} />
+                            <meshBasicMaterial color={getDayFactor() < 0.35 && item.state !== 'burnt' ? '#fbbf24' : '#1f2a37'} toneMapped={!(getDayFactor() < 0.35)} />
+                        </mesh>
+                    ))}
+                    {/* Packed-earth apron */}
+                    <mesh position={[0, -fh / 2 + 0.4, 0]} receiveShadow>
+                        <boxGeometry args={[w + 10, 0.8, d + 10]} />
+                        <meshStandardMaterial color={winter ? '#c9d1d8' : '#8a7553'} roughness={1} />
+                    </mesh>
+                    {occ && <StrongpointFittings w={w} d={d} h={fh} flagColor={flagColor} occupant={occupant} burning={item.state === 'burning'} label={occLabel} poleY={fh / 2 + Math.min(w, d) * 0.3} labelY={fh / 2 + Math.min(w, d) * 0.5 + 18} flicker={flicker} />}
+                </ClickableGroup>
+            );
+        }
+
         return (
             <ClickableGroup position={[item.x, h / 2, item.y]} onCanvasClick={onCanvasClick}>
                 <mesh castShadow receiveShadow>
@@ -2991,57 +3160,7 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                 </mesh>
 
                 {/* ── Occupiable strongpoint fittings ─────────────────────── */}
-                {occ && (
-                    <group>
-                        {/* Objective marker ring on the ground — neutral grey while
-                            it's up for grabs, the holder's colour once taken */}
-                        <mesh position={[0, -h / 2 + 0.6, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                            <ringGeometry args={[markR + 4, markR + 8, 40]} />
-                            <meshBasicMaterial color={flagColor} transparent opacity={occupant ? 0.5 : 0.26} toneMapped={false} depthWrite={false} />
-                        </mesh>
-                        {/* Sandbag barricade ringing the base — reads as a fortified
-                            position, not just another office block (esp. on rural maps) */}
-                        {item.state !== 'burning' && (() => {
-                            const bw = w / 2 + 3, bd = d / 2 + 3, gy = -h / 2 + 2;
-                            const spots: [number, number][] = [[-bw, -bd], [0, -bd], [bw, -bd], [bw, 0], [bw, bd], [0, bd], [-bw, bd], [-bw, 0]];
-                            return spots.map(([sx, sz], i) => (
-                                <group key={`sb${i}`} position={[sx, gy, sz]} rotation={[0, ((i * 37) % 7) * 0.15, 0]}>
-                                    <mesh position={[0, 2, 0]} scale={[1.2, 0.5, 0.9]} castShadow>
-                                        <sphereGeometry args={[4, 8, 6]} />
-                                        <meshStandardMaterial color="#7c6142" roughness={1} />
-                                    </mesh>
-                                    <mesh position={[0.8, 4.4, 0]} scale={[1, 0.45, 0.8]} castShadow>
-                                        <sphereGeometry args={[4, 8, 6]} />
-                                        <meshStandardMaterial color="#6b5238" roughness={1} />
-                                    </mesh>
-                                </group>
-                            ));
-                        })()}
-                        {/* Flag on a rooftop pole — team colors when held, a pale
-                            neutral pennant when the house is still up for grabs */}
-                        <group position={[w * 0.34, h / 2 + (hasSetback ? 13 : 1), d * 0.3]}>
-                            <mesh position={[0, 9, 0]} castShadow>
-                                <cylinderGeometry args={[0.5, 0.5, 18]} />
-                                <meshStandardMaterial color="#57534e" />
-                            </mesh>
-                            <mesh position={[3.6, 15, 0]}>
-                                <boxGeometry args={[7, 4.5, 0.4]} />
-                                <meshStandardMaterial color={flagColor} emissive={flagColor} emissiveIntensity={occupant ? 0.35 : 0} side={THREE.DoubleSide} />
-                            </mesh>
-                        </group>
-                        {/* Occupancy readout, e.g. "5/30", above the roof */}
-                        {occLabel && (
-                            <sprite position={[0, h / 2 + 26, 0]} scale={[occLabel.userData.w, occLabel.userData.h, 1]} material={occLabel} />
-                        )}
-                        {/* Fire licking the roofline once the house is burning */}
-                        {item.state === 'burning' && [[-w * 0.25, d * 0.1], [w * 0.2, -d * 0.15], [0, d * 0.2]].map(([lx, lz], i) => (
-                            <mesh key={`f${i}`} position={[lx, h / 2 + 2 + (i % 2 ? 1 : 0), lz]}>
-                                <coneGeometry args={[3.5, 8, 6]} />
-                                <meshBasicMaterial color={flicker === (i % 2 === 0) ? '#f97316' : '#fbbf24'} toneMapped={false} />
-                            </mesh>
-                        ))}
-                    </group>
-                )}
+                {occ && <StrongpointFittings w={w} d={d} h={h} flagColor={flagColor} occupant={occupant} burning={item.state === 'burning'} label={occLabel} poleY={h / 2 + (hasSetback ? 13 : 1)} labelY={h / 2 + 26} flicker={flicker} />}
                 {/* Sidewalk base */}
                 <mesh position={[0, -h / 2 + 0.4, 0]} receiveShadow>
                     <boxGeometry args={[w + 10, 0.8, d + 10]} />
@@ -3474,7 +3593,7 @@ const BorderLine = React.memo(({ onCanvasClick }: { onCanvasClick: (x: number, y
         dashes.push(
             <mesh key={z} position={[centerX, 0.5, z]} rotation={[-Math.PI / 2, 0, 0]} onClick={(e) => { e.stopPropagation(); if (onCanvasClick) onCanvasClick(e.point.x, e.point.z); }}>
                 <planeGeometry args={[6, 25]} />
-                <meshStandardMaterial color="white" opacity={0.6} transparent />
+                <meshStandardMaterial color="white" opacity={0.42} transparent depthWrite={false} />
             </mesh>
         );
     }
