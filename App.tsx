@@ -880,19 +880,19 @@ const App: React.FC = () => {
 
     const renderGroup = (title: string, units: { type: UnitType, label: string, icon: React.ReactNode, special?: boolean }[]) => (
       <div className="flex flex-col gap-0.5">
-        <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5">{title}</div>
+        <div className="text-[8px] font-display font-bold text-stone-400 uppercase tracking-[0.2em] text-center border-b border-stone-700/70 pb-0.5">{title}</div>
         <div className="grid grid-cols-2 gap-0.5">
           {units.filter(({ type }) => factionAllowed(team, type, asym)).map(({ type, label, icon, special }) => (
             <button
               key={type}
               title={label}
-              className={`group ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
+              className={`group unit-card ${targetingInfo?.team === team && targetingInfo.type === type ? 'bg-amber-600 animate-pulse' : special ? (isWest ? 'bg-indigo-700' : 'bg-rose-700') : `bg-${colorClass}-800`} hover:opacity-100 text-white px-0.5 py-1 rounded shadow transition-all active:scale-95 flex flex-col items-center border border-white/10 disabled:opacity-30 relative overflow-visible w-11`}
               onClick={() => handleSpawnRequest(team, type)}
               disabled={money < UNIT_CONFIG[type].cost || cpuTeam === team || (airWait > 0 && AIR_OPS_UI.has(type)) || (activeChallenge?.infantryOnly === true && team === playerSide && !INFANTRY_ALLOWED.has(type)) || (campaignBattle?.banned[team]?.includes(type) ?? false)}
             >
               <span className="[&>svg]:w-[13px] [&>svg]:h-[13px]">{icon}</span>
-              <span className="font-bold text-[6px] uppercase leading-none mt-0.5 tracking-tighter">{label}</span>
-              <span className="text-[8px] opacity-70 leading-none">${UNIT_CONFIG[type].cost}</span>
+              <span className="font-display font-bold text-[7px] uppercase leading-none mt-0.5 tracking-wide whitespace-nowrap">{label}</span>
+              <span className="text-[8px] opacity-75 leading-none font-mono score-num">${UNIT_CONFIG[type].cost}</span>
               {/* Rearm countdown over locked air ordnance */}
               {airWait > 0 && AIR_OPS_UI.has(type) && (
                 <span data-testid="airops-lock" className="absolute inset-0 flex items-center justify-center bg-black/65 rounded text-amber-300 text-[10px] font-bold">
@@ -939,10 +939,10 @@ const App: React.FC = () => {
     ];
 
     return (
-      <div ref={panelRef} className={`flex flex-col gap-1.5 ${isWest ? (compact ? 'mr-1' : 'mr-2') : (compact ? 'ml-1' : 'ml-2')} overflow-y-auto overscroll-contain ${compact ? 'max-h-[calc(100dvh-88px)]' : 'max-h-[calc(100dvh-124px)]'}`}>
+      <div ref={panelRef} className={`flex flex-col gap-1.5 rounded-lg bg-black/25 p-1 ${isWest ? (compact ? 'mr-1' : 'mr-2') : (compact ? 'ml-1' : 'ml-2')} overflow-y-auto overscroll-contain ${compact ? 'max-h-[calc(100dvh-88px)]' : 'max-h-[calc(100dvh-124px)]'}`}>
         {/* Stance orders */}
         <div className="flex flex-col gap-1">
-          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Orders</div>
+          <div className="text-[8px] font-display font-bold text-stone-400 uppercase tracking-[0.2em] text-center border-b border-stone-700/70 pb-0.5 mb-0.5">Orders</div>
           <div className="flex gap-0.5 justify-center">
             {stanceOptions.map(o => (
               <button
@@ -959,7 +959,7 @@ const App: React.FC = () => {
         </div>
         {/* Spawn lane selector */}
         <div className="flex flex-col gap-1">
-          <div className="text-[8px] font-bold text-stone-500 uppercase tracking-wider text-center border-b border-stone-800 pb-0.5 mb-0.5">Lane</div>
+          <div className="text-[8px] font-display font-bold text-stone-400 uppercase tracking-[0.2em] text-center border-b border-stone-700/70 pb-0.5 mb-0.5">Lane</div>
           <div className="flex gap-0.5 justify-center">
             {laneOptions.map(o => (
               <button
@@ -1037,20 +1037,20 @@ const App: React.FC = () => {
           const rallyCd = !!rally && now < rally.readyAt && !rallyActive;
           const cdLeft = rally ? Math.ceil((rally.readyAt - now) / 1000) : 0;
           return (
-            <div key={team} className={`flex items-center gap-2 bg-stone-800 rounded-lg border shadow-lg ${compact ? 'px-2 py-1' : 'px-3 py-1.5'} ${cmdHint ? 'border-amber-400 animate-pulse' : 'border-stone-600'}`}>
+            <div key={team} className={`flex items-center gap-2 hud-panel rounded-lg border ${compact ? 'px-2 py-1' : 'px-3 py-1.5'} ${cmdHint ? 'border-amber-400 animate-pulse' : 'border-stone-600'}`}>
               <div className={`flex flex-col items-center leading-none ${isWest ? 'text-blue-400' : 'text-red-400'}`}>
-                <span className="text-[9px] font-black uppercase tracking-widest">{isWest ? 'West' : 'East'}</span>
-                <span className="text-[8px] text-stone-500 uppercase tracking-wider mt-0.5">Command</span>
+                <span className="text-[11px] font-display font-bold uppercase tracking-[0.2em]">{isWest ? 'West' : 'East'}</span>
+                <span className="text-[8px] font-display text-stone-500 uppercase tracking-[0.2em] mt-0.5">Command</span>
               </div>
               <button
                 title={econMaxed ? 'Economy fully upgraded' : `Invest $${econCost}: +25% income for the rest of the match`}
                 onClick={() => setCommandQueue(prev => [...prev, { team, cmd: 'income' }])}
                 disabled={econMaxed || money < econCost}
-                className="flex items-center gap-2 px-3 py-1.5 rounded border border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400 transition-colors active:scale-95 disabled:opacity-30"
+                className="hud-chip flex items-center gap-2 px-3 py-1.5 rounded border border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400 transition-colors active:scale-95 disabled:opacity-30"
               >
                 <TrendingUp size={compact ? 14 : 18} className="text-green-400" />
                 <span className="flex flex-col items-start leading-none">
-                  <span className="text-[10px] font-bold uppercase">Economy <span className="text-amber-400 tracking-tighter">{'●'.repeat(lvl)}{'○'.repeat(INCOME_UPGRADE_MAX - lvl)}</span>{compact && !econMaxed ? ` $${econCost}` : ''}</span>
+                  <span className="text-[10px] font-display font-bold uppercase tracking-wide">Economy <span className="text-amber-400 tracking-tighter">{'●'.repeat(lvl)}{'○'.repeat(INCOME_UPGRADE_MAX - lvl)}</span>{compact && !econMaxed ? ` $${econCost}` : ''}</span>
                   {!compact && <span className="text-[9px] opacity-70 mt-0.5">{econMaxed ? 'Fully upgraded' : `$${econCost} · +25% income`}</span>}
                 </span>
               </button>
@@ -1058,11 +1058,11 @@ const App: React.FC = () => {
                 title={rallyActive ? 'Rally active — your army is surging!' : rallyCd ? `Rally horn recharging (${cdLeft}s)` : `$${RALLY_COST}: +45% fire rate & +25% speed for 8s`}
                 onClick={() => setCommandQueue(prev => [...prev, { team, cmd: 'rally' }])}
                 disabled={rallyActive || rallyCd || money < RALLY_COST}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded border transition-colors active:scale-95 disabled:opacity-40 ${rallyActive ? 'border-amber-400 bg-amber-900/70 text-amber-300 animate-pulse' : 'border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400'}`}
+                className={`hud-chip flex items-center gap-2 px-3 py-1.5 rounded border transition-colors active:scale-95 disabled:opacity-40 ${rallyActive ? 'border-amber-400 bg-amber-900/70 text-amber-300 animate-pulse' : 'border-stone-600 bg-stone-900/60 text-stone-300 hover:text-white hover:border-stone-400'}`}
               >
                 <Megaphone size={compact ? 14 : 18} className={rallyActive ? 'text-amber-300' : 'text-amber-500'} />
                 <span className="flex flex-col items-start leading-none">
-                  <span className="text-[10px] font-bold uppercase">{rallyActive ? 'Rallying!' : compact ? (rallyCd ? `Rally ${cdLeft}s` : `Rally $${RALLY_COST}`) : 'Rally Horn'}</span>
+                  <span className="text-[10px] font-display font-bold uppercase tracking-wide">{rallyActive ? 'Rallying!' : compact ? (rallyCd ? `Rally ${cdLeft}s` : `Rally $${RALLY_COST}`) : 'Rally Horn'}</span>
                   {!compact && <span className="text-[9px] opacity-70 mt-0.5">{rallyActive ? 'Units surging' : rallyCd ? `Ready in ${cdLeft}s` : `$${RALLY_COST} · 8s surge`}</span>}
                 </span>
               </button>
@@ -1074,7 +1074,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen bg-stone-900 text-stone-100 flex flex-col items-center font-serif overflow-hidden ${compact ? 'p-1 justify-start' : 'p-4 justify-center'}`}>
+    <div className={`min-h-screen hud-bg text-stone-100 flex flex-col items-center font-serif overflow-hidden ${compact ? 'p-1 justify-start' : 'p-4 justify-center'}`}>
       {/* Portrait phones: the battlefield needs landscape */}
       {isPortraitMobile && (
         <div className="fixed inset-0 z-[10000] bg-stone-950/95 flex flex-col items-center justify-center gap-3 text-center p-6">
@@ -1086,7 +1086,7 @@ const App: React.FC = () => {
       {/* Splash Screen Overlay */}
       {showSplash && (
         <div
-          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-end cursor-pointer transition-opacity duration-700 overflow-y-auto ${compact ? 'pb-3' : 'pb-16'} ${splashFading ? 'opacity-0' : 'opacity-100'}`}
+          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-start cursor-pointer transition-opacity duration-700 overflow-y-auto ${compact ? 'pt-2 pb-3' : 'pt-5 pb-6'} ${splashFading ? 'opacity-0' : 'opacity-100'}`}
           onClick={handleStartClick}
         >
           <img
@@ -1094,10 +1094,18 @@ const App: React.FC = () => {
             alt="East vs West"
             className="absolute inset-0 w-full h-full object-contain md:object-cover"
           />
-          <div className={`relative z-10 flex flex-col items-center select-none ${compact ? 'gap-1.5' : 'gap-4'}`} onClick={e => e.stopPropagation()}>
+          {/* Scrim: the menu sits over the busy top of the artwork, so darken
+              that band for legibility and let the title art at the bottom of
+              the painting breathe (the stack used to cover it). */}
+          <div className="absolute inset-x-0 top-0 h-[62%] bg-gradient-to-b from-black/70 via-black/45 to-transparent pointer-events-none" />
+          <div className={`relative z-10 flex flex-col items-center select-none w-full ${compact ? 'gap-1.5 px-1' : 'gap-3 px-4 max-w-[1280px]'}`} onClick={e => e.stopPropagation()}>
+          {/* Wide screens: setup on the left, modes on the right, so the stack
+              stays short; phones keep the single column. */}
+          <div className={`w-full ${compact ? 'flex flex-col items-center gap-1.5' : 'grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-3 items-start'}`}>
+          <div className={`flex flex-col items-center ${compact ? 'gap-1.5' : 'gap-3 lg:items-end'}`}>
             {/* Map Selection */}
             <div className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 mb-1 ${compact ? 'p-1.5' : 'p-3'}`}>
-              <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Select Battlefield</p>
+              <p className={`font-display text-stone-300 text-[10px] uppercase tracking-[0.3em] text-center ${compact ? 'mb-1' : 'mb-2'}`}>Select Battlefield</p>
               <div className={`grid grid-cols-5 ${compact ? 'gap-1' : 'gap-2'}`}>
                 {([
                   { type: MapType.COUNTRYSIDE, label: 'Countryside', desc: 'Rivers & forests', color: 'text-green-400' },
@@ -1111,7 +1119,7 @@ const App: React.FC = () => {
                     onClick={() => setMapType(m.type)}
                     className={`rounded border text-center transition-all ${compact ? 'px-1.5 py-1' : 'px-3 py-2'} ${mapType === m.type ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}
                   >
-                    <div className={`font-bold uppercase ${compact ? 'text-[10px]' : 'text-xs'} ${m.color}`}>{m.label}</div>
+                    <div className={`font-display font-bold uppercase tracking-wider whitespace-nowrap ${compact ? 'text-[10px]' : 'text-xs'} ${m.color}`}>{m.label}</div>
                     {!compact && <div className="text-stone-500 text-[9px] mt-0.5">{m.desc}</div>}
                   </button>
                 ))}
@@ -1121,18 +1129,18 @@ const App: React.FC = () => {
             {/* Side & CPU Opponent Selection */}
             <div className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 mb-1 flex items-center ${compact ? 'p-1.5 gap-3' : 'p-3 gap-6'}`}>
               <div>
-                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Play As</p>
+                <p className={`font-display text-stone-300 text-[10px] uppercase tracking-[0.3em] text-center ${compact ? 'mb-1' : 'mb-2'}`}>Play As</p>
                 <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
                   <button onClick={() => setPlayerSide(Team.WEST)} className={`rounded border font-bold uppercase text-blue-400 transition-all ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} ${playerSide === Team.WEST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>West</button>
                   <button onClick={() => setPlayerSide(Team.EAST)} className={`rounded border font-bold uppercase text-red-400 transition-all ${compact ? 'px-2 py-1 text-[10px]' : 'px-3 py-1.5 text-xs'} ${playerSide === Team.EAST ? 'border-amber-400 bg-amber-900/60' : 'border-stone-600 hover:border-stone-400 bg-black/40'}`}>East</button>
                 </div>
               </div>
               <div>
-                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>Win Mode</p>
+                <p className={`font-display text-stone-300 text-[10px] uppercase tracking-[0.3em] text-center ${compact ? 'mb-1' : 'mb-2'}`}>Win Mode</p>
                 <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
-                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
-                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
-                  <button onClick={() => setGameMode('ctf')} title="Nine neutral flags on the field — stand near one to seize it instantly (it turns your colour). Most flags when the 4-minute clock runs out wins (ties go to overtime)" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'ctf' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>⚑ Flags</button>
+                  <button onClick={() => setGameMode('points')} title="First to 100 points wins" className={`rounded border font-bold uppercase transition-all whitespace-nowrap ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'points' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Points</button>
+                  <button onClick={() => setGameMode('basehp')} title={`Breakthroughs damage the enemy base (${BASE_HP} HP)`} className={`rounded border font-bold uppercase transition-all whitespace-nowrap ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'basehp' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Base HP</button>
+                  <button onClick={() => setGameMode('ctf')} title="Nine neutral flags on the field — stand near one to seize it instantly (it turns your colour). Most flags when the 4-minute clock runs out wins (ties go to overtime)" className={`rounded border font-bold uppercase transition-all whitespace-nowrap ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs'} ${gameMode === 'ctf' ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>⚑ Flags</button>
                 </div>
                 <div data-testid="doctrine" className={`flex justify-center ${compact ? 'gap-1 mt-1' : 'gap-2 mt-2'}`}>
                   <button onClick={() => setAsymPersist(false)} title="Both sides field identical armies" className={`rounded border font-bold uppercase transition-all ${compact ? 'px-1.5 py-0.5 text-[9px]' : 'px-2 py-1 text-[10px]'} ${!asym ? 'border-amber-400 bg-amber-900/60 text-amber-300' : 'border-stone-600 hover:border-stone-400 bg-black/40 text-stone-400'}`}>Classic</button>
@@ -1140,7 +1148,7 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div>
-                <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-2'}`}>CPU Opponent</p>
+                <p className={`font-display text-stone-300 text-[10px] uppercase tracking-[0.3em] text-center ${compact ? 'mb-1' : 'mb-2'}`}>CPU Opponent</p>
                 <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
                   {(['off', 'easy', 'normal', 'hard'] as const).map(l => (
                     <button
@@ -1180,10 +1188,12 @@ const App: React.FC = () => {
                 )}
               </div>
             </div>
+          </div>
+          <div className={`flex flex-col items-center ${compact ? 'gap-1.5' : 'gap-3 lg:items-start'}`}>
             {/* Challenge missions */}
             <div data-testid="challenges" className={`bg-black/70 backdrop-blur-sm rounded-lg border border-stone-600 ${compact ? 'p-1.5' : 'p-2.5'}`}>
-              <p className={`text-stone-400 text-[10px] uppercase tracking-widest text-center ${compact ? 'mb-1' : 'mb-1.5'}`}>Challenges</p>
-              <div className={`flex ${compact ? 'gap-1' : 'gap-2'}`}>
+              <p className={`font-display text-stone-300 text-[10px] uppercase tracking-[0.3em] text-center ${compact ? 'mb-1' : 'mb-1.5'}`}>Challenges</p>
+              <div className={`flex flex-wrap justify-center ${compact ? 'gap-1' : 'gap-2'}`}>
                 {CHALLENGES.map(c => {
                   const done = challengesDone.includes(c.id);
                   return (
@@ -1202,7 +1212,7 @@ const App: React.FC = () => {
             </div>
             {/* Online 1v1 — peer-to-peer lockstep; a room code is the only handshake */}
             <div data-testid="online-panel" className={`bg-black/70 backdrop-blur-sm rounded-lg border border-sky-800 ${compact ? 'p-1.5' : 'p-2.5'} flex flex-col items-center gap-1.5`}>
-              <p className="text-sky-400 text-[10px] uppercase tracking-widest text-center">Online 1v1</p>
+              <p className="font-display text-sky-300 text-[10px] uppercase tracking-[0.3em] text-center">Online 1v1</p>
               {!online ? (
                 <div className={`flex items-center ${compact ? 'gap-1' : 'gap-2'}`}>
                   <button
@@ -1287,13 +1297,15 @@ const App: React.FC = () => {
                 🗺 {campaign && !campaignWinner(campaign) ? `Continue Campaign — Turn ${campaign.turn + 1}` : 'Grand Campaign'}
               </div>
               {!compact && (
-                <div className="text-[10px] text-stone-400 normal-case tracking-normal">
+                <div className="text-[10px] text-stone-400 normal-case tracking-normal max-w-md">
                   Conquer a 14-territory front, one real battle at a time — march armies, seize the airbase and silo, take the enemy capital
                 </div>
               )}
             </button>
+          </div>
+          </div>
             <button
-              className={`bg-amber-600 hover:bg-amber-500 active:scale-95 text-black font-black uppercase tracking-widest rounded border-2 border-amber-400 shadow-2xl animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-10 py-3 text-lg'}`}
+              className={`font-display bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 active:scale-95 text-stone-950 font-bold uppercase tracking-[0.25em] rounded border-2 border-amber-300/80 shadow-[0_0_30px_rgba(245,158,11,0.35),0_10px_30px_rgba(0,0,0,0.5)] animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-12 py-3 text-xl mt-1'}`}
               onClick={handleStartClick}
             >
               ▶ DEPLOY FORCES
@@ -1306,8 +1318,8 @@ const App: React.FC = () => {
                 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-amber-300 border border-amber-500/60 hover:bg-amber-950/60 active:scale-95 rounded px-3 py-1 transition-colors"
               >📺 Watch ad: +50% starting cash</button>
             ))}
-            {!compact && <span className="text-stone-400 text-xs tracking-widest uppercase">Click anywhere to start</span>}
-            <span className={`text-stone-500 tracking-wide text-center ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
+            {!compact && <span className="font-display text-stone-300 text-xs tracking-[0.3em] uppercase drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">Click anywhere to start</span>}
+            <span className={`text-stone-300/90 tracking-wide text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
             </span>
             {/* Recent battles */}
@@ -1331,21 +1343,21 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <div ref={headerRef} className={`w-full max-w-4xl flex justify-between items-center bg-stone-800 rounded-lg shadow-lg border border-stone-600 ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
-        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-bold uppercase ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.west ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
+      <div ref={headerRef} data-testid="hud-header" className={`w-full max-w-5xl flex justify-between items-center hud-panel rounded-lg ${compact ? 'mb-1 p-1.5' : 'mb-3 p-3'}`}>
+        <div className="flex items-center gap-3 text-blue-400"><Shield className={compact ? 'w-4 h-4' : 'w-6 h-6'} /><div><h2 className={`font-display font-bold uppercase tracking-wider ${compact ? 'text-xs leading-none' : 'text-lg'}`}>West</h2><p className="text-xs score-num text-blue-200/90 whitespace-nowrap">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.west ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.WEST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.WEST]}`}</p><p className="text-amber-400 font-mono text-[10px] score-num">${Math.floor(gameState.money[Team.WEST])}</p></div></div>
         <div className="text-center flex flex-col items-center">
-          {!compact && <h1 className="text-xl font-black tracking-widest text-amber-500 uppercase italic">East vs West 3D</h1>}
+          {!compact && <h1 className="text-xl font-display font-bold tracking-[0.2em] hud-title uppercase leading-none mb-1 whitespace-nowrap">East vs West 3D</h1>}
           <div className={`flex items-center ${compact ? 'gap-1' : 'gap-4'}`}>
-            <button onClick={() => { if (onlinePlaying) { endOnline(); } else { resetGame(); } }} title={onlinePlaying ? 'Leave the online match (forfeits)' : 'Reset the battle'} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-bold tracking-tighter"><RotateCcw size={10} />{onlinePlaying ? 'Leave' : 'Reset'}</button>
-            <button onClick={() => setPaused(p => !p)} disabled={onlinePlaying} title={onlinePlaying ? 'No pausing online (v1) — both sims must advance together' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
-            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} disabled={onlinePlaying} title={onlinePlaying ? 'Speed is locked at 1x online' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors disabled:opacity-30 ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
+            <button onClick={() => { if (onlinePlaying) { endOnline(); } else { resetGame(); } }} title={onlinePlaying ? 'Leave the online match (forfeits)' : 'Reset the battle'} className="flex items-center gap-1 text-[9px] text-stone-400 hover:text-white uppercase font-display font-bold tracking-wide"><RotateCcw size={10} />{onlinePlaying ? 'Leave' : 'Reset'}</button>
+            <button onClick={() => setPaused(p => !p)} disabled={onlinePlaying} title={onlinePlaying ? 'No pausing online (v1) — both sims must advance together' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap disabled:opacity-30 ${paused ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{paused ? <Play size={10} /> : <Pause size={10} />}{paused ? 'Resume' : 'Pause'}</button>
+            <button onClick={() => setGameSpeed(s => s === 1 ? 2 : 1)} disabled={onlinePlaying} title={onlinePlaying ? 'Speed is locked at 1x online' : undefined} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap disabled:opacity-30 ${gameSpeed === 2 ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><FastForward size={10} />{gameSpeed}x</button>
             {onlinePlaying && (
               <div data-testid="ping-badge" className={`flex items-center gap-1 border px-1.5 py-0.5 rounded ${(online!.pingMs ?? 999) < 80 ? 'border-green-700 text-green-400' : (online!.pingMs ?? 999) < 180 ? 'border-amber-600 text-amber-400' : 'border-red-700 text-red-400'}`} title="Connection to your opponent (round-trip)">
                 <Radio size={10} />
                 <span className="text-[9px] font-bold">{online!.pingMs != null ? `${online!.pingMs}ms` : '—'}</span>
               </div>
             )}
-            <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
+            <button onClick={toggleMute} title={muted ? 'Unmute all audio' : 'Mute all audio'} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${muted ? 'border-red-500 text-red-400 bg-red-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}>{muted ? <VolumeX size={10} /> : <Volume2 size={10} />}{muted ? 'Muted' : 'Sound'}</button>
             {!compact && !muted && (
               <input
                 type="range"
@@ -1357,11 +1369,11 @@ const App: React.FC = () => {
                 className="w-14 h-1 accent-amber-500 cursor-pointer"
               />
             )}
-            <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
-            <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
-            <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
-            <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
-            <button onClick={toggleCb} title={cb ? 'Standard team colors' : 'Colorblind assist: East shows as amber in rings, minimap and indicators'} className={`flex items-center gap-1 text-[9px] uppercase font-bold tracking-tighter border px-1.5 py-0.5 rounded transition-colors ${cb ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Eye size={10} />CB</button>
+            <button onClick={toggleMusic} title={musicOn ? 'Stop battle music' : 'Play battle music'} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${musicOn ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Music size={10} />Music</button>
+            <button onClick={() => setShowManual(m => !m)} title={showManual ? 'Hide the field manual (objectives & unit intel)' : 'Show the field manual (objectives & unit intel)'} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${showManual ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><BookOpen size={10} />Manual</button>
+            <button onClick={cycleCpuLevel} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${cpuLevel !== 'off' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Cpu size={10} />CPU {cpuLevel.toUpperCase()}</button>
+            <button onClick={() => setFxPersist(fx === 'high' ? 'low' : 'high')} title={fx === 'high' ? 'Switch to low graphics (no shadows/bloom) for weak devices' : 'Switch to full graphics'} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${fx === 'low' ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Sparkles size={10} />FX {fx.toUpperCase()}</button>
+            <button onClick={toggleCb} title={cb ? 'Standard team colors' : 'Colorblind assist: East shows as amber in rings, minimap and indicators'} className={`flex items-center gap-1 text-[9px] uppercase font-display font-bold tracking-wide border px-1.5 py-0.5 rounded transition-colors hud-chip whitespace-nowrap ${cb ? 'border-amber-500 text-amber-400 bg-amber-950' : 'border-stone-600 text-stone-400 hover:text-white'}`}><Eye size={10} />CB</button>
             {activeChallenge && !showSplash && (
               <div data-testid="challenge-chip" className="flex items-center gap-1 text-amber-300" title={activeChallenge.desc}>
                 <Target size={12} />
@@ -1378,7 +1390,7 @@ const App: React.FC = () => {
             {gameState.weather === 'clear' && gameState.weatherNext && gameState.weatherNext.type !== 'clear' && (
               <div className="flex items-center gap-1 text-stone-400" title={`${gameState.weatherNext.type} rolling in — plan around the combat penalties`}>
                 <Wind size={14} />
-                <span className="text-[10px] font-bold uppercase">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - (gameState.simNowMs ?? 0)) / 1000))}s</span>
+                <span className="text-[10px] font-display font-bold uppercase tracking-wide whitespace-nowrap">{gameState.weatherNext.type} in {Math.max(0, Math.ceil((gameState.weatherNext.at - (gameState.simNowMs ?? 0)) / 1000))}s</span>
               </div>
             )}
             {gameState.weather === 'clear' && !compact && (!gameState.weatherNext || gameState.weatherNext.type === 'clear') && <div className="flex items-center gap-1 opacity-0"><Wind size={14} /><span className="text-[10px] font-bold">CLEAR</span></div>}
@@ -1392,7 +1404,7 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className="text-lg font-bold uppercase">East</h2><p className="text-xs">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.east ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px]">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className="w-6 h-6" /></div>
+        <div className="flex items-center gap-3 text-red-400 text-right"><div><h2 className={`font-display font-bold uppercase tracking-wider ${compact ? 'text-xs leading-none' : 'text-lg'}`}>East</h2><p className="text-xs score-num text-red-200/90 whitespace-nowrap">{gameMode === 'ctf' ? `Flags: ⚑ ${gameState.ctf?.east ?? 0}` : gameMode === 'basehp' ? `Base: ${gameState.baseHP?.[Team.EAST] ?? BASE_HP} HP` : `Score: ${gameState.score[Team.EAST]}`}</p><p className="text-amber-400 font-mono text-[10px] score-num">${Math.floor(gameState.money[Team.EAST])}</p></div><Sword className={compact ? 'w-4 h-4' : 'w-6 h-6'} /></div>
       </div>
       <div className="relative flex items-center justify-center">
         {!westIsCpu && renderUnitButtons(Team.WEST, westPanelRef)}
@@ -1544,7 +1556,7 @@ const App: React.FC = () => {
         </div>
         {!eastIsCpu && renderUnitButtons(Team.EAST, eastPanelRef)}
       </div>
-      {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 bg-stone-800 p-3 rounded-lg border border-stone-600 shadow-xl text-[10px Leading-snug]">
+      {showManual && <div className="w-full max-w-5xl mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 hud-panel p-3 rounded-lg text-[10px] leading-snug">
 
         {/* Column 1: Core Mechanics */}
         <div className="space-y-2">

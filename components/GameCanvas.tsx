@@ -5634,21 +5634,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
-          <div className="text-4xl font-black uppercase tracking-widest text-stone-200 drop-shadow-lg">⏸ Paused</div>
+          <div className="text-4xl font-display font-bold uppercase tracking-[0.3em] text-stone-200 drop-shadow-lg">⏸ Paused</div>
         </div>
       )}
 
       {gameOver && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-6 p-12 bg-stone-900 border-2 border-amber-500/50 rounded-xl shadow-2xl animate-in fade-in zoom-in duration-300">
-            <h2 className="text-5xl font-black uppercase tracking-widest text-transparent bg-clip-text bg-gradient-to-b from-amber-300 to-amber-600 drop-shadow-lg">
+          <div className="flex flex-col items-center gap-6 p-12 hud-panel border-2 border-amber-500/50 rounded-xl animate-in fade-in zoom-in duration-300">
+            <h2 className="text-6xl font-display font-bold uppercase tracking-[0.25em] hud-title leading-none">
               {/* Online and vs-CPU both have a defined "you" — speak to them.
                   Hotseat/spectate keep the neutral banner. */}
               {localTeam ? (gameOver === localTeam ? 'VICTORY' : 'DEFEAT')
                 : cpuTeams.length === 1 ? (gameOver !== cpuTeams[0] ? 'VICTORY' : 'DEFEAT')
                 : (gameOver === Team.WEST ? 'WEST WINS' : 'EAST WINS')}
             </h2>
-            <div className="text-2xl font-bold text-stone-300">
+            <div className={`text-2xl font-display font-bold uppercase tracking-[0.15em] ${gameOver === Team.WEST ? 'text-blue-300' : 'text-red-300'}`}>
               {gameOver === Team.WEST ? 'West Team' : 'East Team'} Wins!
             </div>
 
