@@ -175,19 +175,24 @@ const ShakeRig = ({ shake, children }: { shake?: React.MutableRefObject<number>,
 // the effects stay MOUNTED at weight 0 — swapping composer passes mid-battle
 // causes hitches.
 interface ShockFx { chroma: ChromaticAberrationEffect; hue: HueSaturationEffect; vig: VignetteEffect }
+// Resting grade: a light vignette and a touch of saturation — the frame gets
+// a focal centre and the field's greens/team colours a little more punch.
+// Shell shock pushes both from these rest values, never from zero.
+const GRADE_SATURATION = 0.07;
+const GRADE_VIGNETTE = 0.26;
 const makeShockFx = (): ShockFx => ({
     chroma: new ChromaticAberrationEffect({ offset: new THREE.Vector2(0, 0), radialModulation: false, modulationOffset: 0.15 }),
-    hue: new HueSaturationEffect({ saturation: 0 }),
-    vig: new VignetteEffect({ offset: 0.3, darkness: 0 }),
+    hue: new HueSaturationEffect({ saturation: GRADE_SATURATION }),
+    vig: new VignetteEffect({ offset: 0.32, darkness: GRADE_VIGNETTE }),
 });
 const ShockDriver = ({ shock, fx }: { shock?: React.MutableRefObject<number>, fx: ShockFx }) => {
     useFrame(() => {
         const s = shock?.current || 0;
         fx.chroma.offset.set(0.0016 * s, 0.001 * s);
         const sat = fx.hue.uniforms.get('saturation');
-        if (sat) sat.value = -0.55 * s;
+        if (sat) sat.value = GRADE_SATURATION - (0.55 + GRADE_SATURATION) * s;
         const dark = fx.vig.uniforms.get('darkness');
-        if (dark) dark.value = 0.5 * Math.min(1, s * 1.25);
+        if (dark) dark.value = GRADE_VIGNETTE + (0.5 - GRADE_VIGNETTE) * Math.min(1, s * 1.25);
         if (shock && s > 0.002) shock.current = s * 0.975; // ~2s clear
         else if (shock) shock.current = 0;
     });
@@ -2186,7 +2191,7 @@ const InstancedDecals = ({ particles }: { particles: Particle[] }) => {
 // shadow pass). Instanced, the whole field costs four draw calls no matter how
 // many units are fighting.
 const MAX_UNIT_INSTANCES = 400;
-const GEO_RING_FLAT = new THREE.RingGeometry(0.85, 1, 24).rotateX(-Math.PI / 2);
+const GEO_RING_FLAT = new THREE.RingGeometry(0.89, 1, 32).rotateX(-Math.PI / 2); // slim team ring — a marker, not a hula hoop
 const GEO_BLOB_FLAT = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
 const MAT_INST_RING = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide }));
 const MAT_INST_BLOB = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
@@ -2234,7 +2239,7 @@ const InstancedUnitOverlays = ({ units, terrain, cbMode }: { units: Unit[], terr
                 dummy.updateMatrix();
                 ring.setMatrixAt(r, dummy.matrix);
                 ring.setColorAt(r, col.set(u.team === Team.WEST ? '#3b82f6' : (cbMode ? '#f59e0b' : '#ef4444')));
-                ringA.setX(r, 0.35);
+                ringA.setX(r, 0.32);
                 r++;
             }
 
@@ -3476,6 +3481,62 @@ const BorderLine = React.memo(({ onCanvasClick }: { onCanvasClick: (x: number, y
     return <group>{dashes}</group>;
 });
 
+// Woodland framing the playfield on three sides (far edge + both flanks):
+// instanced pines on the strip between the field and the backdrop, so the
+// battlefield sits in a landscape instead of on a bare plane. Two draw calls.
+const TREELINE_COUNT = 150;
+const GEO_FRAME_CONE = new THREE.ConeGeometry(1, 1, 7);
+const GEO_FRAME_TRUNK = new THREE.CylinderGeometry(0.14, 0.2, 1, 6);
+const Treeline = React.memo(({ mapType }: { mapType: MapType }) => {
+    const coneRef = useRef<THREE.InstancedMesh>(null!);
+    const trunkRef = useRef<THREE.InstancedMesh>(null!);
+    const winter = mapType === MapType.WINTER;
+    useEffect(() => {
+        const cone = coneRef.current, trunk = trunkRef.current;
+        if (!cone || !trunk) return;
+        const rnd = lcg(777 + (winter ? 1 : 0));
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+        const tones = winter
+            ? ['#3b5544', '#2f4a3c', '#46604e']
+            : mapType === MapType.ARCHIPELAGO ? ['#1c6b3a', '#237a3f', '#176030'] : ['#14532d', '#1a5f31', '#0f4726'];
+        for (let i = 0; i < TREELINE_COUNT; i++) {
+            // 60% along the far edge, 20% on each flank; never on the field itself
+            const side = rnd();
+            let x: number, z: number;
+            if (side < 0.6) { x = -320 + rnd() * 1440; z = -40 - rnd() * 150; }
+            else if (side < 0.8) { x = -60 - rnd() * 220; z = -40 + rnd() * 520; }
+            else { x = CANVAS_WIDTH + 60 + rnd() * 220; z = -40 + rnd() * 520; }
+            const h = 34 + rnd() * 40;
+            const r = h * (0.26 + rnd() * 0.1);
+            dummy.position.set(x, h * 0.5 + 6, z);
+            dummy.scale.set(r, h, r);
+            dummy.rotation.set(0, rnd() * Math.PI, 0);
+            dummy.updateMatrix();
+            cone.setMatrixAt(i, dummy.matrix);
+            cone.setColorAt(i, col.set(tones[i % 3]).offsetHSL(0, 0, (rnd() - 0.5) * 0.06));
+            dummy.position.set(x, 4, z);
+            dummy.scale.set(h * 0.28, 10, h * 0.28);
+            dummy.rotation.set(0, 0, 0);
+            dummy.updateMatrix();
+            trunk.setMatrixAt(i, dummy.matrix);
+        }
+        cone.instanceMatrix.needsUpdate = true;
+        if (cone.instanceColor) cone.instanceColor.needsUpdate = true;
+        trunk.instanceMatrix.needsUpdate = true;
+    }, [mapType, winter]);
+    return (
+        <group>
+            <instancedMesh ref={coneRef} args={[GEO_FRAME_CONE, undefined as any, TREELINE_COUNT]} frustumCulled={false} castShadow>
+                <meshStandardMaterial roughness={1} flatShading />
+            </instancedMesh>
+            <instancedMesh ref={trunkRef} args={[GEO_FRAME_TRUNK, undefined as any, TREELINE_COUNT]} frustumCulled={false}>
+                <meshStandardMaterial color={winter ? '#3b2a1a' : '#3f2a14'} roughness={1} />
+            </instancedMesh>
+        </group>
+    );
+});
+
 // Horizon backdrop beyond the playfield: mountains, mesas or a city skyline
 const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
     const items = useMemo(() => {
@@ -4128,8 +4189,8 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 weather pulls it in to a heavy haze, never a total whiteout. */}
             <fog attach="fog" args={[
                 skyColor,
-                weather === 'fog' ? 350 : overcast ? 650 : 880,
-                weather === 'fog' ? 1050 : overcast ? 1700 : 2300
+                weather === 'fog' ? 380 : overcast ? 650 : 880,
+                weather === 'fog' ? 1250 : overcast ? 1700 : 2300
             ]} />
 
             {weather === 'rain'  && <RainEffect />}
@@ -4158,6 +4219,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
             <Backdrop mapType={mapType} />
+            {mapType !== MapType.URBAN && mapType !== MapType.DESERT && <Treeline mapType={mapType} />}
             {fx !== 'low' && weather !== 'fog' && <Clouds tint={cloudTint} opacity={weather === 'clear' ? 1 : 0.8} />}
 
             <ShakeRig shake={shake}>
