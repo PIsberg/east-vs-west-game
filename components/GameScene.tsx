@@ -567,7 +567,7 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
                 {riverPoints.map((p, i) => (
                     <mesh key={i} position={[p.x, 6, p.y]} receiveShadow castShadow>
                         <boxGeometry args={[(p.width || 18), 12, 12]} />
-                        <meshStandardMaterial color="#4b5563" roughness={0.9} />
+                        <meshStandardMaterial color="#767f8c" roughness={0.95} bumpMap={bumpTexture()} bumpScale={0.4} />
                     </mesh>
                 ))}
             </group>
@@ -3869,7 +3869,9 @@ const Backdrop = React.memo(({ mapType }: { mapType: MapType }) => {
                 {items.map((m, i) => (
                     <mesh key={i} position={[m.x, m.h / 2, m.z]}>
                         <boxGeometry args={[m.w, m.h, 30]} />
-                        <meshStandardMaterial color="#46526a" roughness={1} />
+                        {/* Pale enough to separate from the smoggy sky: at the
+                            old navy the skyline merged into the backdrop */}
+                        <meshStandardMaterial color="#5d6a86" roughness={1} />
                     </mesh>
                 ))}
             </group>
@@ -4248,7 +4250,7 @@ const GROUND_TILE = 1000;
 // (strong patches read as dirty slush), turf can take more.
 const GROUND_PALETTE: Record<MapType, { base: string; light: string; dark: string; accent: string; grain: number; contrast: number; streaks?: boolean }> = {
     [MapType.COUNTRYSIDE]: { base: '#3f6e1e', light: '#56902a', dark: '#2a4c13', accent: '#6b7a2e', grain: 14, contrast: 1.1 },
-    [MapType.URBAN]:       { base: '#3d4249', light: '#4b5159', dark: '#2f343b', accent: '#52524f', grain: 10, contrast: 0.8 },
+    [MapType.URBAN]:       { base: '#4e555e', light: '#5d656f', dark: '#3d434b', accent: '#666a6a', grain: 10, contrast: 0.8 },
     [MapType.DESERT]:      { base: '#bf8a4e', light: '#dcab6c', dark: '#9a6a36', accent: '#d29a58', grain: 12, contrast: 0.9, streaks: true },
     [MapType.ARCHIPELAGO]: { base: '#237543', light: '#32924f', dark: '#195a30', accent: '#bfa060', grain: 12, contrast: 1.0 },
     [MapType.WINTER]:      { base: '#dfe6ec', light: '#f4f8fb', dark: '#c6d2dc', accent: '#d3dde5', grain: 5, contrast: 0.45, streaks: true },
