@@ -4743,7 +4743,16 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
             {fx !== 'low' && (
                 <>
-                    <EffectComposer>
+                    {/* multisampling 2, not the library's default 8. MSAA runs
+                        on the composer's full-size render target, and on an
+                        integrated GPU it was the single most expensive thing in
+                        the frame: measured render-only (sim paused) on an Intel
+                        Iris Xe at 1884x966, 8x gives 14.8 fps, 4x is the same,
+                        2x gives 21.2 and 0x gives 21.3 — but 0x visibly
+                        stair-steps the low-poly silhouettes and the capture
+                        rings, while 2x is indistinguishable from 8x in a
+                        side-by-side crop. So 2x buys +43% for nothing. */}
+                    <EffectComposer multisampling={2}>
                         <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
                         <primitive object={shockFx.chroma} />
                         <primitive object={shockFx.hue} />
