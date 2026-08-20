@@ -115,31 +115,69 @@ const CapturePoint3D = ({ cap, small }: { cap: CapturePoint, small?: boolean }) 
     const ownerColor = cap.owner === Team.WEST ? '#1d4ed8' : cap.owner === Team.EAST ? eastColor('#b91c1c') : '#a8a29e';
     const leading = cap.progress > 0 ? '#3b82f6' : cap.progress < 0 ? eastColor('#ef4444') : '#a8a29e';
     const pct = Math.min(1, Math.abs(cap.progress) / 300);
-    const poleH = small ? 34 : 50;
+    const poleH = small ? 40 : 58;
+    const bannerW = small ? 9 : 13, bannerH = small ? 6 : 8.5;
+    // Sandbag ring around the foot: the objective reads as a dug-in position
+    const bags = small ? 6 : 8;
     return (
         <group position={[cap.x, 0, cap.y]}>
+            {/* Held ground: a faint owner-tinted wash inside the zone */}
+            <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[cap.radius - 2, 40]} />
+                <meshBasicMaterial color={ownerColor} transparent opacity={cap.owner ? 0.13 : 0.05} depthWrite={false} />
+            </mesh>
             {/* Zone marker */}
             <mesh position={[0, 0.3, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                <ringGeometry args={[cap.radius - 3, cap.radius, 32]} />
-                <meshBasicMaterial color={ownerColor} transparent opacity={0.5} depthWrite={false} />
+                <ringGeometry args={[cap.radius - 3.5, cap.radius, 48]} />
+                <meshBasicMaterial color={ownerColor} transparent opacity={0.55} depthWrite={false} toneMapped={false} />
             </mesh>
-            {/* Capture progress ring */}
+            {/* Capture dial: an unlit track with the leader's arc filling it */}
+            <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[cap.radius * 0.34, cap.radius * 0.34 + 5, 40]} />
+                <meshBasicMaterial color="#0c0a09" transparent opacity={0.35} depthWrite={false} />
+            </mesh>
             {pct > 0.02 && (
-                <mesh position={[0, 0.4, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <ringGeometry args={[cap.radius * 0.35, cap.radius * 0.35 + 4, 32, 1, 0, Math.PI * 2 * pct]} />
-                    <meshBasicMaterial color={leading} transparent opacity={0.8} depthWrite={false} />
+                <mesh position={[0, 0.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                    <ringGeometry args={[cap.radius * 0.34, cap.radius * 0.34 + 5, 40, 1, Math.PI / 2, Math.PI * 2 * pct]} />
+                    <meshBasicMaterial color={leading} transparent opacity={0.95} depthWrite={false} toneMapped={false} />
                 </mesh>
             )}
-            {/* Flag pole */}
-            <mesh position={[0, poleH / 2, 0]} castShadow>
-                <cylinderGeometry args={[0.8, 0.8, poleH]} />
-                <meshStandardMaterial color="#78716c" />
+            {/* Earth berm + sandbags at the foot of the pole */}
+            <mesh position={[0, 1, 0]} castShadow receiveShadow>
+                <cylinderGeometry args={[small ? 6 : 8, small ? 7.5 : 10, 2.4, 12]} />
+                <meshStandardMaterial color="#6b5a41" roughness={1} />
             </mesh>
-            {/* Banner */}
-            <mesh position={[small ? 4.2 : 6, poleH - 6, 0]} castShadow>
-                <boxGeometry args={[small ? 8.4 : 12, small ? 5.6 : 8, 0.5]} />
-                <meshStandardMaterial color={ownerColor} />
+            {Array.from({ length: bags }, (_, i) => {
+                const a = (i / bags) * Math.PI * 2;
+                const rr = small ? 6.5 : 8.5;
+                return (
+                    <mesh key={i} position={[Math.cos(a) * rr, 2.6, Math.sin(a) * rr]} rotation={[0, -a, 0]} scale={[3.4, 1.5, 2.4]} castShadow>
+                        <sphereGeometry args={[1, 8, 6]} />
+                        <meshStandardMaterial color={i % 2 ? '#7c6142' : '#8a6f4d'} roughness={1} />
+                    </mesh>
+                );
+            })}
+            {/* Flag pole with a finial */}
+            <mesh position={[0, poleH / 2 + 2, 0]} castShadow>
+                <cylinderGeometry args={[0.7, 0.9, poleH, 8]} />
+                <meshStandardMaterial color="#9ca3af" roughness={0.5} metalness={0.35} />
             </mesh>
+            <mesh position={[0, poleH + 3, 0]} castShadow>
+                <sphereGeometry args={[1.6, 10, 8]} />
+                <meshStandardMaterial color="#d6b45a" roughness={0.35} metalness={0.6} />
+            </mesh>
+            {/* Banner: two panels at a slight angle so the cloth reads as
+                hanging rather than as a signboard, with a darker shadowed half */}
+            <group position={[0, poleH - bannerH / 2, 0]}>
+                <mesh position={[bannerW * 0.26, 0, bannerW * 0.05]} rotation={[0, 0.13, 0]} castShadow>
+                    <boxGeometry args={[bannerW * 0.55, bannerH, 0.4]} />
+                    <meshStandardMaterial color={ownerColor} roughness={0.85} side={THREE.DoubleSide} />
+                </mesh>
+                <mesh position={[bannerW * 0.78, -0.4, -bannerW * 0.06]} rotation={[0, -0.16, 0.04]} castShadow>
+                    <boxGeometry args={[bannerW * 0.5, bannerH * 0.92, 0.4]} />
+                    <meshStandardMaterial color={ownerColor} roughness={0.85} side={THREE.DoubleSide} />
+                </mesh>
+            </group>
             {cap.owner && !small && <pointLight position={[0, 30, 0]} color={ownerColor} distance={70} intensity={1.5} />}
         </group>
     );
@@ -1007,25 +1045,40 @@ const labelMaterial = (text: string, color = '#ffffff'): THREE.SpriteMaterial =>
     const key = `${text}|${color}`;
     let m = LABEL_CACHE.get(key);
     if (!m) {
-        const pad = 7, font = 40;
+        // A HUD badge, not bare letters: dark rounded pill, owner-coloured
+        // hairline border, white text. Bare stroked text over a bright field
+        // read as debris.
+        const padX = 16, padY = 9, font = 40;
         const c = document.createElement('canvas');
-        const ctx = c.getContext('2d')!;
-        ctx.font = `bold ${font}px sans-serif`;
-        c.width = Math.ceil(ctx.measureText(text).width) + pad * 2;
-        c.height = font + pad * 2;
+        const measure = c.getContext('2d')!;
+        measure.font = `bold ${font}px system-ui, sans-serif`;
+        const tw = Math.ceil(measure.measureText(text).width);
+        c.width = tw + padX * 2;
+        c.height = font + padY * 2;
         const g = c.getContext('2d')!;
-        g.font = `bold ${font}px sans-serif`;
+        const r = c.height / 2;
+        g.beginPath();
+        g.moveTo(r, 0);
+        g.arcTo(c.width, 0, c.width, c.height, r);
+        g.arcTo(c.width, c.height, 0, c.height, r);
+        g.arcTo(0, c.height, 0, 0, r);
+        g.arcTo(0, 0, c.width, 0, r);
+        g.closePath();
+        g.fillStyle = 'rgba(12,10,9,0.82)';
+        g.fill();
+        g.lineWidth = 4;
+        g.strokeStyle = color;
+        g.stroke();
+        g.font = `bold ${font}px system-ui, sans-serif`;
         g.textAlign = 'center';
         g.textBaseline = 'middle';
-        g.lineWidth = 6;
-        g.strokeStyle = 'rgba(0,0,0,0.85)';
-        g.strokeText(text, c.width / 2, c.height / 2);
-        g.fillStyle = color;
-        g.fillText(text, c.width / 2, c.height / 2);
+        g.fillStyle = color === '#ffffff' ? '#ffffff' : '#f5f5f4';
+        g.fillText(text, c.width / 2, c.height / 2 + 1);
         const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
         m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false, toneMapped: false });
-        m.userData = { w: (c.width / c.height) * 14, h: 14 };
+        m.userData = { w: (c.width / c.height) * 13, h: 13 };
         LABEL_CACHE.set(key, m);
     }
     return m;

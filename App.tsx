@@ -1097,7 +1097,7 @@ const App: React.FC = () => {
           {/* Scrim: the menu sits over the busy top of the artwork, so darken
               that band for legibility and let the title art at the bottom of
               the painting breathe (the stack used to cover it). */}
-          <div className="absolute inset-x-0 top-0 h-[62%] bg-gradient-to-b from-black/70 via-black/45 to-transparent pointer-events-none" />
+          <div className={`absolute inset-x-0 top-0 pointer-events-none ${compact ? 'h-full bg-black/60' : 'h-[62%] bg-gradient-to-b from-black/70 via-black/45 to-transparent'}`} />
           <div className={`relative z-10 flex flex-col items-center select-none w-full ${compact ? 'gap-1.5 px-1' : 'gap-3 px-4 max-w-[1280px]'}`} onClick={e => e.stopPropagation()}>
           {/* Wide screens: setup on the left, modes on the right, so the stack
               stays short; phones keep the single column. */}
@@ -1305,7 +1305,7 @@ const App: React.FC = () => {
           </div>
           </div>
             <button
-              className={`font-display bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 active:scale-95 text-stone-950 font-bold uppercase tracking-[0.25em] rounded border-2 border-amber-300/80 shadow-[0_0_30px_rgba(245,158,11,0.35),0_10px_30px_rgba(0,0,0,0.5)] animate-pulse transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-12 py-3 text-xl mt-1'}`}
+              className={`font-display cta-pulse bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 active:scale-95 text-stone-950 font-bold uppercase tracking-[0.25em] rounded border-2 border-amber-300/80 transition-all ${compact ? 'px-6 py-1.5 text-sm' : 'px-12 py-3 text-xl mt-1'}`}
               onClick={handleStartClick}
             >
               ▶ DEPLOY FORCES

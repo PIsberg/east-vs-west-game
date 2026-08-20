@@ -66,3 +66,14 @@
     box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.6);
   }
 }
+
+@layer components {
+  /* Call-to-action pulse that never makes the plate translucent: the stock
+     animate-pulse fades opacity to 0.5, which let the splash artwork show
+     straight through the DEPLOY button. This breathes the glow instead. */
+  @keyframes cta-glow {
+    0%, 100% { box-shadow: 0 0 18px rgba(245, 158, 11, 0.28), 0 8px 24px rgba(0, 0, 0, 0.5); }
+    50%      { box-shadow: 0 0 42px rgba(251, 191, 36, 0.7), 0 8px 24px rgba(0, 0, 0, 0.5); }
+  }
+  .cta-pulse { animation: cta-glow 1.8s ease-in-out infinite; }
+}
