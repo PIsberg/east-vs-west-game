@@ -1544,9 +1544,9 @@ const App: React.FC = () => {
               const age = Date.now() - ev.time;
               if (age > 8000) return null;
               const opacity = age > 6000 ? Math.max(0, 1 - (age - 6000) / 2000) : 1;
-              const color = ev.team === Team.WEST ? 'text-blue-300' : ev.team === Team.EAST ? 'text-red-300' : 'text-amber-300';
+              const color = ev.team === Team.WEST ? 'text-blue-200' : ev.team === Team.EAST ? 'text-red-200' : 'text-amber-200';
               return (
-                <div key={ev.id} style={{ opacity }} className={`text-[9px] leading-tight font-bold ${color} bg-black/60 px-1.5 py-0.5 rounded shadow`}>
+                <div key={ev.id} style={{ opacity }} className={`font-display text-[10px] tracking-wide leading-tight font-bold ${color} bg-black/75 border-l-2 ${ev.team === Team.WEST ? 'border-blue-400' : ev.team === Team.EAST ? 'border-red-400' : 'border-amber-400'} px-1.5 py-0.5 rounded-r shadow-lg`}>
                   {ev.text}
                 </div>
               );

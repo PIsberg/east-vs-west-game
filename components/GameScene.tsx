@@ -1021,26 +1021,40 @@ const BOUNTY_CACHE = new Map<string, THREE.SpriteMaterial>();
 const bountyMaterial = (text: string): THREE.SpriteMaterial => {
     let m = BOUNTY_CACHE.get(text);
     if (!m) {
-        const pad = 8, font = 44;
+        // Same badge treatment as the occupancy labels, in payout green: as
+        // bare stroked text at 26 units tall a single "+$17" was the largest
+        // thing on the battlefield.
+        const padX = 15, padY = 8, font = 42;
         const c = document.createElement('canvas');
-        const ctx = c.getContext('2d')!;
-        ctx.font = `bold ${font}px sans-serif`;
-        c.width = Math.ceil(ctx.measureText(text).width) + pad * 2;
-        c.height = font + pad * 2;
+        const measure = c.getContext('2d')!;
+        measure.font = `bold ${font}px system-ui, sans-serif`;
+        c.width = Math.ceil(measure.measureText(text).width) + padX * 2;
+        c.height = font + padY * 2;
         const g = c.getContext('2d')!;
-        g.font = `bold ${font}px sans-serif`;
+        const r = c.height / 2;
+        g.beginPath();
+        g.moveTo(r, 0);
+        g.arcTo(c.width, 0, c.width, c.height, r);
+        g.arcTo(c.width, c.height, 0, c.height, r);
+        g.arcTo(0, c.height, 0, 0, r);
+        g.arcTo(0, 0, c.width, 0, r);
+        g.closePath();
+        g.fillStyle = 'rgba(6,20,12,0.8)';
+        g.fill();
+        g.lineWidth = 4;
+        g.strokeStyle = '#22c55e';
+        g.stroke();
+        g.font = `bold ${font}px system-ui, sans-serif`;
         g.textAlign = 'center';
         g.textBaseline = 'middle';
-        g.lineWidth = 6;
-        g.strokeStyle = '#000000';
-        g.strokeText(text, c.width / 2, c.height / 2);
-        g.fillStyle = '#22c55e';
-        g.fillText(text, c.width / 2, c.height / 2);
+        g.fillStyle = '#7ef0a6';
+        g.fillText(text, c.width / 2, c.height / 2 + 1);
         const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = 4;
         m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, toneMapped: false });
         // World size for the sprite, scaled off the canvas aspect
-        m.userData = { w: (c.width / c.height) * 26, h: 26 };
+        m.userData = { w: (c.width / c.height) * 15, h: 15 };
         BOUNTY_CACHE.set(text, m);
     }
     return m;
@@ -4606,6 +4620,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 shadow-camera-top={560}
                 shadow-camera-bottom={-560}
                 shadow-bias={-0.0002}
+                shadow-radius={1.7}
             />
             <primitive object={sunTarget} position={[CANVAS_WIDTH / 2, 0, CANVAS_HEIGHT / 2]} />
 
