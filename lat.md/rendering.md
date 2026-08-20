@@ -20,6 +20,17 @@ crater rims, tread marks) and `InstancedUnitOverlays` (team ring, health bar,
 aircraft shadow) — four draw calls for the whole army instead of one per unit.
 These read `units` directly each frame, not React props.
 
+Particles are camera-facing quads carrying a painted soft-puff texture, faded
+by a per-instance alpha. The billboard is a vertex-shader patch
+(`withBillboard`), so it costs no CPU work and keeps the single draw call.
+**Shader patches must compose**: `withBillboard` and `withInstanceAlpha` both
+wrap `onBeforeCompile`, and each calls whatever was set before it — assigning
+it outright silently drops the other patch.
+
+Module-level texture builders (ground, bump, puff, planks, grass) run at import
+time, so any helper they call — `lcg`, the seeded generator — must be declared
+**above** them or it throws from its temporal dead zone at boot.
+
 ## GLB unit models
 
 Units are cloned per unit with `SkeletonUtils.clone` and recolored through
