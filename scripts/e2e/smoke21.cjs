@@ -65,8 +65,20 @@ const puppeteer = require('puppeteer-core');
   const lock0 = await p.evaluate(() => __ewDebug.airOps.WEST);
 
   // 2. The clock counts down (tick-based, so it runs with the sim).
-  await new Promise(r => setTimeout(r, 2500));
-  const lock1 = await p.evaluate(() => __ewDebug.airOps.WEST);
+  //    Sampled repeatedly rather than as one before/after pair: this page runs
+  //    under ?spectate, so BOTH sides are CPU-controlled and the WEST CPU can
+  //    launch its own strike inside the window, which resets the shared clock
+  //    UPWARD. One pair straddling that reset reads as "not counting down" and
+  //    fails a working build (seen once in a full-suite run; passes 3/3 alone
+  //    on both this branch and main). Requiring one strictly-decreasing
+  //    consecutive pair keeps the assertion: a dead clock never decreases.
+  const locks = [lock0];
+  for (let i = 0; i < 5; i++) {
+    await new Promise(r => setTimeout(r, 600));
+    locks.push(await p.evaluate(() => __ewDebug.airOps.WEST));
+  }
+  const lock1 = locks[locks.length - 1];
+  const counted = locks.some((v, i) => i > 0 && v < locks[i - 1]);
 
   // 3. Interception: an AA picket line under the flight path of an incoming
   //    EAST strike. AA damage (60) one-shots a plane (40 HP) — with a correct
@@ -101,7 +113,7 @@ const puppeteer = require('puppeteer-core');
   console.log(`sim rate              : ${Math.round(tickRate)} ticks/s (expect ~75 = 60 x tempo 1.25 at speed 1)`);
   console.log(`first strike accepted : ${cd.first}`);
   console.log(`second strike vetoed  : ${cd.second === false}`);
-  console.log(`rearm ticks after use : ${lock0} -> ${lock1} (must be >0 and falling)`);
+  console.log(`rearm ticks after use : ${locks.join(' -> ')} (must start >0 and fall at least once)`);
   console.log(`AA spawned ${[aa.ok1, aa.ok2, aa.ok3].filter(Boolean).length}/3, strike launched: ${strike}`);
   console.log(`plane shot down       : ${shotDown}`);
 
@@ -110,7 +122,7 @@ const puppeteer = require('puppeteer-core');
   if (!cd.first) fail.push('first strike rejected — clock started locked or spawn hook broke');
   if (cd.second !== false) fail.push('second strike accepted immediately — the shared rearm veto is dead');
   if (!(lock0 > 0)) fail.push('airOps ticks not set after a launch');
-  if (!(lock1 < lock0)) fail.push('airOps ticks not counting down');
+  if (!counted) fail.push('airOps ticks never counted down across 5 samples');
   if (!strike) fail.push('EAST strike never launched — no free clock window found in ~21s (clock stuck?)');
   if (!shotDown) fail.push('no aircraft was ever shot down over a 3-gun AA picket — interception/lead is not connecting');
   if (errors.length) fail.push(`page errors: ${errors.slice(0, 3).join(' | ')}`);

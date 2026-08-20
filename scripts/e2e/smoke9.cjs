@@ -30,7 +30,7 @@ const puppeteer = require('puppeteer-core');
     await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('DEPLOY FORCES')).click(); });
     await new Promise(r => setTimeout(r, 2500));
     const m = await p.evaluate(() => {
-      const header = document.querySelector('.max-w-4xl');
+      const header = document.querySelector('[data-testid="hud-header"]');
       const canvas = document.querySelector('canvas');
       const cmdBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.toUpperCase().includes('ECONOMY'));
       const cmdBar = cmdBtn ? cmdBtn.closest('.justify-center') : null;
