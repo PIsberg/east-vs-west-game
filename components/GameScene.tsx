@@ -2254,6 +2254,15 @@ const GEO_FLAT_RIM = new THREE.TorusGeometry(1, 0.098, 6, 24).rotateX(-Math.PI /
 const GEO_FLAT_STRIP = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 const MAT_FLAT_LIT = withInstanceAlpha(new THREE.MeshStandardMaterial({ transparent: true, depthWrite: false, roughness: 1 }));
 const MAT_FLAT_UNLIT = withInstanceAlpha(new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+// Scorch discs get the soft puff as an alpha ramp so they melt into the ground
+// instead of stamping a hard-edged coloured ellipse on it (an ember-orange
+// scorch used to read as a plastic disc lying in the grass). Built lazily —
+// the disc geometry's UVs run 0..1 across the circle, so the radial ramp lines
+// up without any UV work.
+let MAT_FLAT_DISC: THREE.Material | null = null;
+const discMaterial = () => (MAT_FLAT_DISC ??= withInstanceAlpha(new THREE.MeshStandardMaterial({
+    map: puffTexture(), transparent: true, depthWrite: false, roughness: 1,
+})));
 
 const useAlphaGeometry = (base: THREE.BufferGeometry, max: number) => useMemo(() => {
     const g = base.clone();
@@ -2336,7 +2345,7 @@ const InstancedDecals = ({ particles }: { particles: Particle[] }) => {
 
     return (
         <>
-            <instancedMesh ref={discRef} args={[discGeo, MAT_FLAT_LIT, MAX_FLATS]} frustumCulled={false} receiveShadow />
+            <instancedMesh ref={discRef} args={[discGeo, discMaterial(), MAX_FLATS]} frustumCulled={false} receiveShadow />
             <instancedMesh ref={rimRef} args={[rimGeo, MAT_FLAT_LIT, MAX_FLATS]} frustumCulled={false} receiveShadow />
             <instancedMesh ref={stripRef} args={[stripGeo, MAT_FLAT_UNLIT, MAX_FLATS]} frustumCulled={false} />
         </>
@@ -4069,6 +4078,60 @@ const UrbanRoadMarkings = React.memo(({ mapType }: { mapType: MapType }) => {
     );
 });
 
+// A tuft of blades on an alpha-cut billboard. Two crossed quads read as a 3D
+// clump from any angle for two triangles each; the old cone geometry read as a
+// scattering of little green pyramids at close zoom.
+const grassTuftTexture = (() => {
+    let tex: THREE.CanvasTexture | null | undefined;
+    return (): THREE.CanvasTexture | null => {
+        if (tex !== undefined) return tex;
+        tex = null;
+        if (typeof document !== 'undefined') {
+            const W = 64, H = 64;
+            const cv = document.createElement('canvas');
+            cv.width = W; cv.height = H;
+            const ctx = cv.getContext('2d');
+            if (ctx) {
+                const rnd = lcg(31337);
+                ctx.clearRect(0, 0, W, H);
+                // Blades fan out from the base; each is a tapered quadratic sliver
+                for (let i = 0; i < 9; i++) {
+                    const baseX = W * (0.2 + rnd() * 0.6);
+                    const tipX = baseX + (rnd() - 0.5) * W * 0.5;
+                    const tipY = H * (0.06 + rnd() * 0.42);
+                    const wBase = 1.6 + rnd() * 2.2;
+
+                    ctx.beginPath();
+                    ctx.moveTo(baseX - wBase, H);
+                    ctx.quadraticCurveTo(baseX - wBase * 0.6, (H + tipY) / 2, tipX, tipY);
+                    ctx.quadraticCurveTo(baseX + wBase * 0.6, (H + tipY) / 2, baseX + wBase, H);
+                    ctx.closePath();
+                    // Greyscale: the per-instance colour supplies the hue, so
+                    // the texture only carries shading (dark root, bright tip)
+                    const v = 150 + Math.floor(rnd() * 40);
+                    const g = ctx.createLinearGradient(0, H, 0, tipY);
+                    g.addColorStop(0, `rgb(${Math.round(v * 0.5)},${Math.round(v * 0.5)},${Math.round(v * 0.5)})`);
+                    g.addColorStop(1, `rgb(${Math.min(255, Math.round(v * 1.5))},${Math.min(255, Math.round(v * 1.5))},${Math.min(255, Math.round(v * 1.5))})`);
+                    ctx.fillStyle = g;
+                    ctx.fill();
+                }
+                tex = new THREE.CanvasTexture(cv);
+                tex.colorSpace = THREE.SRGBColorSpace;
+                tex.anisotropy = 4;
+            }
+        }
+        return tex;
+    };
+})();
+const GEO_GRASS_TUFT = (() => {
+    const a = new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0);
+    const b = a.clone().rotateY(Math.PI / 2);
+    return mergeBufferGeometries([a, b]) ?? a;
+})();
+const MAT_GRASS_TUFT = new THREE.MeshStandardMaterial({
+    map: grassTuftTexture(), transparent: true, alphaTest: 0.42, side: THREE.DoubleSide, roughness: 1,
+});
+
 // Static instanced ground scatter: grass tufts (countryside) / dry shrubs (desert)
 const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terrain: TerrainObject[] }) => {
     const grassRef = useRef<THREE.InstancedMesh>(null!);
@@ -4118,9 +4181,11 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
                     z = HORIZON_Y + 16 + rand(i, tries === 0 ? 2 : 40 + tries) * (CANVAS_HEIGHT - HORIZON_Y - 32);
                     if (!inWater(x, z, 8)) break;
                 }
-                const s = inWater(x, z, 8) ? 0 : 1.1 + rand(i, 3) * 2.1; // still wet after retries → hide
-                dummy.position.set(x, 2, z);
-                dummy.scale.set(s, s * (1.5 + rand(i, 5) * 0.7), s);
+                // The tuft geometry stands ON its origin (base at y=0), so the
+                // instance sits on the ground and scale y IS its height
+                const s = inWater(x, z, 8) ? 0 : 3.2 + rand(i, 3) * 3.4; // still wet after retries → hide
+                dummy.position.set(x, 0, z);
+                dummy.scale.set(s, s * (1.05 + rand(i, 5) * 0.5), s);
                 dummy.rotation.set(0, rand(i, 4) * Math.PI * 2, 0);
                 dummy.updateMatrix();
                 grassRef.current.setMatrixAt(i, dummy.matrix);
@@ -4157,10 +4222,7 @@ const GroundScatter = React.memo(({ mapType, terrain }: { mapType: MapType, terr
     if (!active) return null;
     return (
         <group>
-            <instancedMesh ref={grassRef} args={[undefined as any, undefined as any, plan.tufts]} frustumCulled={false}>
-                <coneGeometry args={[2.1, 3.8, 5]} />
-                <meshStandardMaterial roughness={1} />
-            </instancedMesh>
+            <instancedMesh ref={grassRef} args={[GEO_GRASS_TUFT, MAT_GRASS_TUFT, plan.tufts]} frustumCulled={false} />
             <instancedMesh ref={bushRef} args={[undefined as any, undefined as any, plan.bushes]} frustumCulled={false}>
                 <dodecahedronGeometry args={[1, 0]} />
                 <meshStandardMaterial roughness={1} flatShading />
