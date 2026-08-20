@@ -609,10 +609,13 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
 
     // Archipelago: wide sea straits with animated deep-ocean shader
     if (mapType === MapType.ARCHIPELAGO) {
+        // Sea straits: deeper than the countryside river, with a softer foam —
+        // at the old near-white the channels read as bright cyan ribbons
+        // rather than water.
         return (
             <group>
                 {geometries.map((geo, i) => geo && (
-                    <AnimatedWater key={i} geo={geo} color="#0c4a6e" foam="#7dd3fc" />
+                    <AnimatedWater key={i} geo={geo} color="#0e5a7c" foam="#a9dbef" />
                 ))}
             </group>
         );
@@ -3469,9 +3472,17 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const burningEmissive = item.state === 'burning' ? leavesColor : '#000000';
 
         const leafMat = stdMat(leavesColor, burningEmissive);
+        // A stand of trees was every trunk dead upright at the same proportions.
+        // A seeded lean and a slightly squatter or lankier build (both derived
+        // from the position hash, so a tree never changes between frames) break
+        // the repetition without another material or draw call.
+        const lean = item.state === 'broken' ? 0 : ((seed % 13) - 6) * 0.012;
+        const lean2 = item.state === 'broken' ? 0 : (((seed >> 3) % 13) - 6) * 0.012;
+        const build = 0.88 + ((seed >> 6) % 9) * 0.045; // 0.88..1.24 height-vs-width
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
                 <group rotation={rot} position={[0, yOffset, 0]} scale={scaleMod}>
+                  <group rotation={[lean, (seed % 7) * 0.9, lean2]} scale={[1, build, 1]}>
                     {/* Trunk */}
                     <mesh position={[0, 15, 0]} castShadow geometry={GEO_TRUNK} material={stdMat(trunkColor)} />
 
@@ -3502,7 +3513,7 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                     {type === 2 && ( // Poplar
                         <mesh position={[0, 45, 0]} castShadow geometry={GEO_POPLAR} material={leafMat} />
                     )}
-
+                  </group>
                 </group>
             </ClickableGroup>
         );
@@ -3994,9 +4005,14 @@ const SkyDome = ({ horizon, zenith, sun, sunStrength }: { horizon: number, zenit
         m.uSunStrength = sunStrength;
     });
     return (
-        <mesh ref={meshRef} frustumCulled={false} renderOrder={-10}>
+        // Drawn LAST in the opaque pass, with the depth test on: the dome is
+        // the farthest thing in the scene, so every pixel already covered by
+        // ground, terrain or units fails the test and is never shaded. Drawing
+        // it first (renderOrder -10) shaded the entire screen and then threw
+        // most of it away — pure waste on a fill-bound integrated GPU.
+        <mesh ref={meshRef} frustumCulled={false} renderOrder={999}>
             <sphereGeometry args={[SKY_RADIUS, 32, 18]} />
-            <skyMaterial ref={matRef} side={THREE.BackSide} depthWrite={false} fog={false} />
+            <skyMaterial ref={matRef} side={THREE.BackSide} depthWrite={false} depthTest={true} fog={false} />
         </mesh>
     );
 };
@@ -4271,6 +4287,26 @@ const GROUND_PALETTE: Record<MapType, { base: string; light: string; dark: strin
 };
 
 
+// One small greyscale noise tile, painted over each ground texture through a
+// repeating pattern. Built once for every map.
+let GRAIN_TILE: HTMLCanvasElement | null = null;
+const grainTile = (): HTMLCanvasElement => {
+    if (GRAIN_TILE) return GRAIN_TILE;
+    const N = 128;
+    const cv = document.createElement('canvas');
+    cv.width = N; cv.height = N;
+    const ctx = cv.getContext('2d')!;
+    const img = ctx.createImageData(N, N);
+    const rnd = lcg(24680);
+    for (let i = 0; i < img.data.length; i += 4) {
+        const v = 108 + Math.round(rnd() * 40);
+        img.data[i] = v; img.data[i + 1] = v; img.data[i + 2] = v; img.data[i + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    GRAIN_TILE = cv;
+    return cv;
+};
+
 const GROUND_TEX_CACHE = new Map<MapType, THREE.CanvasTexture | null>();
 const groundTexture = (map: MapType): THREE.CanvasTexture | null => {
     if (GROUND_TEX_CACHE.has(map)) return GROUND_TEX_CACHE.get(map)!;
@@ -4315,15 +4351,16 @@ const groundTexture = (map: MapType): THREE.CanvasTexture | null => {
             if (p.streaks)
                 for (let i = 0; i < 70; i++)
                     blot(rnd() * S, rnd() * S, 40 + rnd() * 90, rnd() < 0.5 ? p.light : p.dark, 0.18 + rnd() * 0.18, 2.2 + rnd() * 1.6, 0.18);
-            // Fine grain: per-pixel luminance jitter
-            const img = ctx.getImageData(0, 0, S, S);
-            const d = img.data;
-            const g = p.grain;
-            for (let i = 0; i < d.length; i += 4) {
-                const n = (rnd() - 0.5) * g;
-                d[i] += n; d[i + 1] += n; d[i + 2] += n;
-            }
-            ctx.putImageData(img, 0, 0);
+            // Fine grain, painted through a small cached noise tile rather than
+            // a per-pixel pass: the old loop walked 1M pixels (plus a
+            // getImageData/putImageData round trip) on the first mount of a
+            // map, which is dead time before the first frame.
+            ctx.globalCompositeOperation = 'overlay';
+            ctx.globalAlpha = Math.min(1, p.grain / 14);
+            const pat = ctx.createPattern(grainTile(), 'repeat');
+            if (pat) { ctx.fillStyle = pat; ctx.fillRect(0, 0, S, S); }
+            ctx.globalAlpha = 1;
+            ctx.globalCompositeOperation = 'source-over';
             tex = new THREE.CanvasTexture(cv);
             tex.colorSpace = THREE.SRGBColorSpace;
             tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -4415,7 +4452,8 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
             map,
             bumpMap,
             bumpScale: mapType === MapType.WINTER ? 0.35 : mapType === MapType.URBAN ? 0.3 : 0.7,
-            roughness: 1,
+            // Snow is the one ground that should catch a little light
+            roughness: mapType === MapType.WINTER ? 0.82 : 1,
         });
     }, [mapType]);
     useEffect(() => () => { material.bumpMap?.dispose(); material.dispose(); }, [material]);
@@ -4607,14 +4645,17 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             <hemisphereLight args={[skyColor, groundTint, baseAmbient * 0.9 * (0.3 + 0.7 * dayFactor)]} />
             {/* Sun aimed at the field centre (same bearing as before — it used
                 to aim at the world origin, so the shadow box missed the far
-                corners of the field). */}
+                corners of the field). The map stays 1024: at this camera
+                distance a 2048 map is indistinguishable once shadow-radius
+                softens the edge, and it doubles the shadow pass on a software
+                rasterizer, where it measurably delays the splash handover. */}
             <directionalLight
                 position={[CANVAS_WIDTH / 2 + 200, 500, CANVAS_HEIGHT / 2 + 200]}
                 target={sunTarget}
                 intensity={1.55 * (0.18 + 0.82 * dayFactor)}
                 color={sunColor}
                 castShadow
-                shadow-mapSize={[2048, 2048]}
+                shadow-mapSize={[1024, 1024]}
                 shadow-camera-left={-560}
                 shadow-camera-right={560}
                 shadow-camera-top={560}
@@ -4702,7 +4743,16 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
                 materials (tesla coil, napalm, missiles) and toneMapped=false projectiles */}
             {fx !== 'low' && (
                 <>
-                    <EffectComposer>
+                    {/* multisampling 2, not the library's default 8. MSAA runs
+                        on the composer's full-size render target, and on an
+                        integrated GPU it was the single most expensive thing in
+                        the frame: measured render-only (sim paused) on an Intel
+                        Iris Xe at 1884x966, 8x gives 14.8 fps, 4x is the same,
+                        2x gives 21.2 and 0x gives 21.3 — but 0x visibly
+                        stair-steps the low-poly silhouettes and the capture
+                        rings, while 2x is indistinguishable from 8x in a
+                        side-by-side crop. So 2x buys +43% for nothing. */}
+                    <EffectComposer multisampling={2}>
                         <Bloom mipmapBlur intensity={0.85} luminanceThreshold={1.0} luminanceSmoothing={0.2} />
                         <primitive object={shockFx.chroma} />
                         <primitive object={shockFx.hue} />

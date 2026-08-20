@@ -5568,6 +5568,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         smokes={smokesRef.current}
         selectedIds={selectedIds}
         fx={fx}
+        // Colorblind assist reaches the 3D scene through this prop. Without it
+        // GameScene defaulted to cb=false, so CB_MODE stayed off and the whole
+        // battlefield — unit tints, team rings, flags, capture markers — kept
+        // rendering East in red no matter what the toggle said. Only the
+        // minimap ever honoured it.
+        cb={cb}
         simNow={simNow()}
         onCameraApi={handleCameraApi}
         onCanvasClick={handleCanvasClickGuarded}

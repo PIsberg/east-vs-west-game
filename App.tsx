@@ -1318,8 +1318,10 @@ const App: React.FC = () => {
                 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-amber-300 border border-amber-500/60 hover:bg-amber-950/60 active:scale-95 rounded px-3 py-1 transition-colors"
               >📺 Watch ad: +50% starting cash</button>
             ))}
-            {!compact && <span className="font-display text-stone-300 text-xs tracking-[0.3em] uppercase drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">Click anywhere to start</span>}
-            <span className={`text-stone-300/90 tracking-wide text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
+            {/* These two sit over the brightest part of the painting, so they
+                carry their own ground rather than relying on a text shadow */}
+            {!compact && <span className="font-display text-stone-200 text-xs tracking-[0.3em] uppercase bg-black/55 rounded px-3 py-1">Click anywhere to start</span>}
+            <span className={`text-stone-300 tracking-wide text-center bg-black/50 rounded px-3 py-1 ${compact ? 'text-[8px] max-w-sm' : 'text-[10px] max-w-md'}`}>
               Buy units from the side panels · click <span className="text-stone-300">your</span> units to give Attack/Hold/Fall Back orders (double-click = all of that type) · click <span className="text-stone-300">enemy</span> units to focus fire
             </span>
             {/* Recent battles */}
