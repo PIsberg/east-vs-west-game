@@ -15,7 +15,12 @@ const puppeteer = require('puppeteer-core');
     await p.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('DEPLOY FORCES')), { timeout: 60000 });
 
     await p.evaluate(() => { Array.from(document.querySelectorAll('button')).find(x => x.textContent.includes('DEPLOY FORCES')).click(); });
-    await new Promise(r => setTimeout(r, 1200));
+    // Wait for the splash to actually unmount, not a fixed 1200ms: the hotkey
+    // listener is armed by that same state flip, and on a software rasterizer
+    // the handover lands anywhere from 0.8s to 2.8s after the click. A press
+    // that beats it is silently dropped, which read as "the hotkey is broken".
+    await p.waitForFunction(() => !document.querySelector('img[alt="East vs West"]'), { timeout: 30000 });
+    await new Promise(r => setTimeout(r, 250));
 
     // Tooltip content present in DOM (hidden until hover)
     results.tooltip = await p.evaluate(() => {
