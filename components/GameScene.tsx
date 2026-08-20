@@ -680,7 +680,7 @@ const GEO_FLASH_CORE = new THREE.ConeGeometry(0.6, 3, 8);
 const GEO_FLASH_OUTER = new THREE.ConeGeometry(1, 4.5, 8, 1, true);
 const GEO_FLASH_BALL = new THREE.SphereGeometry(1, 8, 6);          // gas ball at the bore of a big gun
 const GEO_FLASH_SPIKE = new THREE.PlaneGeometry(3.4, 0.4);         // star-flare blade (scaled by flash size — keep it short or it smears)
-const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: 'yellow', transparent: true, opacity: 0.9, toneMapped: false });
+const MAT_FLASH_CORE = new THREE.MeshBasicMaterial({ color: '#fff4c2', transparent: true, opacity: 0.5, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false });
 // Note: Outer material depends on color prop, so we might need to keep it dynamic or cache by color.
 // But mostly it's yellow/orange.
 const FLASH_MAT_CACHE = new Map<string, THREE.Material>();
@@ -688,7 +688,10 @@ const flashMaterial = (color: string, opacity: number) => {
     const key = `${color}|${opacity}`;
     let m = FLASH_MAT_CACHE.get(key);
     if (!m) {
-        m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, toneMapped: false });
+        // Additive: a muzzle flash is light, not paint. As a normal-blended
+        // solid it read as an opaque orange leaf lying on the hull from the
+        // default top-down camera.
+        m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, toneMapped: false, blending: THREE.AdditiveBlending, depthWrite: false });
         FLASH_MAT_CACHE.set(key, m);
     }
     return m;
@@ -703,8 +706,11 @@ const flashMaterial = (color: string, opacity: number) => {
 const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: string }) => {
     const grp = useRef<THREE.Group>(null);
     const seed = useMemo(() => Math.random(), []);
-    const outerMat = useMemo(() => flashMaterial(color, 0.6), [color]);
-    const flareMat = useMemo(() => flashMaterial(color, 0.3), [color]);   // blades stay faint, or they read as a smear
+    // Opacities are low because the material is ADDITIVE: at the old
+    // normal-blend values a heavy gun's flash saturated to a white triangle
+    // several vehicle-lengths across.
+    const outerMat = useMemo(() => flashMaterial(color, 0.3), [color]);
+    const flareMat = useMemo(() => flashMaterial(color, 0.16), [color]);  // blades stay faint, or they read as a smear
     const heavy = size >= 2;
 
     useFrame(() => {
@@ -1155,7 +1161,11 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
     // close without costing an extra mesh.
     const obj = useTintedClone(
         MODEL_URL.soldier,
-        [{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }],
+        // 0.78, not 0.5: the atlas material is near-white and its colour
+        // MULTIPLIES the texture, so a half-lerp to the team tint came out
+        // #ccdcfd — practically white, i.e. no visible tint at all. Both sides
+        // read as the same khaki and only the ground ring told them apart.
+        [{ materials: ['*'], color: teamTint(unit.team), strength: 0.78 }],
         soldierTemplate(scene),
     );
     // Kit the clone out once: a weapon on the right wrist (so it tracks the hand
@@ -1241,7 +1251,7 @@ const InfantryModel = ({ unit, scale = SOLDIER_SCALE }: { unit: Unit, scale?: nu
 // Tank with animated tracks while rolling.
 const TankModel = ({ unit }: { unit: Unit }) => {
     const { animations } = useGLTF(MODEL_URL.tank);
-    const obj = useTintedClone(MODEL_URL.tank, [{ materials: ['*'], color: teamTint(unit.team), strength: 0.45 }]);
+    const obj = useTintedClone(MODEL_URL.tank, [{ materials: ['*'], color: teamTint(unit.team), strength: 0.72 }]);
     const group = useRef<THREE.Group>(null!);
     const { actions } = useAnimations(animations, group);
     useEffect(() => {
@@ -1495,7 +1505,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     unit.type === UnitType.ANTI_AIR && (
                         <group>
                             <Suspense fallback={null}>
-                                <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.55 }]} />
+                                <StaticModel url={MODEL_URL.antiair} targetLen={30} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.74 }]} />
                             </Suspense>
                             {firing && (
                                 <group position={[8, 26, 0]} rotation={[0, 0, Math.PI / 4]}>
@@ -1565,7 +1575,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                         <group position={[0, 15, 0]} rotation={[0, (unit.rotation || 0) - Math.PI / 2, 0]}>
                             <group position={[0, -12, 0]} rotation={[0, -Math.PI / 2, 0]}>
                                 <Suspense fallback={null}>
-                                    <StaticModel url={MODEL_URL.helicopter} targetLen={38} axis="x" yaw={0} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
+                                    <StaticModel url={MODEL_URL.helicopter} targetLen={38} axis="x" yaw={0} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.72 }]} />
                                 </Suspense>
                             </group>
                             {/* Rotor blur disc (the model's rotor is static) */}
@@ -1745,7 +1755,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.JEEP && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.jeep} targetLen={28} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.jeep} targetLen={28} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.72 }]} />
                         </Suspense>
                         {firing && (
                             <group position={[12, 14, 0]}>
@@ -1766,7 +1776,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.TRANSPORT && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.truck} targetLen={40} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.truck} targetLen={40} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.72 }]} />
                         </Suspense>
                         {/* Passenger pips over the canvas */}
                         {Array.from({ length: unit.passengers?.length || 0 }).map((_, i) => (
@@ -1803,7 +1813,7 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                 {unit.type === UnitType.APC && (
                     <group>
                         <Suspense fallback={null}>
-                            <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.5 }]} />
+                            <StaticModel url={MODEL_URL.apc} targetLen={42} tints={[{ materials: ['*'], color: teamTint(unit.team), strength: 0.72 }]} />
                         </Suspense>
                         {firing && (
                             <group position={[22, 14, 0]}>
@@ -1898,12 +1908,13 @@ const Unit3D = ({ unit, terrain, onCanvasClick, onUnitClick, focused, selected }
                     );
                 })()}
 
-                {/* Hit flash overlay */}
+                {/* Hit flash: a brief additive bloom over the hull. This used to
+                    be a solid red box at 45% opacity, which swallowed the unit
+                    whole every time it was shot. */}
                 {isHit && (
-                    <mesh position={[0, 10, 0]}>
-                        <boxGeometry args={[unit.width * 0.9 + 4, 22, unit.height * 0.9 + 4]} />
-                        <meshBasicMaterial color="#ef4444" transparent opacity={0.45} depthWrite={false} />
-                    </mesh>
+                    <sprite position={[0, 11, 0]} scale={[unit.width * 1.6 + 10, unit.width * 1.6 + 10, 1]}>
+                        <spriteMaterial map={puffTexture()} color="#ffd0a0" transparent opacity={0.85} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
+                    </sprite>
                 )}
 
                 {/* Focus-fire marker: spinning red diamond + pulsing ground ring */}
@@ -2153,18 +2164,21 @@ const LightningBolt = ({ p }: { p: Particle }) => {
     );
 };
 
-const MAX_PARTICLE_INSTANCES = 2048;
-const INST_PARTICLE_GEO = new THREE.BoxGeometry(1, 1, 1);
-const INST_PARTICLE_MAT = new THREE.MeshStandardMaterial({ color: 'white', transparent: true, opacity: 0.9 });
+// Tiny seeded generator: the same procedural texture on every machine, every
+// mount. Declared up here because module-level texture builders below call it
+// (a later `const` would be in its temporal dead zone at that point).
+const lcg = (seed: number) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
 
-// ── Instanced ground flats ────────────────────────────────────────────────────
-// Scorch decals, crater rims and tread marks are the highest-count objects on a
-// busy field (~270 meshes at 37 units). As individual React meshes they each
-// allocated a geometry and a material on mount and cost a draw call; now they
-// ride in three instanced meshes. Three has no per-instance opacity, so alpha
-// comes in as an instanced attribute the shader multiplies into the fragment.
+// ── Instanced alpha ───────────────────────────────────────────────────────────
+// Three has no per-instance opacity, so alpha comes in as an instanced
+// attribute the shader multiplies into the fragment. Used by the ground flats
+// (scorch decals, crater rims, tread marks), the unit overlays and particles.
+// NOTE: every patch here composes onto whatever onBeforeCompile is already set
+// (see withBillboard) — assigning it outright would silently drop the others.
 const withInstanceAlpha = <T extends THREE.Material>(mat: T): T => {
-    mat.onBeforeCompile = (shader) => {
+    const prev = mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader, renderer) => {
+        prev?.call(mat, shader, renderer);
         shader.vertexShader = 'attribute float aAlpha;\nvarying float vAlpha;\n' +
             shader.vertexShader.replace('void main() {', 'void main() {\n\tvAlpha = aAlpha;');
         shader.fragmentShader = 'varying float vAlpha;\n' +
@@ -2172,6 +2186,67 @@ const withInstanceAlpha = <T extends THREE.Material>(mat: T): T => {
     };
     return mat;
 };
+
+const MAX_PARTICLE_INSTANCES = 2048;
+// Particles were unit cubes: smoke, dust and fire all read as tumbling boxes.
+// They are camera-facing quads now, textured with a soft puff and faded by a
+// per-instance alpha (the old code could only fade by shrinking). Still ONE
+// instanced draw call — the billboard is a vertex-shader patch, not CPU work.
+const INST_PARTICLE_GEO = new THREE.PlaneGeometry(1, 1);
+const puffTexture = (() => {
+    let tex: THREE.CanvasTexture | null | undefined;
+    return (): THREE.CanvasTexture | null => {
+        if (tex !== undefined) return tex;
+        tex = null;
+        if (typeof document !== 'undefined') {
+            const S = 64;
+            const cv = document.createElement('canvas');
+            cv.width = S; cv.height = S;
+            const ctx = cv.getContext('2d');
+            if (ctx) {
+                const rnd = lcg(9081);
+                // A few overlapping soft lobes: a perfect circle reads as a
+                // bubble, a lumpy one reads as smoke
+                for (let i = 0; i < 5; i++) {
+                    const cx = S / 2 + (rnd() - 0.5) * S * 0.22;
+                    const cy = S / 2 + (rnd() - 0.5) * S * 0.22;
+                    const r = S * (0.3 + rnd() * 0.16);
+                    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+                    g.addColorStop(0, 'rgba(255,255,255,0.5)');
+                    g.addColorStop(0.45, 'rgba(255,255,255,0.28)');
+                    g.addColorStop(1, 'rgba(255,255,255,0)');
+                    ctx.fillStyle = g;
+                    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+                }
+                tex = new THREE.CanvasTexture(cv);
+                tex.colorSpace = THREE.SRGBColorSpace;
+            }
+        }
+        return tex;
+    };
+})();
+// Camera-facing billboard for an InstancedMesh: keep the instance's translation
+// and uniform scale, drop its rotation, and offset in view space.
+const withBillboard = <T extends THREE.Material>(mat: T): T => {
+    const prev = mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader, renderer) => {
+        prev?.call(mat, shader, renderer);
+        shader.vertexShader = shader.vertexShader
+            .replace('#include <begin_vertex>', `
+                vec4 iOrigin = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+                float iScale = length(instanceMatrix[0].xyz);
+                vec4 mvPosition = iOrigin;
+                mvPosition.xy += position.xy * iScale;
+                vec3 transformed = vec3(position);
+            `)
+            .replace('#include <project_vertex>', 'gl_Position = projectionMatrix * mvPosition;');
+    };
+    mat.customProgramCacheKey = () => 'billboard';
+    return mat;
+};
+const INST_PARTICLE_MAT = withBillboard(withInstanceAlpha(new THREE.MeshBasicMaterial({
+    color: 'white', map: puffTexture(), transparent: true, depthWrite: false, toneMapped: false,
+})));
 
 const MAX_FLATS = 220;
 const GEO_FLAT_DISC = new THREE.CircleGeometry(1, 16).rotateX(-Math.PI / 2);
@@ -2466,19 +2541,22 @@ const BoxSelect = ({ units, selectTeam, disabled, onBoxSelect, onMarquee, onDrag
 // @lat: [[lat.md/rendering#Rendering performance#Instanced particles and projectiles]]
 const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
     const meshRef = useRef<THREE.InstancedMesh>(null!);
+    const geo = useAlphaGeometry(INST_PARTICLE_GEO, MAX_PARTICLE_INSTANCES);
     const dummy = useMemo(() => new THREE.Object3D(), []);
     const colorObj = useMemo(() => new THREE.Color(), []);
 
     useFrame(() => {
         const mesh = meshRef.current;
         if (!mesh) return;
+        const alphaAttr = mesh.geometry.getAttribute('aAlpha') as THREE.InstancedBufferAttribute;
         let count = 0;
         for (const p of particles) {
             if (isSpecialParticle(p)) continue;
             if (count >= MAX_PARTICLE_INSTANCES) break;
-            // Fade by shrinking (per-instance opacity is not supported)
-            const fade = Math.max(0.05, Math.min(1, p.life / 30));
-            const s = Math.max(0.01, p.size * (0.4 + 0.6 * fade));
+            const fade = Math.max(0, Math.min(1, p.life / 30));
+            // Puffs expand a little as they die and fade out on alpha. They used
+            // to shrink to nothing instead, which read as debris being sucked in.
+            const s = Math.max(0.01, p.size * (1.35 - 0.35 * fade) * 2.1);
             const y = p.alt !== undefined ? p.alt : 10 + (30 - p.life);
             dummy.position.set(p.position.x, y, p.position.y);
             dummy.scale.set(s, s, s);
@@ -2487,25 +2565,35 @@ const InstancedParticles = ({ particles }: { particles: Particle[] }) => {
             mesh.setMatrixAt(count, dummy.matrix);
             colorObj.set(p.color);
             mesh.setColorAt(count, colorObj);
+            // Ease in over the first few ticks of life so a burst blooms
+            alphaAttr.setX(count, Math.min(1, (1 - fade) * 6) * (0.25 + 0.75 * fade) * 0.95);
             count++;
         }
         mesh.count = count;
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        alphaAttr.needsUpdate = true;
     });
 
     return (
         <instancedMesh
             ref={meshRef}
-            args={[INST_PARTICLE_GEO, INST_PARTICLE_MAT, MAX_PARTICLE_INSTANCES]}
+            args={[geo, INST_PARTICLE_MAT, MAX_PARTICLE_INSTANCES]}
             frustumCulled={false}
         />
     );
 };
 
 const MAX_PROJECTILE_INSTANCES = 512;
-const INST_PROJECTILE_GEO = new THREE.SphereGeometry(3, 8, 8);
-const INST_PROJECTILE_MAT = new THREE.MeshBasicMaterial({ color: 'white', toneMapped: false });
+// Rounds are light, not painted lozenges: a low-poly sphere stretched along
+// the flight path, drawn additively so it blooms over whatever it crosses
+// (as an opaque basic material a tank shell read as an orange leaf lying on
+// the grass). 12x8 segments so the stretched slug keeps a round silhouette.
+const INST_PROJECTILE_GEO = new THREE.SphereGeometry(3, 12, 8);
+const INST_PROJECTILE_MAT = new THREE.MeshBasicMaterial({
+    color: 'white', toneMapped: false, transparent: true, opacity: 0.95,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+});
 const COLOR_PROJ_AIR = new THREE.Color('#f43f5e');
 const COLOR_PROJ_GROUND = new THREE.Color('#fbbf24');
 // setColorAt runs per projectile per frame — cache the Color objects rather than
@@ -4098,8 +4186,7 @@ const GROUND_PALETTE: Record<MapType, { base: string; light: string; dark: strin
     [MapType.ARCHIPELAGO]: { base: '#237543', light: '#32924f', dark: '#195a30', accent: '#bfa060', grain: 12, contrast: 1.0 },
     [MapType.WINTER]:      { base: '#dfe6ec', light: '#f4f8fb', dark: '#c6d2dc', accent: '#d3dde5', grain: 5, contrast: 0.45, streaks: true },
 };
-// Tiny seeded generator: the same texture on every machine, every mount
-const lcg = (seed: number) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
 
 const GROUND_TEX_CACHE = new Map<MapType, THREE.CanvasTexture | null>();
 const groundTexture = (map: MapType): THREE.CanvasTexture | null => {
@@ -4414,7 +4501,10 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
             {/* Fallback clear colour behind the dome (near/far widened for it:
                 near 1 also buys depth precision for the ground decals) */}
             <color attach="background" args={[skyColor]} />
-            <SkyDome horizon={skyColor} zenith={zenithColor} sun={sunColor} sunStrength={overcast ? 0 : weather === 'snow' ? 0.3 : 1} />
+            {/* Framing extras are the first thing to go on a weak GPU: the dome
+                is a full-screen shaded pass and the treeline is 300 more
+                instances. Low falls back to the flat clear colour above. */}
+            {fx !== 'low' && <SkyDome horizon={skyColor} zenith={zenithColor} sun={sunColor} sunStrength={overcast ? 0 : weather === 'snow' ? 0.3 : 1} />}
             {/* Default camera sits ~735 units out and the far edge of the field
                 ~890. Clear-weather haze starts beyond the playfield so the
                 battlefield itself stays saturated and readable (it used to be
@@ -4452,7 +4542,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
 
             {/* Backdrop and clouds sit outside the shake rig — the horizon shouldn't rattle */}
             <Backdrop mapType={mapType} />
-            {mapType !== MapType.URBAN && mapType !== MapType.DESERT && <Treeline mapType={mapType} />}
+            {fx !== 'low' && mapType !== MapType.URBAN && mapType !== MapType.DESERT && <Treeline mapType={mapType} />}
             {fx !== 'low' && weather !== 'fog' && <Clouds tint={cloudTint} opacity={weather === 'clear' ? 1 : 0.8} />}
 
             <ShakeRig shake={shake}>
