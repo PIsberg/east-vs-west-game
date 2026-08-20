@@ -732,7 +732,10 @@ const MuzzleFlash = ({ size = 1, color = 'orange' }: { size?: number, color?: st
             {heavy && (
                 <group>
                     {/* Gas ball hanging at the bore */}
-                    <mesh position={[1.8, 0, 0]} scale={0.75} geometry={GEO_FLASH_BALL} material={outerMat} />
+                    {/* Bigger than the cone is wide: from the default top-down
+                        camera the cone alone reads as a leaf lying on the hull,
+                        while the ball reads as a burst */}
+                    <mesh position={[1.6, 0, 0]} scale={1.15} geometry={GEO_FLASH_BALL} material={outerMat} />
                     {/* Star flare: blades crossing the muzzle */}
                     {[0, Math.PI / 2].map((r, i) => (
                         <mesh key={i} position={[1.8, 0, 0]} rotation={[r, 0, 0]} geometry={GEO_FLASH_SPIKE} material={flareMat} />
@@ -3289,7 +3292,9 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
             const fh = 22 + (seed % 14); // lower than a city block
             const walls = item.state === 'burning' ? '#4a403a' : item.state === 'broken' ? '#8a7f72'
                 : (winter ? ['#d8d1c4', '#c9c2b6', '#bdb3a4'] : ['#d9c9a8', '#c7b089', '#b8a48c'])[seed % 3];
-            const roof = item.state === 'burnt' ? '#292524' : winter ? '#e9eef2' : ['#9a4a34', '#5b5f68', '#6b4a2b'][(seed >> 2) % 3];
+            // Winter roofs stay a blue-grey slate under their snow: at the
+            // near-white they used to be, a house vanished into the snowfield
+            const roof = item.state === 'burnt' ? '#292524' : winter ? '#b9c7d3' : ['#9a4a34', '#5b5f68', '#6b4a2b'][(seed >> 2) % 3];
             const span = Math.max(w, d);
             const alongX = w >= d; // ridge runs along the longer side
             const side = (Math.min(w, d) + 6) / Math.SQRT2; // diamond cross-section spans the short side + eaves
@@ -4559,7 +4564,7 @@ export const GameScene: React.FC<GameSceneProps> = ({ units, projectiles, partic
     // networkidle-based e2e waits from ever settling. Three maps soft->PCF
     // internally anyway, so the render output is identical.
     return (
-        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low' ? 'percentage' : false} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45, near: 1, far: 6000 }} gl={{ toneMappingExposure: 1.12 }} onCreated={(s) => { (window as any).__ewGL = s.gl; (window as any).__ewScene = s.scene; }}>
+        <Canvas key={`${fx}-${cb ? 'cb' : 'std'}`} shadows={fx !== 'low' ? 'percentage' : false} dpr={fx === 'low' ? 1 : [1, 1.5]} camera={{ position: [CANVAS_WIDTH / 2, 600, CANVAS_HEIGHT + 200], fov: 45, near: 1, far: 6000 }} gl={{ toneMappingExposure: 1.12 }} onCreated={(s) => { (window as any).__ewGL = s.gl; (window as any).__ewScene = s.scene; (window as any).__ewCamObj = s.camera; (window as any).__ewRaycaster = s.raycaster; }}>
             {/* Fallback clear colour behind the dome (near/far widened for it:
                 near 1 also buys depth precision for the ground decals) */}
             <color attach="background" args={[skyColor]} />

@@ -238,7 +238,8 @@ const MiniMap: React.FC<{
   fogGridRef?: React.MutableRefObject<Record<Team, Uint8Array>>;
   fogViewer?: Team | null;
   fogOnRef?: React.MutableRefObject<boolean>;
-}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, goldMinesRef, ctfFlagsRef, isCtf, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef }) => {
+  mapType?: MapType;
+}> = ({ unitsRef, terrainRef, smokesRef, captureRef, flankCapsRef, goldMinesRef, ctfFlagsRef, isCtf, camApiRef, compact, cb, fogGridRef, fogViewer, fogOnRef, mapType }) => {
   const cvRef = useRef<HTMLCanvasElement>(null);
   const W = compact ? 104 : 150;
   const H = compact ? 48 : 68;
@@ -256,7 +257,14 @@ const MiniMap: React.FC<{
       if (!ctx) return;
       ctx.clearRect(0, 0, W, H);
       const eastUi = cb ? '#fbbf24' : '#f87171';
-      ctx.fillStyle = 'rgba(28, 37, 26, 0.92)';
+      // Ground tone follows the map — the board used to be forest green even
+      // on the desert and in the snow
+      ctx.fillStyle =
+        mapType === MapType.URBAN       ? 'rgba(34, 36, 40, 0.92)' :
+        mapType === MapType.DESERT      ? 'rgba(72, 50, 26, 0.92)' :
+        mapType === MapType.ARCHIPELAGO ? 'rgba(20, 48, 32, 0.92)' :
+        mapType === MapType.WINTER      ? 'rgba(78, 88, 97, 0.92)' :
+                                          'rgba(28, 37, 26, 0.92)';
       ctx.fillRect(0, 0, W, H);
 
       for (const t of terrainRef.current) {
@@ -265,7 +273,9 @@ const MiniMap: React.FC<{
           ctx.fillRect(mx(t.x - (t.width ?? 40) / 2), my(t.y - (t.height ?? 22) / 2),
             Math.max(1.5, (t.width ?? 40) * sx), Math.max(1.5, (t.height ?? 22) * sy));
         } else if (t.type === 'hill') {
-          ctx.fillStyle = 'rgba(96, 88, 60, 0.5)';
+          ctx.fillStyle = mapType === MapType.WINTER ? 'rgba(226, 234, 240, 0.45)'
+            : mapType === MapType.DESERT ? 'rgba(190, 140, 78, 0.45)'
+            : 'rgba(120, 150, 70, 0.45)';
           ctx.beginPath();
           ctx.arc(mx(t.x), my(t.y), Math.max(1.5, t.size * sx * 0.55), 0, Math.PI * 2);
           ctx.fill();
@@ -365,7 +375,7 @@ const MiniMap: React.FC<{
     draw();
     const id = window.setInterval(draw, 150);
     return () => window.clearInterval(id);
-  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef, cb]);
+  }, [W, H, unitsRef, terrainRef, smokesRef, captureRef, cb, mapType]);
 
   // Click-to-pan: jump the camera to the clicked spot (pan is x-only)
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -5630,7 +5640,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ))}
       </div>
 
-      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} goldMinesRef={goldMinesRef} ctfFlagsRef={ctfFlagsRef} isCtf={gameMode === 'ctf'} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} />
+      <MiniMap unitsRef={unitsRef} terrainRef={terrainRef} smokesRef={smokesRef} captureRef={captureRef} flankCapsRef={flankCapsRef} goldMinesRef={goldMinesRef} ctfFlagsRef={ctfFlagsRef} isCtf={gameMode === 'ctf'} camApiRef={camApiRef} compact={compact} cb={cb} fogGridRef={fogRef} fogViewer={humanTeam} fogOnRef={fogOnRef} mapType={mapType} />
 
       {paused && !gameOver && (
         <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 backdrop-blur-[2px] pointer-events-none">
