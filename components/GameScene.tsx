@@ -4005,9 +4005,14 @@ const SkyDome = ({ horizon, zenith, sun, sunStrength }: { horizon: number, zenit
         m.uSunStrength = sunStrength;
     });
     return (
-        <mesh ref={meshRef} frustumCulled={false} renderOrder={-10}>
+        // Drawn LAST in the opaque pass, with the depth test on: the dome is
+        // the farthest thing in the scene, so every pixel already covered by
+        // ground, terrain or units fails the test and is never shaded. Drawing
+        // it first (renderOrder -10) shaded the entire screen and then threw
+        // most of it away — pure waste on a fill-bound integrated GPU.
+        <mesh ref={meshRef} frustumCulled={false} renderOrder={999}>
             <sphereGeometry args={[SKY_RADIUS, 32, 18]} />
-            <skyMaterial ref={matRef} side={THREE.BackSide} depthWrite={false} fog={false} />
+            <skyMaterial ref={matRef} side={THREE.BackSide} depthWrite={false} depthTest={true} fog={false} />
         </mesh>
     );
 };
