@@ -609,10 +609,13 @@ const RiverRenderer = React.memo(({ terrain, mapType }: { terrain: TerrainObject
 
     // Archipelago: wide sea straits with animated deep-ocean shader
     if (mapType === MapType.ARCHIPELAGO) {
+        // Sea straits: deeper than the countryside river, with a softer foam —
+        // at the old near-white the channels read as bright cyan ribbons
+        // rather than water.
         return (
             <group>
                 {geometries.map((geo, i) => geo && (
-                    <AnimatedWater key={i} geo={geo} color="#0c4a6e" foam="#7dd3fc" />
+                    <AnimatedWater key={i} geo={geo} color="#0e5a7c" foam="#a9dbef" />
                 ))}
             </group>
         );
@@ -3469,9 +3472,17 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
         const burningEmissive = item.state === 'burning' ? leavesColor : '#000000';
 
         const leafMat = stdMat(leavesColor, burningEmissive);
+        // A stand of trees was every trunk dead upright at the same proportions.
+        // A seeded lean and a slightly squatter or lankier build (both derived
+        // from the position hash, so a tree never changes between frames) break
+        // the repetition without another material or draw call.
+        const lean = item.state === 'broken' ? 0 : ((seed % 13) - 6) * 0.012;
+        const lean2 = item.state === 'broken' ? 0 : (((seed >> 3) % 13) - 6) * 0.012;
+        const build = 0.88 + ((seed >> 6) % 9) * 0.045; // 0.88..1.24 height-vs-width
         return (
             <ClickableGroup position={[item.x, 0, item.y]} onCanvasClick={onCanvasClick}>
                 <group rotation={rot} position={[0, yOffset, 0]} scale={scaleMod}>
+                  <group rotation={[lean, (seed % 7) * 0.9, lean2]} scale={[1, build, 1]}>
                     {/* Trunk */}
                     <mesh position={[0, 15, 0]} castShadow geometry={GEO_TRUNK} material={stdMat(trunkColor)} />
 
@@ -3502,7 +3513,7 @@ const TerrainItemInner = ({ item, onCanvasClick, mapType }: { item: TerrainObjec
                     {type === 2 && ( // Poplar
                         <mesh position={[0, 45, 0]} castShadow geometry={GEO_POPLAR} material={leafMat} />
                     )}
-
+                  </group>
                 </group>
             </ClickableGroup>
         );
@@ -4415,7 +4426,8 @@ const GroundPlane = React.memo(({ onCanvasClick, targetingInfo, mapType }: { onC
             map,
             bumpMap,
             bumpScale: mapType === MapType.WINTER ? 0.35 : mapType === MapType.URBAN ? 0.3 : 0.7,
-            roughness: 1,
+            // Snow is the one ground that should catch a little light
+            roughness: mapType === MapType.WINTER ? 0.82 : 1,
         });
     }, [mapType]);
     useEffect(() => () => { material.bumpMap?.dispose(); material.dispose(); }, [material]);
