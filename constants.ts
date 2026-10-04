@@ -544,6 +544,15 @@ export const RALLY_COOLDOWN_MS = 50000;      // measured from activation
 export const RALLY_RELOAD_MULT = 1.45;       // cooldowns tick 45% faster
 export const RALLY_SPEED_MULT = 1.25;
 
+// Match point: a side this close to winning (85 of 100 points, or the foe's
+// base down to 15% HP) puts the match on a knife edge. It is announced once per
+// side, the march goes to its tension layer, and the side about to lose gets a
+// free LAST STAND: the rally surge (same multipliers) for longer, at no cost
+// and without touching its rally cooldown. A runaway lead then has to finish
+// the job through a counter-punch rather than coast across the line.
+export const MATCH_POINT_FRAC = 0.85;
+export const LAST_STAND_MS = 12000;
+
 // ── Firing signatures ───────────────────────────────────────────────────────
 // What actually leaves the barrel. Every gun used to emit the same orange cone,
 // so a tank's main gun read like a rifle. Now the weight of a shot is in the

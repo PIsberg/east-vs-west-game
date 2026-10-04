@@ -24,6 +24,8 @@ import {
   RALLY_COOLDOWN_MS,
   RALLY_RELOAD_MULT,
   RALLY_SPEED_MULT,
+  MATCH_POINT_FRAC,
+  LAST_STAND_MS,
   REPAIR_ZONE,
   REPAIR_PER_TICK,
   REPAIR_COMBAT_LOCKOUT_MS,
@@ -1236,6 +1238,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.WEST]: { until: 0, readyAt: 0 },
     [Team.EAST]: { until: 0, readyAt: 0 },
   });
+
+  // Match point: sim ms at which each side first reached MATCH_POINT_FRAC of
+  // a win (null = not yet). Fires once per side per match.
+  const matchPointRef = useRef<Record<Team, number | null>>({ [Team.WEST]: null, [Team.EAST]: null });
+  // 0..1 progress toward winning, comparable across points and base-HP modes
+  const winProgress = (team: Team) => gameModeRef.current === 'basehp'
+    ? 1 - baseHPRef.current[team === Team.WEST ? Team.EAST : Team.WEST] / BASE_HP
+    : scoreRef.current[team] / WIN_SCORE;
+  // For the HUD: the side that most recently reached match point
+  const matchPointLatest = (): GameState['matchPoint'] => {
+    const w = matchPointRef.current[Team.WEST], e = matchPointRef.current[Team.EAST];
+    if (w == null && e == null) return undefined;
+    return (e == null || (w != null && w >= e)) ? { team: Team.WEST, since: w! } : { team: Team.EAST, since: e! };
+  };
 
   // Execute a command if affordable/off-cooldown — shared by player & CPU
   const runCommand = (team: Team, cmd: TeamCommand): boolean => {
@@ -4225,6 +4241,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     });
 
+    // @lat: [[lat.md/game-loop#Game loop#Match point]]
+    // ── Match point / last stand ─────────────────────────────────────────────
+    // Runs right after the only place score and base HP move. Sim state only
+    // (refs + simNow), so both lockstep peers fire it on the same tick.
+    if (gameModeRef.current !== 'ctf' && !gameOverRef.current) {
+      for (const team of [Team.WEST, Team.EAST]) {
+        if (matchPointRef.current[team] != null || winProgress(team) < MATCH_POINT_FRAC) continue;
+        const now = simNow();
+        matchPointRef.current[team] = now;
+        const defender = team === Team.WEST ? Team.EAST : Team.WEST;
+        const r = rallyRef.current[defender];
+        r.until = Math.max(r.until, now + LAST_STAND_MS);
+        pushEvent('matchpoint', `MATCH POINT: ${teamName(team)} is one push from victory. ${teamName(defender)} makes a last stand!`, team);
+        soundService.playRallySound();
+        shakeRef.current = Math.max(shakeRef.current, 3);
+      }
+    }
+
     // ── Occupiable buildings ─────────────────────────────────────────────────
     // Houses infantry can fortify. The first riflemen to reach a free house
     // capture it (a flag goes up); friendly riflemen reinforce up to capacity;
@@ -5289,7 +5323,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // 2. Throttle App/UI updates to 10fps (for score/money/performance)
     if (Date.now() - lastUiUpdateRef.current > 100) {
-      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), ctf: gameModeRef.current === 'ctf' ? { west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length, east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length, timeLeftSec: Math.max(0, Math.ceil((CTF_DURATION_TICKS - tickCountRef.current) / 60)), overtime: ctfOvertimeRef.current } : undefined, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, tick: tickCountRef.current, simNowMs: simNow() });
+      onGameStateChange({ units: fogFilterUnits(), projectiles: projectilesRef.current, particles: particlesRef.current, score: scoreRef.current, money: moneyRef.current, weather: weatherRef.current, weatherNext: { type: nextWeatherRef.current, at: weatherTimerRef.current }, events: eventsRef.current, captureOwner: captureRef.current.owner, flankOwners: flankCapsRef.current.map(f => f.owner), mineOwners: goldMinesRef.current.map(m => m.owner), ctf: gameModeRef.current === 'ctf' ? { west: ctfFlagsRef.current.filter(f => f.owner === Team.WEST).length, east: ctfFlagsRef.current.filter(f => f.owner === Team.EAST).length, timeLeftSec: Math.max(0, Math.ceil((CTF_DURATION_TICKS - tickCountRef.current) / 60)), overtime: ctfOvertimeRef.current } : undefined, incomeLevel: { ...incomeLevelRef.current }, rally: { [Team.WEST]: { ...rallyRef.current[Team.WEST] }, [Team.EAST]: { ...rallyRef.current[Team.EAST] } }, airOpsReadyIn: { [Team.WEST]: Math.max(0, Math.ceil((airOpsRef.current[Team.WEST] - tickCountRef.current) / 60)), [Team.EAST]: Math.max(0, Math.ceil((airOpsRef.current[Team.EAST] - tickCountRef.current) / 60)) }, baseHP: baseHPRef.current, matchPoint: matchPointLatest(), tick: tickCountRef.current, simNowMs: simNow() });
       lastUiUpdateRef.current = Date.now();
 
       // Spatial listener: where the camera looks and how close it is. tx is
@@ -5310,9 +5344,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         const firing = unitsRef.current.reduce((n, u) => n + (u.attackCooldown > 0 && !u.boarded ? 1 : 0), 0);
         const rallyOn = simNow() < rallyRef.current[Team.WEST].until || simNow() < rallyRef.current[Team.EAST].until;
         const level = (firing > 15 || rallyOn) ? 2 : firing > 4 ? 1 : 0;
-        const tension = gameModeRef.current === 'basehp'
-          ? Math.min(baseHPRef.current[Team.WEST], baseHPRef.current[Team.EAST]) < BASE_HP * 0.35
-          : Math.min(scoreRef.current[Team.WEST], scoreRef.current[Team.EAST]) >= WIN_SCORE * 0.9;
+        // Tension = either side at match point. Points mode used to test
+        // min(score) >= 90, i.e. BOTH sides at 90+, so a one-sided finish (the
+        // usual kind) never got the tension layer.
+        const tension = matchPointRef.current[Team.WEST] != null || matchPointRef.current[Team.EAST] != null;
         soundService.setMusicIntensity(level, tension);
         musicDebugRef.current = { calls: musicDebugRef.current.calls + 1, level: soundService.getMusicIntensity(), tension };
       }
@@ -5362,12 +5397,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         fog: (team: 'WEST' | 'EAST', x: number, y: number) => fogCellState(team === 'WEST' ? Team.WEST : Team.EAST, x, y),
         incomeLevel: { ...incomeLevelRef.current },
         rallyReadyAt: { WEST: rallyRef.current[Team.WEST].readyAt, EAST: rallyRef.current[Team.EAST].readyAt },
+        rallyUntil: { WEST: rallyRef.current[Team.WEST].until, EAST: rallyRef.current[Team.EAST].until },
         unitOrders: unitsRef.current.filter(u => u.orders).length,
         airOps: {
           WEST: Math.max(0, airOpsRef.current[Team.WEST] - tickCountRef.current),
           EAST: Math.max(0, airOpsRef.current[Team.EAST] - tickCountRef.current),
         },
         flyovers: flyoversRef.current.length,
+        matchPoint: { ...matchPointRef.current }, // sim ms each side reached match point (null = not yet)
         lastEvents: eventsRef.current.map(e => e.text), // feed is capped at 8, newest last
         wrecks: terrainRef.current.filter(t => t.type === 'wreck').map(w => ({
           x: Math.round(w.x), y: Math.round(w.y), of: w.wreckOf, health: w.health ?? 0,
@@ -5404,6 +5441,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         },
         // Test hook: end the match immediately (drives the real gameOver path)
         winTeam: (t: 'WEST' | 'EAST') => setGameOver(t === 'WEST' ? Team.WEST : Team.EAST),
+        // Test hook: set a side's score (points mode) so the match-point
+        // threshold can be crossed without staging 85 breakthroughs.
+        setScore: (t: 'WEST' | 'EAST', n: number) => { scoreRef.current[t === 'WEST' ? Team.WEST : Team.EAST] = n; },
         // Test hook: set a team's army stance. Balance probes need a target that
         // holds still — a strike aimed at a walking formation measures the lead,
         // not the ordnance.

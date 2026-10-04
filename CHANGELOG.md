@@ -1,5 +1,10 @@
 # Changelog
 
+## Match point: every win goes through a last stand (October 2026)
+
+- **MATCH POINT.** When a side reaches 85 points (or has the enemy base down to 15% HP), a banner slams onto the battlefield, the feed announces it, and the side about to lose makes a **last stand**: a free 12-second rally surge (+45% fire rate, +25% speed) that costs no money and leaves its own rally horn ready. Once per side per match, so a lead that changes hands can trigger it twice. A runaway leader now has to break one last counter-punch instead of coasting across the line.
+- **The march finally gets tense at the end.** The adaptive march's tension layer was meant for close finishes, but in points mode it required *both* sides to be at 90+, so a one-sided finish (the usual kind) never heard it. It now plays whenever either side is at match point, in both win modes. In base-HP mode it now starts at 15% base HP instead of 35%, so it marks the same moment as the banner.
+
 ## The war moves at combat pace (July 2026)
 
 - **Everything happens ~25% faster.** The whole simulation now runs at 1.25× tempo — units cross the field quicker, guns cycle quicker, income flows quicker — so the front forms sooner and the action never sags. Because *everything* scales together, no unit got stronger or weaker relative to any other; the same battle simply plays out with less waiting. The 2× speed toggle still works on top of it.
