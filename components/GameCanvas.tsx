@@ -660,6 +660,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const ENTRENCH_TICKS = 360; // ~6s stationary under 'hold' orders to dig in
   // Battle-event feed shown in the HUD; new array identity per emit so React sees the change
   const eventsRef = useRef<GameEvent[]>([]);
+  // Colorblind flag for tick-side FX colors (the tick reads refs, not props)
+  const cbRef = useRef(cb);
+  cbRef.current = cb;
   const pushEvent = (kind: GameEvent['kind'], text: string, team?: Team) => {
     eventsRef.current = [...eventsRef.current.slice(-7), { id: generateId(), time: Date.now(), kind, text, team }];
   };
@@ -1628,7 +1631,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // FX telemetry: particles ALIVE decays every tick, so sampling it cannot tell
   // you how big one shot was. These are monotonic counts of what was created.
-  const fxStatsRef = useRef({ shots: 0, fireParticles: 0, hits: 0, impactParticles: 0 });
+  const fxStatsRef = useRef({ shots: 0, fireParticles: 0, hits: 0, impactParticles: 0, breakthroughs: 0, breakthroughParticles: 0 });
 
   // ── Sim checksum ─────────────────────────────────────────────────────────
   // FNV-1a over everything the simulation owns, hashing float BITS (never
@@ -4211,6 +4214,43 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           if (baseHPRef.current[defender] <= 0 && !gameOverRef.current) setGameOver(unit.team);
         } else {
           scoreRef.current[unit.team] += breakthroughValue;
+        }
+
+        // Breakthrough burst: a team-colored ring on the line, sparks sprayed
+        // on through it and signal flares climbing off it, so a score lands
+        // as an event instead of a unit quietly vanishing off the edge. A
+        // tank's 3-point run gets the bigger version. Cosmetic only, hence
+        // Math.random like the rest of the FX (particles are not sim state).
+        {
+          const big = breakthroughValue > 1;
+          const teamHex = unit.team === Team.WEST ? '#60a5fa' : cbRef.current ? '#fbbf24' : '#f87171';
+          const lineX = unit.team === Team.WEST ? CANVAS_WIDTH - 2 : 2;
+          const dir = unit.team === Team.WEST ? 1 : -1;
+          const at = { x: lineX, y: unit.position.y };
+          const fxBefore = particlesRef.current.length;
+          particlesRef.current.push({ id: generateId(), position: { ...at }, life: 18, color: teamHex, size: big ? 70 : 42, isShockwave: true });
+          for (let k = 0; k < (big ? 18 : 10); k++) {
+            const a = (Math.random() - 0.5) * 1.6;
+            const s = 1.2 + Math.random() * 1.8;
+            particlesRef.current.push({
+              id: generateId(), position: { ...at },
+              velocity: { x: Math.cos(a) * s * dir, y: Math.sin(a) * s },
+              drag: 0.9, life: 22 + Math.random() * 18,
+              color: k % 3 === 0 ? '#fef3c7' : teamHex, size: 3 + Math.random() * 3,
+            });
+          }
+          for (let k = 0; k < (big ? 5 : 3); k++) {
+            particlesRef.current.push({
+              id: generateId(), position: { x: at.x - dir * Math.random() * 10, y: at.y + (Math.random() - 0.5) * 24 },
+              velocity: { x: 0, y: 0 }, life: 50 + Math.random() * 30,
+              color: k === 0 ? '#fef3c7' : teamHex, size: 5 + Math.random() * 3,
+              alt: 6, altVel: 1.1 + Math.random() * 0.9,
+            });
+          }
+          fxStatsRef.current.breakthroughs++;
+          fxStatsRef.current.breakthroughParticles += particlesRef.current.length - fxBefore;
+          if (big) shakeRef.current = Math.max(shakeRef.current, 1.5);
+          soundService.playBreakthroughSound(big, at.x);
         }
 
         // Breakthrough feedback: the points it scored + the 50% refund

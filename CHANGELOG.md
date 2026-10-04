@@ -1,5 +1,9 @@
 # Changelog
 
+## Scoring you can see and hear (October 2026)
+
+- **Breakthroughs land.** A unit reaching the far edge used to just vanish behind a "+1". Now the line flashes a team-colored ring, sparks spray on through it and signal flares climb off it, with a two-note bugle call placed where it happened. A tank's 3-point run gets a bigger burst (24 particles vs 14), a third note and a small camera kick. A wave pouring over the line plays one call, not a dozen.
+
 ## Every battle has a hero (October 2026)
 
 - **The victory screen names each side's hero**: the single unit with the most kills, with its rank stars, its tally and whether it lived ("★★★ Gunboat · 16 kills · fell"). The existing MVP row ranks unit *types*; this one is about the one tank that held the bridge.

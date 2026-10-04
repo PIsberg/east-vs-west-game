@@ -21,7 +21,8 @@
  * Air Command rearm clock + AA interception actually downing a plane
  * (smoke21), determinism + loopback online play (smoke22/23), match point
  * and the defender's last-stand surge (smoke24), battle heroes tracked and
- * named on the victory screen (smoke25), and the victory-screen
+ * named on the victory screen (smoke25), the breakthrough burst, bigger for
+ * a tank (smoke26), and the victory-screen
  * battle timeline (timeline-test).
  *
  * Notes for writing new tests (hard-won):

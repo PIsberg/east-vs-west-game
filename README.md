@@ -14,7 +14,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what's new.
 The first team to reach **100 Points** wins.
 - **Tanks** score **3 Points**.
 - **All other units** score **1 Point**.
-- Points are scored by units reaching the far edge of the map.
+- Points are scored by units reaching the far edge of the map. Every score lands with a team-colored burst on the line and a bugle call; a tank's 3-point run gets the bigger one.
 
 ### Resources
 - **Money** generates automatically over time.

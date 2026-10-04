@@ -390,6 +390,21 @@ class SoundService {
     this.trumpet(C4, t + 1.9, 1.4, 0.34);
   }
 
+  // ── Breakthrough — a unit crossed the far line and scored ────────────────
+  // Two quick bugle notes (a rising fourth); a tank's 3-point run adds a
+  // third and a kick. Spatial, so a score on the far flank sounds far.
+  // Throttled: a wave pouring over the line should read as one fanfare.
+  public playBreakthroughSound(big = false, x?: number) {
+    if (!this.ctx || !this.canPlay('breakthrough', 350)) return;
+    this.ensureContext();
+    const { o, a } = this.spatial('high', x);
+    const t = this.ctx.currentTime + 0.02;
+    const G4 = 392, C5 = 523.25, E5 = 659.25;
+    this.trumpet(G4, t, 0.09, 0.22 * a, o);
+    this.trumpet(C5, t + 0.1, big ? 0.1 : 0.22, 0.26 * a, o);
+    if (big) { this.trumpet(E5, t + 0.21, 0.26, 0.28 * a, o); this.kick(t + 0.21, 0.4 * a, o); }
+  }
+
   // ── Rally Horn — quick ascending bugle call ──────────────────────────────
   public playRallySound() {
     if (!this.ctx || !this.canPlay('rally', 2000)) return;
