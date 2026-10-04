@@ -76,4 +76,17 @@
     50%      { box-shadow: 0 0 42px rgba(251, 191, 36, 0.7), 0 8px 24px rgba(0, 0, 0, 0.5); }
   }
   .cta-pulse { animation: cta-glow 1.8s ease-in-out infinite; }
+
+  /* Match-point call-out: slams in oversized, holds, fades before App unmounts
+     it at 5s of sim time. Only `transform` animates: Tailwind v4's centering
+     (-translate-x-1/2) rides the separate `translate` property, so the two
+     compose instead of fighting. */
+  @keyframes matchpoint-slam {
+    0%   { opacity: 0; transform: scale(1.8); }
+    7%   { opacity: 1; transform: scale(0.96); }
+    11%  { transform: scale(1); }
+    85%  { opacity: 1; transform: scale(1); }
+    100% { opacity: 0; transform: scale(1.04); }
+  }
+  .matchpoint-in { animation: matchpoint-slam 5s ease-out forwards; }
 }

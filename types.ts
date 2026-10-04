@@ -198,7 +198,7 @@ export interface Particle {
 export interface GameEvent {
   id: string;
   time: number; // Date.now() when emitted — the feed fades entries by age
-  kind: 'kill' | 'bridge' | 'crate' | 'capture' | 'strike' | 'command';
+  kind: 'kill' | 'bridge' | 'crate' | 'capture' | 'strike' | 'command' | 'matchpoint';
   team?: Team; // team the event concerns (colors the feed line); undefined = neutral
   text: string;
 }
@@ -231,6 +231,9 @@ export interface GameState {
     [Team.WEST]: number;
     [Team.EAST]: number;
   };
+  // The side that most recently reached match point, and when (sim ms; compare
+  // against simNowMs). Undefined until either side gets there.
+  matchPoint?: { team: Team; since: number };
   tick?: number; // sim tick of this snapshot — the HUD compares ability cooldowns against it
   // Sim clock of this snapshot in ms (tick × SIM_MS_PER_TICK). Every sim-time
   // field in the state (rally, weatherNext, unit stamps) compares against THIS.

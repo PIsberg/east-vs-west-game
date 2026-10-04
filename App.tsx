@@ -1482,6 +1482,22 @@ const App: React.FC = () => {
               <span className={`font-black text-sm ${cb ? 'text-amber-400' : 'text-red-400'}`}>{gameState.ctf.east} ⚑</span>
             </div>
           )}
+          {/* Match point: a cinematic call-out for the first 5s of sim time
+              after a side gets within reach of victory */}
+          {gameState.matchPoint && (gameState.simNowMs ?? 0) - gameState.matchPoint.since < 5000 && (() => {
+            const mp = gameState.matchPoint!;
+            const atkWest = mp.team === Team.WEST;
+            const atkColor = atkWest ? 'text-blue-300' : cb ? 'text-amber-300' : 'text-red-300';
+            const defColor = atkWest ? (cb ? 'text-amber-200' : 'text-red-200') : 'text-blue-200';
+            return (
+              <div data-testid="matchpoint-banner" className="absolute top-[22%] left-1/2 -translate-x-1/2 z-40 pointer-events-none text-center matchpoint-in">
+                <div className={`font-display font-black uppercase tracking-[0.25em] drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] ${compact ? 'text-xl' : 'text-4xl'} ${atkColor}`}>Match Point</div>
+                <div className={`mt-1 inline-block bg-black/70 border border-amber-500/70 rounded px-3 py-0.5 font-display font-bold uppercase tracking-wider ${compact ? 'text-[10px]' : 'text-xs'} ${defColor}`}>
+                  {atkWest ? 'East' : 'West'} makes a last stand
+                </div>
+              </div>
+            );
+          })()}
           {troopHint && !selection && !targetingInfo && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-black/75 border border-amber-500/70 rounded-lg px-4 py-2 text-[11px] text-amber-200 shadow-xl text-center leading-snug">
               💡 <strong>Click one of your units</strong> to give it its own orders — Attack, Hold or Fall Back.<br />
@@ -1570,6 +1586,7 @@ const App: React.FC = () => {
               <li><strong className="text-white">Victory:</strong> First team to <span className="text-amber-400">100 Points</span> wins.</li>
             )}
             <li><strong className="text-white">Scoring:</strong> Units reaching enemy edge {gameMode === 'basehp' ? 'damage the base' : 'score points'} (Tank: 3, Others: 1).</li>
+            <li><strong className="text-white">Match point:</strong> When a side gets {gameMode === 'basehp' ? 'the enemy base down to 15%' : 'to 85 points'}, the side about to lose makes a <span className="text-amber-400">last stand</span>: a free 12s rally surge.</li>
             <li><strong className="text-white">Resources:</strong> Money generates automatically over time.</li>
             <li><strong className="text-white">Terrain:</strong> Hills provide <span className="text-amber-400">1.3x Range</span> and <span className="text-amber-400">20% Faster Reload</span>.</li>
             <li><strong className="text-white">Cover:</strong> Trees & Hills provide <span className="text-amber-400">Protection</span>. Units will hide behind trees.</li>

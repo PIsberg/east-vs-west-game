@@ -11,11 +11,24 @@ by scaling `UNIT_CONFIG` speeds — those are tuned relative to each other.
 
 Fractional ticks carry across frames, so the sim plays ~25% faster than
 one-tick-per-frame with relative balance untouched. Each tick: consume the
-spawn queue → move/target/fire every unit → resolve projectiles
+spawn queue → move/target/fire every unit (breakthroughs score here) →
+check match point ([[game-loop#Match point]]) → resolve projectiles
 ([[game-loop#The single projectile resolver]]) → run the occupiable-buildings pass
 ([[map-system#Occupiable buildings]]) → snapshot state out via
 `onGameStateChange`. The loop never touches `useState` directly — see
 [[dual-state#The useRef/useState split]].
+
+## Match point
+
+The first time a side reaches `MATCH_POINT_FRAC` (0.85) of a win, measured
+by `winProgress` so points and base-HP modes compare, the tick announces it
+and hands the *other* side a free last-stand rally (`LAST_STAND_MS`).
+
+It only extends `rallyRef.until`: no money, no `readyAt`, so every existing
+rally multiplier and the HUD's RALLYING chip apply unchanged. `matchPointRef`
+holds the sim ms it fired per side (once per side per match, CTF excluded),
+and both lockstep peers fire it on the same tick because it reads sim state
+only. The march's tension layer keys off it too. Covered by smoke24.
 
 ## The single projectile resolver
 
