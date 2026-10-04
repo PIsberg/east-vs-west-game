@@ -1,5 +1,10 @@
 # Changelog
 
+## Every battle has a hero (October 2026)
+
+- **The victory screen names each side's hero**: the single unit with the most kills, with its rank stars, its tally and whether it lived ("★★★ Gunboat · 16 kills · fell"). The existing MVP row ranks unit *types*; this one is about the one tank that held the bridge.
+- **ACE promotions make the feed.** A unit reaching rank 3 (12 kills) is announced, so you know to protect it, or which enemy to hunt.
+
 ## Match point: every win goes through a last stand (October 2026)
 
 - **MATCH POINT.** When a side reaches 85 points (or has the enemy base down to 15% HP), a banner slams onto the battlefield, the feed announces it, and the side about to lose makes a **last stand**: a free 12-second rally surge (+45% fire rate, +25% speed) that costs no money and leaves its own rally horn ready. Once per side per match, so a lead that changes hands can trigger it twice. A runaway leader now has to break one last counter-punch instead of coasting across the line.
