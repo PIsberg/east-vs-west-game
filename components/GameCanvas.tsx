@@ -720,6 +720,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     [Team.WEST]: { built: 0, lost: 0 },
     [Team.EAST]: { built: 0, lost: 0 },
   });
+  // Each side's hero: the single unit with the most kills this match, kept
+  // after it dies so the victory screen can name the fallen.
+  type Hero = { id: string, type: UnitType, kills: number, veterancy: number, alive: boolean };
+  const heroRef = useRef<Record<Team, Hero | null>>({ [Team.WEST]: null, [Team.EAST]: null });
   // Balance telemetry: per-team, per-unit-type counters (kills, value of kills, losses, spawns)
   const typeStatsRef = useRef<Record<Team, { kills: Record<string, number>, killValue: Record<string, number>, lost: Record<string, number>, spawned: Record<string, number> }>>({
     [Team.WEST]: { kills: {}, killValue: {}, lost: {}, spawned: {} },
@@ -4914,13 +4918,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     // Veterancy: credit kills and promote survivors
     deadUnits.forEach(u => {
+      if (heroRef.current[u.team]?.id === u.id) heroRef.current[u.team]!.alive = false;
       if (!u.lastAttackerId) return;
       const killer = unitsRef.current.find(k => k.id === u.lastAttackerId && k.health > 0);
       if (!killer) return;
       killer.kills = (killer.kills || 0) + 1;
+      const hero = heroRef.current[killer.team];
+      if (!hero || killer.kills > hero.kills) {
+        heroRef.current[killer.team] = { id: killer.id, type: killer.type, kills: killer.kills, veterancy: killer.veterancy || 0, alive: true };
+      }
       const newVet = killer.kills >= 12 ? 3 : killer.kills >= 7 ? 2 : killer.kills >= 3 ? 1 : 0;
       if (newVet > (killer.veterancy || 0)) {
         killer.veterancy = newVet;
+        if (heroRef.current[killer.team]?.id === killer.id) heroRef.current[killer.team]!.veterancy = newVet;
+        if (newVet === 3) pushEvent('kill', `${teamName(killer.team)} ${unitLabel(killer.type)} made ACE: ${killer.kills} kills`, killer.team);
         const bonus = 1 + 0.1 * newVet;
         killer.maxHealth = Math.floor((UNIT_CONFIG[killer.type] as any).health * bonus);
         killer.health = Math.min(killer.health + 18, killer.maxHealth);
@@ -5404,6 +5415,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           EAST: Math.max(0, airOpsRef.current[Team.EAST] - tickCountRef.current),
         },
         flyovers: flyoversRef.current.length,
+        hero: { WEST: heroRef.current[Team.WEST] && { ...heroRef.current[Team.WEST] }, EAST: heroRef.current[Team.EAST] && { ...heroRef.current[Team.EAST] } },
         matchPoint: { ...matchPointRef.current }, // sim ms each side reached match point (null = not yet)
         lastEvents: eventsRef.current.map(e => e.text), // feed is capped at 8, newest last
         wrecks: terrainRef.current.filter(t => t.type === 'wreck').map(w => ({
@@ -5473,7 +5485,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           position: { ...u.position }, health: u.health, maxHealth: u.maxHealth, isInCover: !!u.isInCover,
           stuckSamples: u.stuckSamples || 0, deployed: !!u.deployed,
           buildUntil: u.buildUntil, garrison: u.garrison || 0,
-          suppressedUntil: u.suppressedUntil,
+          suppressedUntil: u.suppressedUntil, kills: u.kills || 0,
         })),
         // ── Determinism probes ──────────────────────────────────────────────
         simSeed: simSeedRef.current,
@@ -5732,6 +5744,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 return (
                   <div key={t} className="text-center font-mono text-xs pt-0.5">
                     {mvp ? `${mvp[0].replace('_', ' ')} · ${mvp[1]}` : '—'}
+                  </div>
+                );
+              })}
+              <div className="text-stone-500 uppercase text-xs pt-0.5" title="The single unit with the most kills">Hero</div>
+              {[Team.WEST, Team.EAST].map(t => {
+                const h = heroRef.current[t];
+                return (
+                  <div key={t} data-testid={`hero-${t}`} className="text-center font-mono text-xs pt-0.5">
+                    {h ? <>
+                      {h.veterancy > 0 && <span className="text-amber-400">{'★'.repeat(h.veterancy)} </span>}
+                      {unitLabel(h.type)} · {h.kills} kills
+                      <span className={h.alive ? 'text-emerald-400' : 'text-stone-500'}>{h.alive ? ' · survived' : ' · fell'}</span>
+                    </> : '—'}
                   </div>
                 );
               })}
